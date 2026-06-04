@@ -37,3 +37,15 @@ def under_radar(components: dict):
 
 def funnel_intent(components: dict):
     return weighted_axis(components, FI_WEIGHTS)
+
+
+def gem_score(sv, ur, fi, floor: float = 0.05) -> float:
+    """Multiplicative AND-gate: 100 · clamp01(SV)^.5 · clamp01(UR)^.35 · clamp01(FI)^.15.
+
+    None axis (no data at all) -> imputed to `floor` so a sparse gem isn't killed.
+    A present axis is clamped to [0,1] as-is: a famous brand whose UR computes to
+    ~0 still collapses the product to ~0 (the 'still unknown' hard gate)."""
+    a = floor if sv is None else clamp01(sv)
+    b = floor if ur is None else clamp01(ur)
+    c = floor if fi is None else clamp01(fi)
+    return 100.0 * (a ** 0.5) * (b ** 0.35) * (c ** 0.15)

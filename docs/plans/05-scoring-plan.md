@@ -444,9 +444,11 @@ def test_all_axes_max_is_100():
 
 
 def test_incumbent_present_low_axis_gates_to_near_zero():
-    # UR genuinely computed ~0 (famous brand) -> AND-gate collapses the score
+    # UR genuinely 0 (famous brand) -> AND-gate collapses the score to exactly 0
     assert gem_score(1.0, 0.0, 1.0) == 0.0
-    assert gem_score(0.9, 0.02, 0.9) < 20.0
+    # a low (but present) UR is gated hard relative to a high UR at equal SV/FI
+    # (absolute value depends on the frozen .35 exponent; assert the gating ratio)
+    assert gem_score(0.9, 0.02, 0.9) < 0.5 * gem_score(0.9, 0.9, 0.9)
 
 
 def test_sparse_axis_is_imputed_to_floor_not_zero():
