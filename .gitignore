@@ -1,0 +1,13 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# PoC output
+gems.csv
+*.csv
+
+# OS
+.DS_Store
