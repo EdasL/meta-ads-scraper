@@ -121,9 +121,9 @@ Critical path: **1 → 2 → 4 → 5 → 6 → 7**. Plan 3 runs parallel to Plan
 
 | Plan | Phase | Depends | Status | Owner | Detailed plan |
 |---|---|---|---|---|---|
-| 1 | PoC | — | ⬜ not started | — | `01-poc-plan.md` ✅ written |
-| 2 | Extraction core | 1 | ⬜ not started | — | TBD (expand §6) |
-| 3 | Data spine | 1 | ⬜ not started | — | TBD |
+| 1 | PoC | — | ✅ done | claude | `01-poc-plan.md` ✅ written · 30/30 unit tests green |
+| 2 | Extraction core | 1 | ⬜ ready (deps met) | — | TBD (expand §6) |
+| 3 | Data spine | 1 | ⬜ ready (deps met) | — | TBD |
 | 4 | Discovery firehoses | 1,2,3 | ⬜ blocked | — | TBD |
 | 5 | Velocity + GemScore | 1,2,3,4 | ⬜ blocked | — | TBD |
 | 6 | Enrichment | 2,3,5 | ⬜ blocked | — | TBD |
