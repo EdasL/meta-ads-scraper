@@ -42,28 +42,33 @@ cd ~/Projects/emerging-app-finder
 .venv/bin/pip install -r requirements.txt          # Python 3.13 venv already exists
 
 # fast: unit suite (DB/integration tests skip clean without env)
-.venv/bin/pytest -q                                # 80 passed, 19 skipped, 6 deselected
+.venv/bin/pytest -q                                # 121 passed, 32 skipped, 6 deselected
 
-# with infra (Plan 3/4 DB tests, and Plan 5 going forward):
+# with infra (Plan 3/4/5 DB tests, and Plan 6 going forward):
 docker compose -f db/docker-compose.yml up -d      # Postgres :5433 + MinIO :9010
 export AGF_TEST_DB_URL=postgresql://agf:agf@localhost:5433/agf
 export S3_ENDPOINT=http://localhost:9010 MINIO_ACCESS_KEY=minioadmin MINIO_SECRET_KEY=minioadmin S3_BUCKET=agf-test
-.venv/bin/pytest -q                                # 115 passed, 6 deselected
+.venv/bin/pytest -q                                # 153 passed, 6 deselected
 .venv/bin/pytest -m integration -q                 # live: hits real Facebook + MinIO
 docker compose -f db/docker-compose.yml down       # tidy up
 
-# the live end-to-end smoke (real Meta → Postgres): /tmp/e2e.py was a scratch script;
-# re-create from docs/plans/04-discovery-plan.md "Live end-to-end" section if needed.
+# Plan 5 scoring runs end-to-end against the docker Postgres:
+#   from agf.scoring.run_scoring import run_scoring   # score_all (committed txn) + REFRESH ... CONCURRENTLY
+#   run_scoring(get_engine(AGF_TEST_DB_URL), date.today())
+# Live Meta→Postgres discovery smoke: re-create from docs/plans/04-discovery-plan.md "Live end-to-end".
 ```
 
 ---
 
 ## 4. Frozen contracts a new plan MUST build against (master-plan §3)
 
-- **§3.4 `Extractor`** (Plan 2, `src/agf/extract/facade.py`): `async search(...)`, `async ad_details(ad_archive_id)`, `async resolve_deeplink(url, ua)`. Plan 5 calls `extractor.ad_details` for `eu_total_reach` + `active`.
-- **§3.3 repo** (Plan 3, `src/agf/db/repo.py`): `conn`-first functions, **never commit** (caller owns the transaction). Includes `record_ad_metric`, `upsert_app_advertiser_metric`.
-- **§3.6 matview `frontend.emerging_scaling_apps`** — **Plan 5 OWNS IT ALONE.** Create `db/schema/051_emerging_matview.sql` with a **UNIQUE index on `advertiser_id`** (required for `REFRESH … CONCURRENTLY`). Frozen columns are listed in §3.6. One row per advertiser; web funnels with `app_id` NULL still appear.
-- **Schema numbering:** P3 = 001–049, **P5 = 050–099**, P7 = 100+. `migrate.py` globs lexically.
+- **§3.4 `Extractor`** (Plan 2, `src/agf/extract/facade.py`): `async search(...)`, `async ad_details(ad_archive_id)`, `async resolve_deeplink(url, ua)`. **Plan 6 reuses `Extractor.resolve_deeplink` + the Plan 2 Playwright warmer — no second resolver.**
+- **§3.3 repo** (Plan 3, `src/agf/db/repo.py`): `conn`-first functions, **never commit** (caller owns the transaction). **Plan 6 writes via `upsert_app`, `upsert_creative` (dedup-aware), `upsert_funnel`, `upsert_advertiser_enrichment`** (the last backfills `domain_id`/`parent_company_id`/`page_category`/`ig_*` — which Plan 5's disguised-incumbent veto reads, NULL-tolerant).
+- **§3.8 S3 client** (Plan 3, `src/agf/storage/s3.py`): `get_s3()` / `put_bytes(key, data, content_type)`. **§3.6 dedup** (`src/agf/db/dedup.py`): `sha256_bytes`/`phash_image`/`is_duplicate_creative` — Plan 6's `download_creative` reuses both.
+- **§3.9 worker handler adapter:** `run_worker` expects `handler(conn, entity_id)`; cross-cutting deps (`extractor`, `s3`, `client`) reach it via a `make_handler(...)` closure. Plan 6's `enrich_gem` ships such an adapter.
+- **§3.7 output keys on `advertiser_id`** (`app_id` NULLABLE) — Plan 6 enriches per advertiser; gems to enrich = `frontend.emerging_scaling_apps WHERE alert` (or `gem_score ≥ 70`).
+- **§3.6 matview `frontend.emerging_scaling_apps`** — **created by Plan 5** (`db/schema/051_emerging_matview.sql`, UNIQUE index on `advertiser_id`); Plan 6/7 read it, do not recreate it.
+- **Schema numbering:** P3 = 001–049, P5 = 050–099 (used: 050, 051), **P7 = 100+**. `migrate.py` globs lexically. (Plan 6 adds **no** schema — it backfills existing tables.)
 - **`pg_conn` fixture lives only in root `conftest.py`.** `requirements.txt` is append-only with a `# --- plan-N ---` section per phase.
 
 ---
@@ -94,16 +99,17 @@ Exposed: `snapshot_ad_metrics(conn, extractor, date)` (async; active ads → `ad
 ## 7. Map of the repo
 
 - `docs/plans/00-master-plan.md` — **source of truth** (contracts, dashboard, phases, decisions).
-- `docs/plans/01..04-*.md` — per-plan detailed/as-built docs.
+- `docs/plans/01..05-*.md` — per-plan detailed/as-built docs (`05-scoring-plan.md` is Plan 5, as-built).
 - `docs/research/2026-06-04-{server-side-extraction,discovery-sources}.md` — the two research deep-dives.
 - `docs/design-spec.md`, `README.md` (grug explainer) — original design narrative.
 - `src/agf/{fbjson,bootstrap,request,parse,classify,enrich,scale,score,livesearch,run_poc}.py` — Plan 1.
 - `src/agf/extract/` — Plan 2. `src/agf/db/` + `src/agf/storage/` + `src/agf/workers/` — Plan 3. `src/agf/discovery/` — Plan 4.
-- `db/schema/*.sql` (001–004 so far), `db/migrate.py`, `db/docker-compose.yml`.
+- `src/agf/tracker/snapshots.py` + `src/agf/scoring/{cohorts,features,gemscore,vetoes,run_scoring}.py` — **Plan 5**.
+- `db/schema/*.sql` (001–004 Plan 3, 050–051 Plan 5), `db/migrate.py`, `db/docker-compose.yml`.
 - Project memory: `~/.claude/projects/-Users-edaslakavicius-Projects-emerging-app-finder/memory/`.
 
 ---
 
 ## 8. Continuation prompt (paste into a fresh session)
 
-> Continue building the **Emerging App Finder** at `~/Projects/emerging-app-finder`. First read, in order: `docs/HANDOFF.md`, `docs/plans/00-master-plan.md` (source of truth — §3 frozen contracts, §5 dashboard, §6 phases, §8 decisions), and both files in `docs/research/`; also check the project memory dir. **State:** Plans 1–4 are done, merged to `main`, and verified (115 tests + a live end-to-end against real Facebook + Postgres). **Build Plan 5 — Velocity tracker + GemScore** next (deps all met). Do it the way the others were built: (1) write a detailed bite-sized TDD plan at `docs/plans/05-scoring-plan.md` from master-plan §6 Plan 5 + the §3 contracts; (2) build TDD on a feature branch; (3) **verify for real** — pure stats unit-tested, and snapshots/matview against a live Postgres (`docker compose -f db/docker-compose.yml up -d`; `export AGF_TEST_DB_URL=postgresql://agf:agf@localhost:5433/agf`); (4) commit per logical unit (`<type>(plan-5): …`, end messages with the `Co-Authored-By: Claude …` trailer), merge `--no-ff` to `main`, update the §5 dashboard. **Plan 5 is the SOLE owner of `frontend.emerging_scaling_apps`** — create `db/schema/051_emerging_matview.sql` with a UNIQUE index on `advertiser_id` (so `REFRESH … CONCURRENTLY` works; schema range P5 = 050–099). Snapshots call `extractor.ad_details` (§3.4). `GemScore = 100·clamp01(SV)^.5·clamp01(UR)^.35·clamp01(FI)^.15` — multiplicative AND-gate with a per-axis floor, cohort-normalized within (category × country). Pin `numpy`/`statsmodels`/`scipy` under a `# --- plan-5 ---` section. **Carry the hard rules:** extraction is curl_cffi+rd_challenge (Playwright standby only); discovery is spend-driven (Firehose A dropped, iTunes = enrichment only); the repo is conn-first and never commits; Postgres `now()` is txn-frozen so use `clock_timestamp()`; `REFRESH … CONCURRENTLY` needs its own autocommit connection; and **run the assembled thing live before claiming it works** (fakes + contract-adherence hid a real bug last time). Use the superpowers skills and run `/self-eval` before declaring done.
+> Continue building the **Emerging App Finder** at `~/Projects/emerging-app-finder`. First read, in order: `docs/HANDOFF.md`, `docs/plans/00-master-plan.md` (source of truth — §3 frozen contracts, §5 dashboard, §6 phases, §8 decisions), `docs/plans/05-scoring-plan.md` (the most recent as-built plan — mirror its style), and both files in `docs/research/`; also check the project memory dir. **State:** Plans 1–5 are done, merged to `main`, and verified (153 tests + live end-to-end against real Facebook + Postgres, incl. Plan 5's live scoring e2e + assembled smoke). **Build Plan 6 — Enrichment** next (deps 2,3,5 ✅). Do it the way the others were built: (1) write a detailed bite-sized TDD plan at `docs/plans/06-enrichment-plan.md` from master-plan §6 Plan 6 (P6-T1…T10) + the §3 contracts; (2) build TDD on a feature branch `feat/plan-6-enrichment`; (3) **verify for real** — pure parsers unit-tested with fixtures, and the live parts against real deps (S3/MinIO round-trip via `docker compose -f db/docker-compose.yml up -d` + the `S3_*`/`MINIO_*`/`AGF_TEST_DB_URL` env; funnel capture + CMP dismissal need **Playwright** — `pip install playwright` + `playwright install chromium`, it's an optional/standby dep not installed by default; the Node `gp_lookup` sidecar needs Node); (4) commit per logical unit (`<type>(plan-6): …`, end messages with the `Co-Authored-By: Claude …` trailer), merge `--no-ff` to `main`, update the §5 dashboard + this handoff. **Plan 6 owns `src/agf/enrich_full/` (`appstore`, `funnel_capture`, `creatives`, `company`, `schemas`, `run_enrich`) + `src/agf/enrich_full/sidecar/` (Node `gp_lookup`) + `tests/enrich_full/`; appends `# --- plan-6 ---` (python-whois); adds NO schema (it backfills existing tables).** Enrich **top-N flagged gems only** (`enrich_gem(conn, advertiser_id, *, top_n=5, deps)`, worker adapter §3.9); gems = `frontend.emerging_scaling_apps WHERE alert`. **Reuse, don't reinvent:** Plan 2 `Extractor.resolve_deeplink` + Playwright warmer for `resolve_landing`/`capture_funnel`; Plan 3 `dedup` (sha256+phash) + `storage.s3` for `download_creative`; backfill `upsert_advertiser_enrichment` (`parent_company_id`/`domain_id`/etc. — feeds Plan 5's disguised-incumbent veto). **iTunes Lookup: use `releaseDate`, NOT `currentVersionReleaseDate`** (research §2). fbcdn signed URLs expire → download at scrape time; cap Playwright contexts + top-N (memory). **Carry the hard rules:** extraction is curl_cffi+rd_challenge (Playwright standby only); discovery is spend-driven; the repo is conn-first and never commits; Postgres `now()` is txn-frozen so use `clock_timestamp()`; and **run the assembled thing live before claiming it works** (fakes + contract-adherence hid real bugs in Plans 4 and 5 — only the live run caught them). Use the superpowers skills (`writing-plans` → TDD per task → `verification-before-completion`) and run `/self-eval` before declaring done.
