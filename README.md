@@ -204,6 +204,20 @@ capture the current `AdLibrarySearchPaginationQuery` doc_id from browser
 DevTools (Network tab) and update `_FALLBACK_DOC_ID` in `src/agf/livesearch.py`.
 This fragility is why Plan 2 replaces this with Playwright GraphQL interception.
 
+### Live validation (2026-06-04)
+Verified against the real Meta Ad Library + iTunes:
+- **iTunes Lookup** — works via plain `httpx` (live test passes).
+- **GraphQL search** — our `request.py` body + fallback `doc_id 27201872659451053`
+  returns **HTTP 200 with real ads** (confirmed live); `parse → classify → scale → score`
+  all handle the real response correctly (10 ads parsed, iOS/web classified, advertisers
+  aggregated, GemScore computed). The fallback `doc_id` was current on this date.
+- **Bootstrap GET is anti-bot-blocked** — `GET /ads/library/` over plain `httpx` returns
+  HTTP 403 / a JS challenge stub (no `LSD` token, no IP fix), so `run_poc` cannot complete
+  via httpx alone. A **real browser** passes the challenge (it sets the `datr` cookie and
+  executes the JS), after which the exact same request chain works. **This is the load-bearing
+  reason Plan 2 uses a Playwright browser session** rather than raw HTTP. The `test_bootstrap_and_search_returns_ads`
+  smoke test is marked `xfail` to reflect this known external block (not a code defect).
+
 ### Scope
 PoC only: no DB, no proxies, no browser, no funnel/creative download.
 Design rationale: `docs/design-spec.md`. Full build order: `docs/plans/00-master-plan.md`.
