@@ -178,3 +178,32 @@ the whole thing in one breath: **throw three nets to catch unknown apps → prov
 the magic trick is the multiply (famous = zero). the hard part is the finding (three nets). everything else is plumbing. 
 
 grug done. grug go look at list now. complexity demon stay away.
+
+---
+
+## PoC Quickstart (Plan 1)
+
+The Plan-1 PoC proves the full chain: US Ad Library search → app-classify → emerging enrich → scaling proxy → ranked CSV. No DB, no proxies, no browser.
+
+### Setup
+    python3.13 -m venv .venv && .venv/bin/pip install -r requirements.txt
+
+### Run the unit tests
+    .venv/bin/pytest -v
+
+### Run the live smoke test (hits Facebook + Apple)
+    .venv/bin/pytest -m integration -v
+
+### Run the PoC end-to-end
+    .venv/bin/python -m agf.run_poc "workout app" "calorie tracker"
+    # → writes gems.csv ranked by PoC GemScore
+
+### Maintenance
+The Ad Library `doc_id` rotates (~weekly). If a live search returns 0 ads,
+capture the current `AdLibrarySearchPaginationQuery` doc_id from browser
+DevTools (Network tab) and update `_FALLBACK_DOC_ID` in `src/agf/livesearch.py`.
+This fragility is why Plan 2 replaces this with Playwright GraphQL interception.
+
+### Scope
+PoC only: no DB, no proxies, no browser, no funnel/creative download.
+Design rationale: `docs/design-spec.md`. Full build order: `docs/plans/00-master-plan.md`.
