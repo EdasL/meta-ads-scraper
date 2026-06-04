@@ -58,7 +58,9 @@ def download_creative(conn, ad_id, url, type, *, body_text=None, title=None,
                              creative_id=dup, dedup_of=dup)
     key = f"creatives/{sha}.{_EXT.get(type, 'bin')}"
     put(key, data, content_type or "application/octet-stream", client=s3)
-    cid = repo.upsert_creative(conn, ad_id, type, body_text, title, url, key, sha, ph)
+    # snapshot_image_url is left NULL: the source fbcdn URL is signed + expires, so the
+    # durable reference is the S3 key (s3_key column), not the ephemeral source URL.
+    cid = repo.upsert_creative(conn, ad_id, type, body_text, title, None, key, sha, ph)
     conn.execute(text("UPDATE public.creatives SET content_type=:ct, file_size=:fs WHERE id=:i"),
                  {"ct": content_type, "fs": len(data), "i": cid})
     return CreativeAsset(type=type, sha256=sha, phash=ph, s3_key=key,

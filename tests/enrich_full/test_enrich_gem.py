@@ -82,3 +82,68 @@ def test_enrich_gem_assembled(pg_conn):
                           {"i": adv}).scalar()
     assert dom is not None
     assert res.company and "Stripe" in res.company.tech
+
+
+class _ITunesResults:
+    def __init__(self, results): self.results = results
+    def get(self, url, params=None): return _J({"results": self.results})
+
+
+def _ios_ad(ext, store_id):
+    return _ad(ext, f"https://apps.apple.com/us/app/x/id{store_id}")
+
+
+def test_enrich_gem_no_app_result_leaves_app_id_null(pg_conn):
+    ar = _ios_ad("NORES-IOS", "555")
+    adv = repo.upsert_advertiser(pg_conn, ar)
+    ad = repo.upsert_ad(pg_conn, ar, adv, None)
+    ex = FakeExtractor(links={"https://apps.apple.com/us/app/x/id555":
+                              ResolvedLink("https://apps.apple.com/us/app/x/id555",
+                                           AppIntent("ios", "555"))})
+    deps = EnrichDeps(extractor=ex, itunes_client=_ITunesResults([]), capture=False)
+    res = asyncio.run(enrich_gem(pg_conn, adv, top_n=5, deps=deps))
+    assert res.n_ads_processed == 1
+    assert pg_conn.execute(text("SELECT app_id FROM public.ads WHERE id=:i"),
+                           {"i": ad}).scalar() is None
+
+
+def test_enrich_gem_old_app_not_emerging(pg_conn):
+    ar = _ios_ad("OLD-IOS", "777")
+    adv = repo.upsert_advertiser(pg_conn, ar)
+    ad = repo.upsert_ad(pg_conn, ar, adv, None)
+    ex = FakeExtractor(links={"https://apps.apple.com/us/app/x/id777":
+                              ResolvedLink("https://apps.apple.com/us/app/x/id777",
+                                           AppIntent("ios", "777"))})
+    old = _ITunesResults([{"trackId": 777, "trackName": "Old", "sellerName": "Inc",
+                           "primaryGenreName": "Health & Fitness",
+                           "releaseDate": "2019-01-01T00:00:00Z",
+                           "userRatingCount": 9_000_000, "averageUserRating": 4.5}])
+    deps = EnrichDeps(extractor=ex, itunes_client=old, capture=False)
+    asyncio.run(enrich_gem(pg_conn, adv, top_n=5, deps=deps))
+    app_id = pg_conn.execute(text("SELECT app_id FROM public.ads WHERE id=:i"), {"i": ad}).scalar()
+    em = pg_conn.execute(text("SELECT is_emerging FROM public.apps WHERE id=:i"), {"i": app_id}).scalar()
+    assert em is False                            # released 2019 -> not emerging
+
+
+def test_enrich_gem_top_n_truncates(pg_conn):
+    adv = None
+    for i in range(3):
+        ar = _ad(f"TRUNC-{i}", "https://getgem.com")
+        adv = repo.upsert_advertiser(pg_conn, ar)
+        repo.upsert_ad(pg_conn, ar, adv, None)
+    deps = EnrichDeps(extractor=FakeExtractor(), capture=False)
+    res = asyncio.run(enrich_gem(pg_conn, adv, top_n=2, deps=deps))
+    assert res.n_ads_processed == 2               # 3 ads exist, top_n=2 -> 2 processed
+
+
+def test_enrich_gem_dead_creative_url_does_not_crash(pg_conn):
+    ar = _ad("DEAD-WEB", "https://getgem.com")
+    adv = repo.upsert_advertiser(pg_conn, ar)
+    repo.upsert_ad(pg_conn, ar, adv, None)
+
+    def boom(_url):
+        raise RuntimeError("403 expired fbcdn signature")
+    deps = EnrichDeps(extractor=FakeExtractor(), capture=False, fetch_bytes=boom,
+                      creative_urls={"DEAD-WEB": [("image", "https://cdn/dead.png")]})
+    res = asyncio.run(enrich_gem(pg_conn, adv, top_n=5, deps=deps))   # must NOT raise
+    assert res.n_ads_processed == 1 and res.creatives == 0

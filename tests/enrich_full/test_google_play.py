@@ -25,6 +25,19 @@ def test_empty_ids_no_runner_call():
     assert called == []
 
 
+def test_error_entries_are_skipped():
+    raw = json.dumps([{"appId": "com.ok", "title": "OK", "developer": "D", "genre": "G",
+                       "releaseDateISO": "2026-01-01", "score": 4.0, "ratings": 5},
+                      {"appId": "com.bad", "error": "not found"}])
+    out = lookup_google_play(["com.ok", "com.bad"], runner=lambda ids: raw)
+    assert set(out) == {"com.ok"}              # the error entry is dropped
+
+
+def test_malformed_json_degrades_to_empty():
+    assert lookup_google_play(["com.x"], runner=lambda ids: "<<not json>>") == {}
+    assert lookup_google_play(["com.x"], runner=lambda ids: "") == {}
+
+
 @pytest.mark.integration
 def test_live_sidecar_runs_node():
     if not shutil.which("node") or not (Path(_SIDECAR).parent / "node_modules").exists():

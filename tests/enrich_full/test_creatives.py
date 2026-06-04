@@ -52,6 +52,35 @@ def test_download_creative_uploads_then_dedups_identical(pg_conn):
     cnt = pg_conn.execute(text("SELECT count(*) FROM public.creatives WHERE sha256=:s"),
                           {"s": a1.sha256}).scalar()
     assert cnt == 1
-    row = pg_conn.execute(text("SELECT content_type, file_size FROM public.creatives WHERE id=:i"),
+    row = pg_conn.execute(text("SELECT content_type, file_size, snapshot_image_url "
+                               "FROM public.creatives WHERE id=:i"),
                           {"i": a1.creative_id}).first()
     assert row.content_type == "image/png" and row.file_size == len(data)
+    assert row.snapshot_image_url is None     # durable ref is s3_key (fbcdn URL expires)
+
+
+def test_download_creative_video_type_uses_mp4_key(pg_conn):
+    adv = repo.upsert_advertiser(pg_conn, _ad("C3"))
+    ad = repo.upsert_ad(pg_conn, _ad("C3"), adv, None)
+    fetch = lambda url: (b"\x00\x00\x00\x18ftypmp42video-bytes", "video/mp4")
+    ca = download_creative(pg_conn, ad, "https://cdn/v.mp4", "video",
+                           fetch=fetch, put=lambda *a, **k: "k")
+    assert ca.s3_key.endswith(".mp4") and ca.type == "video"
+    assert ca.phash is None                   # non-image bytes -> no perceptual hash
+
+
+def test_download_creative_near_dup_dedupes_end_to_end(pg_conn):
+    # two DIFFERENT solid-color PNGs share an all-flat perceptual hash (hamming 0 < thresh)
+    # but have distinct sha256 -> exercises the phash near-dup path with real bytes.
+    adv = repo.upsert_advertiser(pg_conn, _ad("C4"))
+    ad = repo.upsert_ad(pg_conn, _ad("C4"), adv, None)
+    puts = []
+    put = lambda key, d, ct, client=None: (puts.append(key) or key)
+    a = download_creative(pg_conn, ad, "https://cdn/a.png", "image",
+                          fetch=lambda u: (_png((20, 40, 60)), "image/png"), put=put)
+    b = download_creative(pg_conn, ad, "https://cdn/b.png", "image",
+                          fetch=lambda u: (_png((200, 10, 90)), "image/png"), put=put)
+    assert a.sha256 != b.sha256               # different bytes
+    assert a.phash == b.phash                 # identical perceptual hash (flat images)
+    assert b.dedup_of == a.creative_id        # near-dup detected
+    assert len(puts) == 1                      # near-dup NOT re-uploaded

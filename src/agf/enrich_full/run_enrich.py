@@ -37,6 +37,8 @@ class EnrichDeps:
 def _domain_of(url):
     try:
         host = urlparse(url).netloc.lower()
+        if host.startswith("["):              # IPv6 literal — not a registrable domain
+            return None
         return host[4:] if host.startswith("www.") else (host or None)
     except Exception:
         return None
@@ -70,7 +72,10 @@ async def enrich_gem(conn, advertiser_id, *, top_n=5, deps: EnrichDeps) -> Enric
     for ad in ads:
         target = await resolve_landing(deps.extractor, ad.link_url)
         if target.kind in ("ios", "android") and target.store_id:
-            meta = await _lookup_app(deps, target.kind, target.store_id)
+            try:                              # app-store lookups hit the network; degrade
+                meta = await _lookup_app(deps, target.kind, target.store_id)
+            except Exception:
+                meta = None
             if meta:
                 app_id = repo.upsert_app(conn, {
                     "store": target.kind, "store_id": meta.track_id, "name": meta.name,
@@ -100,8 +105,11 @@ async def enrich_gem(conn, advertiser_id, *, top_n=5, deps: EnrichDeps) -> Enric
                     n_funnels += 1
 
         for ctype, url in (deps.creative_urls or {}).get(str(ad.external_ad_id), []):
-            ca = download_creative(conn, ad.id, url, ctype, fetch=deps.fetch_bytes,
-                                   put=deps.put, s3=deps.s3)
+            try:                              # fbcdn URLs expire → a dead one mustn't kill the gem
+                ca = download_creative(conn, ad.id, url, ctype, fetch=deps.fetch_bytes,
+                                       put=deps.put, s3=deps.s3)
+            except Exception:
+                continue
             if ca.dedup_of is None:
                 n_creatives += 1
 

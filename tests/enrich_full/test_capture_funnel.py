@@ -52,3 +52,24 @@ def test_stops_when_no_next_cta():
     steps = capture_funnel("https://f/1", max_steps=3, page=page,
                            put=lambda *a, **k: "key")
     assert len(steps) == 1
+
+
+class FlakyShotPage(FakeFunnelPage):
+    """Screenshot raises on the given (0-based) step index."""
+    def __init__(self, urls, titles, fail_at):
+        super().__init__(urls, titles)
+        self.fail_at = fail_at
+
+    def screenshot(self):
+        if self.i == self.fail_at:
+            raise RuntimeError("screenshot timeout")
+        return super().screenshot()
+
+
+def test_screenshot_failure_yields_null_key_but_continues():
+    page = FlakyShotPage(["https://f/1", "https://f/2"], ["One", "Two"], fail_at=1)
+    steps = capture_funnel("https://f/1", max_steps=2, page=page, put=lambda *a, **k: "key")
+    assert len(steps) == 2                       # capture continues past the failed step
+    assert steps[0].screenshot_s3_key is not None
+    assert steps[1].screenshot_s3_key is None    # step 2 screenshot failed -> NULL key
+    assert steps[1].url == "https://f/2"

@@ -2,7 +2,13 @@
 Plan 2 resolver — no second resolver), dismiss CMP banners, screenshot the funnel
 step-by-step → S3, and best-effort pricing extraction. Playwright is the optional
 standby dep (lazy-imported)."""
-from agf.enrich_full.schemas import ResolvedTarget
+import hashlib
+import json
+import re
+from contextlib import contextmanager
+from html import unescape
+from agf.storage.s3 import put_bytes
+from agf.enrich_full.schemas import ResolvedTarget, PricingExtract, FunnelStep
 
 
 async def resolve_landing(extractor, url, ua="ios") -> ResolvedTarget:
@@ -12,11 +18,6 @@ async def resolve_landing(extractor, url, ua="ios") -> ResolvedTarget:
     return ResolvedTarget(kind=resolved.intent.kind, store_id=resolved.intent.store_id,
                           landing_url=url, final_url=resolved.final_url)
 
-
-import json
-import re
-from html import unescape
-from agf.enrich_full.schemas import PricingExtract
 
 _JSONLD = re.compile(
     r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
@@ -98,11 +99,6 @@ def autoconsent_cmp(page) -> bool:
                 continue
     return False
 
-
-import hashlib
-from contextlib import contextmanager
-from agf.storage.s3 import put_bytes
-from agf.enrich_full.schemas import FunnelStep
 
 _NEXT_SELECTORS = ("a.cta", "button[type='submit']", ".btn-primary", "a.button",
                    "button.primary", "[data-testid='continue']")

@@ -47,8 +47,12 @@ def lookup_google_play(package_ids, *, runner=None) -> dict:
         return {}
     runner = runner or _default_node_runner
     raw = runner(ids) or "[]"
+    try:
+        rows = json.loads(raw)
+    except (ValueError, TypeError):
+        return {}                       # sidecar crashed / emitted non-JSON → degrade
     out: dict = {}
-    for r in json.loads(raw):
+    for r in rows:
         track_id = str(r.get("appId", ""))
         if not track_id or r.get("error"):
             continue
