@@ -16,11 +16,10 @@ def test_healthz_ok(_migrated_engine):
     assert client.get("/healthz").json()["status"] == "ok"
 
 
-def test_openapi_has_no_writes_yet(_migrated_engine):
-    # Task 4: routers are stubs -> zero write endpoints. Task 6 tightens this to the
-    # single review POST.
+def test_openapi_only_write_is_review_decision(_migrated_engine):
+    # the ONLY mutation in the whole API is recording a human review verdict
     client = TestClient(create_app(_migrated_engine))
-    assert _writes(client) == set()
+    assert _writes(client) == {("/api/review/{advertiser_id}/decision", "POST")}
 
 
 def test_read_only_conn_denies_writes(_migrated_engine):
