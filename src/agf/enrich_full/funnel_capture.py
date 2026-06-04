@@ -11,3 +11,61 @@ async def resolve_landing(extractor, url, ua="ios") -> ResolvedTarget:
     resolved = await extractor.resolve_deeplink(url, ua=ua)
     return ResolvedTarget(kind=resolved.intent.kind, store_id=resolved.intent.store_id,
                           landing_url=url, final_url=resolved.final_url)
+
+
+import json
+import re
+from html import unescape
+from agf.enrich_full.schemas import PricingExtract
+
+_JSONLD = re.compile(
+    r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
+    re.IGNORECASE | re.DOTALL)
+_PRICE = re.compile(r'[$€£]\s?(\d{1,4}(?:[.,]\d{2})?)')
+_CCY_SYM = {"$": "USD", "€": "EUR", "£": "GBP"}
+_CCY_WORD = re.compile(r'\b(USD|EUR|GBP)\b', re.IGNORECASE)
+_TRIAL = re.compile(
+    r'(\d+[\s-]?(?:day|week|month)s?\s+free(?:\s+trial)?'
+    r'|free\s+(?:\d+[\s-]?(?:day|week|month)s?\s+)?trial)', re.IGNORECASE)
+
+
+def _walk_jsonld(obj, prices, ccy):
+    if isinstance(obj, dict):
+        if "price" in obj and obj["price"] is not None:
+            prices.append(str(obj["price"]))
+        if obj.get("priceCurrency"):
+            ccy.append(str(obj["priceCurrency"]))
+        for v in obj.values():
+            _walk_jsonld(v, prices, ccy)
+    elif isinstance(obj, list):
+        for v in obj:
+            _walk_jsonld(v, prices, ccy)
+
+
+def extract_pricing(html) -> PricingExtract | None:
+    """Pull pricing/trial from a paywall page. JSON-LD Offer first, regex fallback.
+    None when nothing pricing-like is found."""
+    html = html or ""
+    prices, ccy = [], []
+    for block in _JSONLD.findall(html):
+        try:
+            _walk_jsonld(json.loads(block.strip()), prices, ccy)
+        except (ValueError, TypeError):
+            continue
+    currency = ccy[0].upper() if ccy else None
+    text = unescape(html)
+    if not prices:                                    # fallback: visible-text prices
+        prices = [m.group(1).replace(",", ".") for m in _PRICE.finditer(text)]
+        if currency is None:
+            sym = next((c for c in _CCY_SYM if c in text), None)
+            mw = _CCY_WORD.search(text)
+            currency = (_CCY_SYM[sym] if sym else None) or (mw.group(1).upper() if mw else None)
+    seen, uniq = set(), []
+    for p in prices:
+        if p not in seen:
+            seen.add(p); uniq.append(p)
+    mt = _TRIAL.search(text)
+    trial = mt.group(0).strip() if mt else None
+    if not uniq and not trial:
+        return None
+    return PricingExtract(prices=tuple(uniq), currency=currency, trial=trial)
