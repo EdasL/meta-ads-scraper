@@ -69,3 +69,31 @@ def extract_pricing(html) -> PricingExtract | None:
     if not uniq and not trial:
         return None
     return PricingExtract(prices=tuple(uniq), currency=currency, trial=trial)
+
+
+_CMP_ACCEPT_SELECTORS = (
+    "#onetrust-accept-btn-handler",
+    "#CybotCookiebotDialogBodyButtonAccept",
+    "#accept-recommended-btn-handler",
+    ".fc-cta-consent",                       # Google Funding Choices
+    "[aria-label='Accept all']",
+    "[aria-label='Accept All']",
+    "button[mode='primary']",                # Quantcast
+)
+
+
+def autoconsent_cmp(page) -> bool:
+    """Dismiss a cookie/consent banner (selector sweep). True if one was dismissed,
+    False if none present. Best-effort: per-selector errors are swallowed."""
+    for sel in _CMP_ACCEPT_SELECTORS:
+        try:
+            el = page.query_selector(sel)
+        except Exception:
+            el = None
+        if el:
+            try:
+                el.click()
+                return True
+            except Exception:
+                continue
+    return False
