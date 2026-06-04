@@ -1,0 +1,7 @@
+{"data":{"ad_library_main":{"search_results_connection":{
+  "edges":[{"node":{"collated_results":[
+    {"ad_archive_id":"1","page_id":"P1","page_name":"GemA","is_active":true,
+     "start_date":1714500000,"end_date":null,"collation_count":5,
+     "snapshot":{"cta_type":"INSTALL_MOBILE_APP","link_url":"https://apps.apple.com/us/app/x/id111","body":{"text":"a"}}}
+  ]}}],
+  "page_info":{"has_next_page":true,"end_cursor":"CUR1"}}}}}

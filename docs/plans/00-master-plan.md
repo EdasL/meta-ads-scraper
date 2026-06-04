@@ -122,7 +122,7 @@ Critical path: **1 → 2 → 4 → 5 → 6 → 7**. Plan 3 runs parallel to Plan
 | Plan | Phase | Depends | Status | Owner | Detailed plan |
 |---|---|---|---|---|---|
 | 1 | PoC | — | ✅ done | claude | `01-poc-plan.md` ✅ written · 30/30 unit green · live-verified 2026-06-04 (GraphQL 200 + real ads parsed; httpx bootstrap anti-bot-blocked → Plan 2 Playwright) |
-| 2 | Extraction core | 1 | ⬜ ready (deps met) | — | `02-extraction-plan.md` (curl_cffi + rd_challenge) |
+| 2 | Extraction core | 1 | ✅ done | claude | `02-extraction-plan.md` · 44 unit + 2 live-integration green (curl_cffi + rd_challenge) |
 | 3 | Data spine | 1 | ⬜ ready (deps met) | — | TBD |
 | 4 | Discovery firehoses | 1,2,3 | ⬜ blocked | — | TBD |
 | 5 | Velocity + GemScore | 1,2,3,4 | ⬜ blocked | — | TBD |
