@@ -1,0 +1,8 @@
+{
+  "name": "agf-gp-lookup",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "google-play-scraper sidecar for Plan 6 Android enrichment",
+  "dependencies": { "google-play-scraper": "^10.0.0" }
+}

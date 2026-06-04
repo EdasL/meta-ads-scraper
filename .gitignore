@@ -9,5 +9,9 @@ __pycache__/
 gems.csv
 *.csv
 
+# Node sidecar (Plan 6 — google-play-scraper)
+src/agf/enrich_full/sidecar/node_modules/
+src/agf/enrich_full/sidecar/package-lock.json
+
 # OS
 .DS_Store
