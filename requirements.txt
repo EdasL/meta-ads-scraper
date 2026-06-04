@@ -5,3 +5,10 @@ pytest==8.3.4
 curl_cffi==0.15.0
 # playwright is an OPTIONAL standby warmer (Task 11); install only if used:
 #   playwright==1.49.0   (+ `playwright install chromium`)
+
+# --- plan-3 ---
+psycopg[binary]==3.3.4
+SQLAlchemy==2.0.50
+boto3==1.43.22
+Pillow==12.2.0
+ImageHash==4.3.2
