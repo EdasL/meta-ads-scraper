@@ -29,7 +29,7 @@
 
 ## 2. North star & guardrails (never violate)
 
-- **One extraction method:** scrape the Meta Ad Library **web GraphQL via Playwright interception** (Plan 2). Never the official `ads_archive` API (EU/political only, no US commercial, no sort).
+- **One extraction method:** scrape the Meta Ad Library **web GraphQL** (Plan 2) via **`curl_cffi` (Chrome-TLS impersonation) + a pure-HTTP `rd_challenge` solver + token/`doc_id` self-heal**, replaying `AdLibrarySearchPaginationQuery` through residential proxies in a warm-once/reuse pool. A real browser (Playwright/Camoufox) is a **standby warmer fallback only**, never the hot path. Never the official `ads_archive` API (EU/political only, no US commercial, no sort). *(Revised 2026-06-04 after research + on-machine proof — see `../research/2026-06-04-server-side-extraction.md`; supersedes the original "Playwright interception is the single method".)*
 - **Scaling is a proxy** (US has no spend/impressions): ad **longevity ≥14d** + **active-creative-count velocity** + **collation duplication**. Never claim true spend.
 - **Non-negotiable cross-check:** a candidate is "scaling on Meta" only after the Ad Library confirms **active creatives, longevity ≥14d**. Organic TikTok risers (0 Meta spend) are dropped. Discovery and scaling-confirmation are two separate steps.
 - **"Still unknown" is a hard multiplicative gate:** `GemScore = 100·SV^.5·UR^.35·FI^.15` with per-axis floor. Famous brand → UnderRadar≈0 → score≈0.
@@ -43,7 +43,7 @@
 These resolve the cross-phase consistency issues. Treat as law.
 
 ### 3.1 Tech stack
-Python 3.13 · httpx · Playwright (Python) · PostgreSQL 17/18 (datastore **and** queue) via psycopg + SQLAlchemy Core · MinIO/S3 · Node sidecar **only** for `facundoolano/google-play-scraper` · pytest (TDD) · numpy + statsmodels (Plan 5 stats) · Pillow/imagehash (perceptual hash) · python-whois · aria2c/ffmpeg (media) · FastAPI (read-only output) · cron + worker processes + PID-file mutex (**no Redis/Celery/Kafka day 1**) · docker-compose on an 8–16GB VPS · residential rotating proxies.
+Python 3.13 · **`curl_cffi`** (Chrome-TLS impersonation — primary Ad Library transport) · httpx (iTunes/light JSON APIs only) · **Playwright (Python) — standby session-warmer fallback only, not the hot path** · PostgreSQL 17/18 (datastore **and** queue) via psycopg + SQLAlchemy Core · MinIO/S3 · Node sidecar **only** for `facundoolano/google-play-scraper` · pytest (TDD) · numpy + statsmodels (Plan 5 stats) · Pillow/imagehash (perceptual hash) · python-whois · aria2c/ffmpeg (media) · FastAPI (read-only output) · cron + worker processes + PID-file mutex (**no Redis/Celery/Kafka day 1**; Redis optional later as the warm-session token store) · docker-compose on an 8–16GB VPS · residential rotating proxies.
 
 ### 3.2 Repo root & layout
 Project root: `~/Projects/emerging-app-finder/`. All file paths below are relative to it.
@@ -122,7 +122,7 @@ Critical path: **1 → 2 → 4 → 5 → 6 → 7**. Plan 3 runs parallel to Plan
 | Plan | Phase | Depends | Status | Owner | Detailed plan |
 |---|---|---|---|---|---|
 | 1 | PoC | — | ✅ done | claude | `01-poc-plan.md` ✅ written · 30/30 unit green · live-verified 2026-06-04 (GraphQL 200 + real ads parsed; httpx bootstrap anti-bot-blocked → Plan 2 Playwright) |
-| 2 | Extraction core | 1 | ⬜ ready (deps met) | — | TBD (expand §6) |
+| 2 | Extraction core | 1 | ⬜ ready (deps met) | — | `02-extraction-plan.md` (curl_cffi + rd_challenge) |
 | 3 | Data spine | 1 | ⬜ ready (deps met) | — | TBD |
 | 4 | Discovery firehoses | 1,2,3 | ⬜ blocked | — | TBD |
 | 5 | Velocity + GemScore | 1,2,3,4 | ⬜ blocked | — | TBD |
@@ -143,10 +143,12 @@ Prove the full chain (US search → app-classify → emerging-enrich → scaling
 
 ---
 
-### Plan 2 — Extraction core (durable Playwright scraper)  ·  deps: 1  ·  ~4d
-**Goal:** durable Ad Library scraper: Playwright `api/graphql` interception, self-heal `doc_id`+LSD+fb_dtsg (HTML + JS bundle), paginate via `end_cursor`, residential-proxy + backoff, deeplink resolver, and the **`Extractor` facade** (§3.4) every later phase calls.
-**Owns:** `src/agf/extract/` (`backoff.py`, `proxy.py`, `token_heal.py`, `playwright_session.py`, `search.py`, `ad_details.py`, `deeplink.py`, `facade.py`), `tests/extract/`. Appends `# --- plan-2 ---` deps to `requirements.txt` (playwright).
-**Exposes:** §3.4 `Extractor`; `classify_error`/`with_backoff`; `ProxyPool.from_env` (`AGF_PROXIES`); `SessionTokens`/`heal_from_html`; `AdLibrarySession`; `AdDetails`; `ResolvedLink`.
+### Plan 2 — Extraction core (curl_cffi + rd_challenge; browser as standby)  ·  deps: 1  ·  ~4d  ·  → `02-extraction-plan.md`
+**Goal:** durable Ad Library scraper built on **`curl_cffi` (Chrome-TLS)** + a pure-HTTP **`rd_challenge` solver** (yt-dlp #15577/#15582 pattern), self-heal `doc_id`+LSD+fb_dtsg (HTML + JS bundle), paginate via `end_cursor`, residential-proxy + backoff, deeplink resolver, a **session-warming pool** (warm once → reuse, refresh on staleness), and the **`Extractor` facade** (§3.4) every later phase calls. Real browser (Playwright/Camoufox) = standby warmer fallback only. Rationale + on-machine proof: `../research/2026-06-04-server-side-extraction.md`. Full TDD task breakdown: `02-extraction-plan.md`.
+**Owns:** `src/agf/extract/` (`backoff.py`, `proxy.py`, `tls_client.py` [curl_cffi session], `rd_challenge.py`, `token_heal.py`, `search.py`, `ad_details.py`, `deeplink.py`, `session_pool.py`, `warmer.py` [optional browser], `facade.py`), `tests/extract/`. Appends `# --- plan-2 ---` deps to `requirements.txt` (`curl_cffi`; `playwright` optional/standby).
+**Exposes:** §3.4 `Extractor`; `classify_error`/`with_backoff`; `ProxyPool.from_env` (`AGF_PROXIES`); `solve_rd_challenge`; `SessionTokens`/`heal_from_html`/`heal_doc_id_from_bundle`; `AdLibrarySession` (curl_cffi-backed) + `SessionPool`; `AdDetails`; `ResolvedLink`.
+
+> **Note:** the original P2-T1…T9 below predate the 2026-06-04 method revision (they assumed Playwright interception). They are superseded by the curl_cffi/rd_challenge task breakdown in `02-extraction-plan.md`; the `Extractor` facade contract (§3.4) is unchanged — only the internals differ.
 
 - [ ] **P2-T1** Scaffold `extract/`, pin playwright, `playwright install chromium` — done: `import agf.extract` ok · verify: `pytest -m "not integration" tests/extract -q`
 - [ ] **P2-T2** `backoff.py`: classify 429/1675004→rate_limit, 368→transient; jittered exponential `with_backoff` — done: retries then raises `ExtractError` after max · verify: `pytest tests/extract/test_backoff.py -q`
@@ -300,13 +302,17 @@ Prove the full chain (US search → app-classify → emerging-enrich → scaling
 - **ToS posture:** private analysis only; no redistribution/reuse-in-own-ads/model-training. Confirm. *(owner: founder)*
 - **PoC scope:** ship Plan 1 single-keyword PoC first, or fold Firehose B into the PoC? *(default: ship PoC first)*
 
+**Decisions logged:**
+- **[2026-06-04, claude+founder] Extraction method revised (§2, §3.1, Plan 2).** Research + on-machine proof showed the 403 is Facebook's `rd_challenge` (browserless-solvable) and that the real blocker for plain `httpx` is also TLS fingerprinting. Primary transport is now **`curl_cffi` + `rd_challenge` solver + token self-heal + residential proxy** (warm-once/reuse pool); Playwright demoted to standby warmer. Founder chose the self-hosted local-now/hosted-later path. Full analysis: `../research/2026-06-04-server-side-extraction.md`. Proxy vendor question above now has researched options (Evomi ~$0.49/GB, IPRoyal ~$1.75/GB; budget ~$10–40/mo ex-media) — still pending founder's final pick.
+
 Log changes here with date + who, when a §3 contract changes.
 
 ---
 
 ## 9. Glossary
 
-- **doc_id** — rotating ID for the Ad Library GraphQL query; self-healed each session, fallback `27201872659451053`.
+- **doc_id** — rotating Relay persisted-query hash for the Ad Library GraphQL query; lives in a hashed JS bundle (not inline), rotates ~2–4 weeks, self-healed each session. Known-good fallbacks: `27201872659451053` (live-verified 2026-06-04), `25464068859919530`, `33730956806489539`.
+- **rd_challenge** — Facebook's "Client challenge" (shipped ~Jan 14 2026): a 403 + ~481-byte JS stub that POSTs to `/__rd_verify_<token>?challenge=N` to mint an `rd_challenge` cookie (24h). Solvable in pure HTTP (no browser) — regex the path, empty-POST it, retry. The reason plain GETs 403; see Plan 2 + `../research/2026-06-04-server-side-extraction.md`.
 - **Firehose A/B/C** — new-app RSS+MWM / EU-impressions radar / funnel-tech fingerprint discovery nets.
 - **EU→US bridge** — re-query an EU-discovered `page_id` with `country=US` to get its richer US ads.
 - **Scaling proxy** — longevity + active-creative-count velocity + collation duplication (US has no real spend).
