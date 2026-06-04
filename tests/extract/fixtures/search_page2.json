@@ -1,0 +1,7 @@
+{"data":{"ad_library_main":{"search_results_connection":{
+  "edges":[{"node":{"collated_results":[
+    {"ad_archive_id":"2","page_id":"P2","page_name":"GemB","is_active":true,
+     "start_date":1714600000,"end_date":null,"collation_count":3,
+     "snapshot":{"cta_type":"INSTALL_MOBILE_APP","link_url":"https://play.google.com/store/apps/details?id=com.b","body":{"text":"b"}}}
+  ]}}],
+  "page_info":{"has_next_page":false,"end_cursor":null}}}}}
