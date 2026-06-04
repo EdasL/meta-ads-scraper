@@ -19,11 +19,20 @@ class Candidate:
 
 def upsert_candidate(conn, c: Candidate) -> dict:
     """Route a Candidate into the spine (§3.3). Returns the ids it touched.
-    Dedup-safety comes from the repo's ON CONFLICT upserts."""
+    Dedup-safety comes from the repo's ON CONFLICT upserts.
+
+    When the candidate carries its originating `ad_record` (e.g. bridge candidates),
+    the ad itself is persisted too — otherwise discovered advertisers would have no
+    `ads` rows and Plan 5 could not compute scaling velocity (found via live e2e)."""
     out: dict = {}
+    app_id = None
     if c.kind == "app" and (c.store_id or (c.app_meta and c.app_meta.get("store_id"))):
         meta = c.app_meta or {"store": c.store or "ios", "store_id": c.store_id}
-        out["app_id"] = repo.upsert_app(conn, meta)
+        app_id = repo.upsert_app(conn, meta)
+        out["app_id"] = app_id
     if c.page_id:                     # page/funnel/app candidates that carry a Meta page
-        out["advertiser_id"] = repo.upsert_advertiser(conn, c)   # c exposes page_id/page_name
+        advertiser_id = repo.upsert_advertiser(conn, c)   # c exposes page_id/page_name
+        out["advertiser_id"] = advertiser_id
+        if c.ad_record is not None:   # persist the discovered ad (links it to the advertiser)
+            out["ad_id"] = repo.upsert_ad(conn, c.ad_record, advertiser_id, app_id)
     return out

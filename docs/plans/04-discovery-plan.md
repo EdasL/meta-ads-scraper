@@ -54,5 +54,8 @@ export AGF_TEST_DB_URL=postgresql://agf:agf@localhost:5433/agf
 - `collapse_to_advertisers` reuses Plan 1 `aggregate_advertisers` (active-only) so the EU radar and the PoC share one definition of "advertiser scale."
 - Discovery can run as a worker via `make_discovery_handler` (adapter §3.9) under Plan 3's `run_worker`.
 
+## Live end-to-end (2026-06-04) — and a gap it caught
+Ran the assembled pipeline for real (live Meta Ad Library `Extractor` + real Postgres, scaled down): DE impressions sweep → 10 real ads → 2 advertisers → EU→US bridge → 14-day confirm → rows committed. It **worked** (advertisers written, a real page confirmed scaling), and it **surfaced a gap the fake-extractor unit tests didn't**: `upsert_candidate` persisted advertisers/apps but not the discovered `ads`, so a web-funnel advertiser would have no `ads` rows (which Plan 5 velocity needs). **Fixed:** `upsert_candidate` now persists `c.ad_record` via `upsert_ad` when present (regression test `test_candidate_with_ad_record_persists_the_ad`); re-run confirmed `advertisers=2, ads=1`.
+
 ## Phase-Verify (met)
-`pytest tests/discovery -q` green; orchestrator upserts from B + bridge, links apps→advertisers, and gates on the 14-day confirm (`test_run_discovery_counts_only_confirmed`); `--dry-run` exits 0.
+`pytest tests/discovery -q` green (16 tests); orchestrator upserts from B + bridge, persists discovered ads, links apps→advertisers, and gates on the 14-day confirm (`test_run_discovery_counts_only_confirmed`); `--dry-run` exits 0; live e2e writes real rows to Postgres.

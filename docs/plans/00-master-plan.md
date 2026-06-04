@@ -311,6 +311,8 @@ Prove the full chain (US search → app-classify → emerging-enrich → scaling
 
 - **[2026-06-04, founder] Firehose A (app-store new-apps seed) DROPPED.** Meta Ad Library (B) is the sole discovery engine + funnel fingerprint (C) for web targets; **iTunes is used only for enrichment** (Lookup release-date/ratings/genre), not discovery. Rationale: day-0 RSS apps carry no Meta-spend signal and get discarded at the 14-day scaling gate anyway. Accepted tradeoff: strictly-US-only app advertisers with no EU ads and no web funnel may be missed. Plan 4 drops P4-T2/T3 → now 2 firehoses (~5d).
 
+- **[2026-06-04, claude] Live e2e caught an ads-persistence gap (Plan 4).** A real run (live Meta Ad Library → discovery → Postgres) showed `upsert_candidate` persisted advertisers/apps but **not the discovered `ads`** — so a web-funnel advertiser would have no `ads` rows and Plan 5 couldn't compute scaling velocity. Fix: `upsert_candidate` now `upsert_ad`s the candidate's `ad_record` when present. Re-run confirmed ads land (`advertisers=2, ads=1`). Lesson: fake-extractor unit tests + frozen-contract adherence didn't surface it; only the assembled live run did.
+
 Log changes here with date + who, when a §3 contract changes.
 
 ---
