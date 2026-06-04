@@ -12,3 +12,7 @@ SQLAlchemy==2.0.50
 boto3==1.43.22
 Pillow==12.2.0
 ImageHash==4.3.2
+
+# --- plan-4 ---
+# No new deps: Firehose A (feedparser) was dropped; funnel-tech signature detection
+# is stdlib substring matching; the fingerprint search client reuses httpx.
