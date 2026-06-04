@@ -188,22 +188,22 @@ Prove the full chain (US search → app-classify → emerging-enrich → scaling
 
 ---
 
-### Plan 4 — Discovery firehoses  ·  deps: 1,2,3  ·  ~6d
-**Goal:** three keyword-free firehoses + the mandatory scaling-confirm, all dumping `Candidate`s into the spine via §3.3 (`conn`) using the §3.4 `Extractor`. **Includes the app→advertiser linkage** (classify `link_url`→`store_id` match → set `ads.app_id`+`advertiser_id` → derive `page_id`).
+### Plan 4 — Discovery firehoses (B + C)  ·  deps: 1,2,3  ·  ~5d
+**Goal:** two keyword-free firehoses (B: Meta Ad Library, C: funnel fingerprint) + the mandatory scaling-confirm, all dumping `Candidate`s into the spine via §3.3 (`conn`) using the §3.4 `Extractor`. **Includes the app→advertiser linkage** (classify `link_url`→`store_id` match → set `ads.app_id`+`advertiser_id` → derive `page_id`).
 
-> **Discovery sources (revised 2026-06-04 after research + PoC — see `../research/2026-06-04-discovery-sources.md`):** Discovery is **spend-driven**: Firehose **B (Meta Ad Library)** is the PRIMARY engine; the app-store lane is a cheap **seed + release-date post-filter**, not the engine. **Firehose A rebuild:** the legacy iTunes RSS new-apps feed is **live** (PoC-verified) but returns only **~100–120 globally-newest apps per run — genre fan-out does NOT multiply** (drop the "26-genre→thousands" assumption); implement as a **daily-polled accumulator** + iTunes `releaseDate` post-filter (use `releaseDate`, never `currentVersionReleaseDate`) + a **health check** (it has frozen historically). The modern `rss.applemarketingtools.com` v2 generator has **no "new" feed** (404). **Android has no free "new" feed** (Google removed NEW/MOVERS) → seed Android from Meta + iOS→Android matching; `google-play-scraper.app()` for dates; Play sitemap only if full enumeration is needed. **Firehose C:** PublicWWW free top-1M for funnel fingerprints. **Optional cheap convenience layers:** ScrapeCreators ($10/mo) for the Meta side, PublicWWW (~$49–79/mo) for funnels at scale. Skip enterprise app-intel (Sensor Tower/Apptopia/42matters→Similarweb); Appfigures (~$350/mo) only if iOS seed coverage proves insufficient.
-**Owns:** `src/agf/discovery/` (`seeds`, `firehose_rss`, `firehose_eu`, `bridge`, `firehose_fingerprint`, `link_apps`, `confirm`, `run_discovery`), `src/agf/discovery/sidecar/gplay_collect.js`, `data/seeds/`, `tests/discovery/`. Appends `# --- plan-4 ---` (lxml/beautifulsoup4, feedparser).
-**Exposes:** `Candidate` + `upsert_candidate(conn, c)`; `run_rss_firehose`/`fetch_mwm_catalog`/`gplay_sidecar_collect`; `run_eu_impressions_firehose(extractor,…)`+`collapse_to_advertisers`; `bridge_eu_to_us(extractor,page_id)`; `fingerprint_search`+signatures+`classify_funnel_intent`; **`link_app_to_advertiser(conn, extractor, candidate)`**; `confirm_scaling_on_meta(extractor,page_id,min_longevity_days=14)`; `run_all_firehoses(conn, extractor, client, config)`.
+> **Discovery sources (revised 2026-06-04 — research + PoC + founder decision — see `../research/2026-06-04-discovery-sources.md`):** Discovery is **spend-driven**. **Firehose A (app-store new-apps seed) is DROPPED.** The legacy iTunes RSS feed works but only surfaces ~100–120 day-0 apps/run with **no Meta-spend signal**, so it's noise we'd discard at the 14-day scaling gate anyway. **Meta Ad Library (Firehose B) is THE discovery engine**, patched for web-native targets by **Firehose C (funnel-tech fingerprint via PublicWWW free top-1M)**. **iTunes is used ONLY for enrichment** (release-date / ratings / genre via the Lookup API — the `emerging` / under-radar / cohort signals), never for discovery. **Accepted tradeoff:** a strictly-US-only *app* advertiser that never runs EU ads and isn't a web funnel can be missed (was the job of A). **Android** release dates via `google-play-scraper.app()` (enrichment only). Optional cheap convenience layer: ScrapeCreators ($10/mo) for the Meta side. Skip enterprise app-intel (Sensor Tower/Apptopia/42matters→Similarweb); Appfigures (~$350/mo) only if Meta-side discovery later proves to miss too much.
+**Owns:** `src/agf/discovery/` (`seeds`, `firehose_eu`, `bridge`, `firehose_fingerprint`, `link_apps`, `confirm`, `run_discovery`), `data/seeds/`, `tests/discovery/`. Appends `# --- plan-4 ---` (lxml/beautifulsoup4). *(Firehose-A files `firehose_rss.py` + `sidecar/gplay_collect.js` + the `feedparser` dep are dropped.)*
+**Exposes:** `Candidate` + `upsert_candidate(conn, c)`; `run_eu_impressions_firehose(extractor,…)`+`collapse_to_advertisers`; `bridge_eu_to_us(extractor,page_id)`; `fingerprint_search`+signatures+`classify_funnel_intent`; **`link_app_to_advertiser(conn, extractor, candidate)`**; `confirm_scaling_on_meta(extractor,page_id,min_longevity_days=14)`; `run_all_firehoses(conn, extractor, client, config)`.
 
 - [ ] **P4-T1** `seeds.py` `Candidate` + `upsert_candidate(conn,c)` router (§3.3) — done: app→upsert_app, page→upsert_advertiser, dedup-safe · verify: `pytest tests/discovery/test_seeds.py -q`
-- [ ] **P4-T2** Firehose A `fetch_itunes_rss` + `diff_against_seen` — done: fixture parse + delta drop · verify: `pytest tests/discovery/test_firehose_rss.py -q`
-- [ ] **P4-T3** Firehose A `fetch_mwm_catalog` + Node `gplay_collect.js` sidecar bridge — done: MWM since-date filter + gplay stdout→entries · verify: `pytest tests/discovery/test_firehose_rss_mwm_gplay.py -q`
+- ~~**P4-T2** Firehose A `fetch_itunes_rss`~~ — **DROPPED** (founder decision 2026-06-04; new-apps seed is noise — see §8).
+- ~~**P4-T3** Firehose A MWM + gplay new-apps sidecar~~ — **DROPPED** (same). *(`google-play-scraper` is still used for Android release-date **enrichment** in Plan 6, not discovery.)*
 - [ ] **P4-T4** Firehose B `run_eu_impressions_firehose` (`extractor`, DE/GB, `sort_by_impressions`) + `collapse_to_advertisers` (≥25 running days) — done: collapse to page_ids, drop <25d · verify: `pytest tests/discovery/test_firehose_eu.py -q`
 - [ ] **P4-T5** `bridge_eu_to_us` (`search_type='page'`, `view_all_page_id`) + `run_bridge` — done: queries country=US with page id, emits Candidates · verify: `pytest tests/discovery/test_bridge.py -q`
 - [ ] **P4-T6** Firehose C `fingerprint_search` + `classify_funnel_intent` (paywall SDK ∩ pixel ∩ MMP) — done: paid fixture→True, organic→False · verify: `pytest tests/discovery/test_firehose_fingerprint.py -q`
 - [ ] **P4-T7** **`link_app_to_advertiser`**: search Meta by app, resolve deeplinks (Plan 2), match `store_id`, set `ads.app_id`+`advertiser_id`, return `page_id` — done: matching ad linked, non-match skipped · verify: `pytest tests/discovery/test_link_apps.py -q`
 - [ ] **P4-T8** `confirm_scaling_on_meta` (active + longevity≥14d) + `run_scaling_confirm` (sets `is_emerging`/eligible) — done: 20d-old pass, 3d-old fail · verify: `pytest tests/discovery/test_confirm.py -q`
-- [ ] **P4-T9** `run_discovery.py` orchestrator A→link→B(+bridge)→C→confirm, wired to crawl_log via handler adapter (§3.9) — done: fakes → only confirmed counted · verify: `pytest tests/discovery/test_run_discovery.py -q && python -m agf.discovery.run_discovery --dry-run`
+- [ ] **P4-T9** `run_discovery.py` orchestrator B(+bridge)→C→link→confirm, wired to crawl_log via handler adapter (§3.9) — done: fakes → only confirmed counted · verify: `pytest tests/discovery/test_run_discovery.py -q && python -m agf.discovery.run_discovery --dry-run`
 
 **Phase-verify:** `pytest tests/discovery -q` green; orchestrator upserts from all firehoses, links apps→advertisers, bridges EU→US, gates on 14d confirm.
 **Risks:** mock Plan 2/3 collaborators against §3 signatures (drift if they finalize differently — they won't if §3 is honored); scrape-target HTML/JSON churn (fixture refresh); EU→US bridge misses strictly-US-only advertisers (patched by A + C).
@@ -279,7 +279,7 @@ Prove the full chain (US search → app-classify → emerging-enrich → scaling
 2. **Data access = `conn`-first free functions** (§3.3); Plan 4 uses `conn`, not `repo`.
 3. **`Extractor` facade** is the Plan 2 export Plans 4/5/6 consume (§3.4).
 4. **`search_ads`/`Extractor.search` carry `sort_by_impressions`, `search_type`, `view_all_page_id`** (Firehose B + bridge).
-5. **App→advertiser linkage is Plan 4 P4-T7** (`link_app_to_advertiser`) — closes the Firehose-A→page_id gap.
+5. **App→advertiser linkage is Plan 4 P4-T7** (`link_app_to_advertiser`) — links a Meta ad's `link_url`→`store_id`→app to its advertiser/`page_id`. *(Originally framed as closing the Firehose-A→page_id gap; A is now dropped, but the linkage is still needed for Meta-discovered app ads.)*
 6. **Dependencies corrected:** Plan 5 = [1,2,3,4]; Plan 6 = [2,3,5]; Plan 7 = [1..6].
 7. **S3 client owned by Plan 3** (`src/agf/storage/s3.py`, §3.8).
 8. **Output/review keyed on `advertiser_id`, `app_id` NULLABLE** (§3.7) — web funnels stay in.
@@ -309,6 +309,8 @@ Prove the full chain (US search → app-classify → emerging-enrich → scaling
 
 - **[2026-06-04, claude+founder] Discovery sources researched + PoC'd (Plan 4 / Firehose A).** Confirmed spend-driven discovery (Meta Ad Library) is the right primary; app-store lane is a seed + release-date post-filter. PoC proved the legacy iTunes RSS new-apps feed is live but ~100–120 newest/run (no genre multiplication) → daily-polled accumulator. Android has no free "new" feed. Web funnels via PublicWWW. Cheap convenience layers: ScrapeCreators ($10/mo), PublicWWW (~$49–79/mo). Full analysis: `../research/2026-06-04-discovery-sources.md`. Closes the "Cohorts to seed first" / discovery-source open questions partially; proxy-vendor + paid-app-intel-spend decisions still pending founder.
 
+- **[2026-06-04, founder] Firehose A (app-store new-apps seed) DROPPED.** Meta Ad Library (B) is the sole discovery engine + funnel fingerprint (C) for web targets; **iTunes is used only for enrichment** (Lookup release-date/ratings/genre), not discovery. Rationale: day-0 RSS apps carry no Meta-spend signal and get discarded at the 14-day scaling gate anyway. Accepted tradeoff: strictly-US-only app advertisers with no EU ads and no web funnel may be missed. Plan 4 drops P4-T2/T3 → now 2 firehoses (~5d).
+
 Log changes here with date + who, when a §3 contract changes.
 
 ---
@@ -317,7 +319,7 @@ Log changes here with date + who, when a §3 contract changes.
 
 - **doc_id** — rotating Relay persisted-query hash for the Ad Library GraphQL query; lives in a hashed JS bundle (not inline), rotates ~2–4 weeks, self-healed each session. Known-good fallbacks: `27201872659451053` (live-verified 2026-06-04), `25464068859919530`, `33730956806489539`.
 - **rd_challenge** — Facebook's "Client challenge" (shipped ~Jan 14 2026): a 403 + ~481-byte JS stub that POSTs to `/__rd_verify_<token>?challenge=N` to mint an `rd_challenge` cookie (24h). Solvable in pure HTTP (no browser) — regex the path, empty-POST it, retry. The reason plain GETs 403; see Plan 2 + `../research/2026-06-04-server-side-extraction.md`.
-- **Firehose A/B/C** — new-app RSS+MWM / EU-impressions radar / funnel-tech fingerprint discovery nets.
+- **Firehose B/C** — EU-impressions radar / funnel-tech fingerprint discovery nets. *(Firehose A — the new-app RSS+MWM seed — was dropped 2026-06-04; see §8.)*
 - **EU→US bridge** — re-query an EU-discovered `page_id` with `country=US` to get its richer US ads.
 - **Scaling proxy** — longevity + active-creative-count velocity + collation duplication (US has no real spend).
 - **GemScore** — `100·SV^.5·UR^.35·FI^.15`; multiplicative AND-gate so incumbents → 0.
