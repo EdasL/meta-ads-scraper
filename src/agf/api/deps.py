@@ -1,10 +1,11 @@
 """FastAPI connection dependencies (master-plan §6 P7-T3). GET routes get a
 SET-TRANSACTION-READ-ONLY connection (default-deny writes); the single review POST
 gets a writable connection that commits on success."""
+from fastapi import Request
 from sqlalchemy import text
 
 
-def get_conn(request):
+def get_conn(request: Request):
     """Read-only connection: the transaction is marked READ ONLY, so any write
     (INSERT/UPDATE/DDL) is rejected by Postgres."""
     engine = request.app.state.engine
@@ -17,7 +18,7 @@ def get_conn(request):
         conn.close()
 
 
-def get_write_conn(request):
+def get_write_conn(request: Request):
     """Writable connection for the human review decision; commits on success."""
     engine = request.app.state.engine
     conn = engine.connect()
