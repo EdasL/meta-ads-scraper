@@ -1032,12 +1032,15 @@ Reads the weekly series + current ad/app/advertiser facts and produces the per-a
 
 ```python
 # tests/scoring/test_build_features.py
-from datetime import date
+from datetime import date, datetime, timezone
 from agf.parse import AdRecord
 from agf.db import repo
 from agf.scoring.features import build_features
 
-NOW = 1_749_000_000   # ~2026-06-04 (matches tests.discovery.conftest.NOW_EPOCH)
+# NOW must share AS_OF's time base, else "days_old" longevity is computed against
+# the wrong reference year (tests.discovery.conftest.NOW_EPOCH is ~2025, not 2026).
+AS_OF = date(2026, 6, 4)
+NOW = int(datetime(2026, 6, 4, tzinfo=timezone.utc).timestamp())
 DAY = 86_400
 
 
@@ -1060,7 +1063,7 @@ def test_build_features_accel_and_longevity_share(pg_conn):
     for wk, n in zip(("2026-05-11", "2026-05-18", "2026-05-25", "2026-06-01"), (1, 2, 4, 8)):
         repo.upsert_app_advertiser_metric(pg_conn, adv, wk, n, n, n * 10)
 
-    fv = build_features(pg_conn, adv, date(2026, 6, 4))
+    fv = build_features(pg_conn, adv, AS_OF)
 
     assert fv.advertiser_id == adv
     assert fv.cohort == "Health & Fitness×US"
