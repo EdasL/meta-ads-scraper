@@ -123,8 +123,8 @@ Critical path: **1 → 2 → 4 → 5 → 6 → 7**. Plan 3 runs parallel to Plan
 |---|---|---|---|---|---|
 | 1 | PoC | — | ✅ done | claude | `01-poc-plan.md` ✅ written · 30/30 unit green · live-verified 2026-06-04 (GraphQL 200 + real ads parsed; httpx bootstrap anti-bot-blocked → Plan 2 Playwright) |
 | 2 | Extraction core | 1 | ✅ done | claude | `02-extraction-plan.md` · 44 unit + 2 live-integration green (curl_cffi + rd_challenge) |
-| 3 | Data spine | 1 | ⬜ ready (deps met) | — | TBD |
-| 4 | Discovery firehoses | 1,2,3 | ⬜ blocked | — | TBD |
+| 3 | Data spine | 1 | ✅ done | claude | `03-data-spine-plan.md` · 25 DB/worker + 1 S3 green (skip-clean w/o infra) |
+| 4 | Discovery firehoses (B + C) | 1,2,3 | ⬜ ready (deps met) | — | `00-master-plan.md` §6 (needs detailed plan) |
 | 5 | Velocity + GemScore | 1,2,3,4 | ⬜ blocked | — | TBD |
 | 6 | Enrichment | 2,3,5 | ⬜ blocked | — | TBD |
 | 7 | Output + ops | 1,2,3,4,5,6 | ⬜ blocked | — | TBD |
