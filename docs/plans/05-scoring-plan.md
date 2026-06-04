@@ -155,7 +155,7 @@ Expected: FAIL — `ModuleNotFoundError: No module named 'agf.scoring.cohorts'`
 All GemScore normalization is within a (category × country) cohort."""
 import numpy as np
 
-_MAD_TO_STD = 1.4826  # makes MAD a consistent estimator of std for normal data
+_MAD_TO_STD = 1.4826022185056018  # 1/Φ⁻¹(0.75); matches scipy median_abs_deviation(scale="normal")
 
 
 def cohort_key(category, country) -> str:
