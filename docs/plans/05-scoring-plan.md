@@ -952,7 +952,7 @@ Expected: FAIL — `ImportError: cannot import name 'snapshot_advertiser_week'`
 - [ ] **Step 3: Append the implementation**
 
 ```python
-# --- append to src/agf/tracker/snapshots.py ---
+# --- append to src/agf/tracker/snapshots.py (add imports at top of file) ---
 from datetime import timedelta
 from agf.db.repo import _as_date   # reuse the date coercion helper
 
@@ -961,7 +961,10 @@ def snapshot_advertiser_week(conn, week_start) -> int:
     """Roll the week [week_start, week_start+7) into app_advertiser_metrics:
     active ad count, distinct creatives, total EU reach (latest in-week snapshot
     per ad). DB-native analogue of scale.aggregate_advertisers. Idempotent on
-    (advertiser_id, week_start). Returns rows upserted."""
+    (advertiser_id, week_start). Returns rows upserted.
+
+    Reach is aggregated in its own CTE (one row per ad) so the creative LEFT JOIN
+    fan-out cannot double-count it."""
     wk = _as_date(week_start)
     wk_end = wk + timedelta(days=7)
     rows = conn.execute(text("""
@@ -969,20 +972,30 @@ def snapshot_advertiser_week(conn, week_start) -> int:
             SELECT id, advertiser_id FROM public.ads
             WHERE is_active = TRUE AND advertiser_id IS NOT NULL
         ),
-        reach AS (   -- latest in-week eu_total_reach per ad
+        ad_reach AS (   -- latest in-week eu_total_reach per ad
             SELECT DISTINCT ON (m.ad_id) m.ad_id, m.eu_total_reach
             FROM adtech.ad_metrics m
             WHERE m.snapshot_date >= :wk AND m.snapshot_date < :wk_end
             ORDER BY m.ad_id, m.snapshot_date DESC
+        ),
+        per_adv AS (
+            SELECT aa.advertiser_id,
+                   count(DISTINCT aa.id) AS active_ad_count,
+                   count(DISTINCT c.id)  AS distinct_creative_count
+            FROM active_ads aa
+            LEFT JOIN public.creatives c ON c.ad_id = aa.id
+            GROUP BY aa.advertiser_id
+        ),
+        reach_adv AS (
+            SELECT aa.advertiser_id, COALESCE(sum(ar.eu_total_reach), 0) AS total_eu_reach
+            FROM active_ads aa
+            LEFT JOIN ad_reach ar ON ar.ad_id = aa.id
+            GROUP BY aa.advertiser_id
         )
-        SELECT aa.advertiser_id,
-               count(DISTINCT aa.id)                                AS active_ad_count,
-               count(DISTINCT c.id)                                 AS distinct_creative_count,
-               COALESCE(sum(DISTINCT_reach.eu_total_reach), 0)      AS total_eu_reach
-        FROM active_ads aa
-        LEFT JOIN public.creatives c ON c.ad_id = aa.id
-        LEFT JOIN reach DISTINCT_reach ON DISTINCT_reach.ad_id = aa.id
-        GROUP BY aa.advertiser_id
+        SELECT p.advertiser_id, p.active_ad_count, p.distinct_creative_count,
+               COALESCE(r.total_eu_reach, 0) AS total_eu_reach
+        FROM per_adv p
+        LEFT JOIN reach_adv r ON r.advertiser_id = p.advertiser_id
     """), {"wk": wk, "wk_end": wk_end}).all()
     for advertiser_id, active_ad_count, distinct_creative_count, total_eu_reach in rows:
         repo.upsert_app_advertiser_metric(
@@ -991,7 +1004,7 @@ def snapshot_advertiser_week(conn, week_start) -> int:
     return len(rows)
 ```
 
-> Careful with the `sum(DISTINCT_reach.eu_total_reach)` — `DISTINCT_reach` is a table alias, not the `DISTINCT` keyword. If the SQL parser balks at the alias name, rename it to `r` (`LEFT JOIN reach r … sum(r.eu_total_reach)`); the alias is incidental. Reach is summed once per ad via the `DISTINCT ON` CTE, so the creative LEFT JOIN fan-out does not double-count it.
+> **Fan-out note (resolved during build):** reach must be summed in its own CTE (`reach_adv`, one row per ad), NOT in the same query as the `public.creatives` LEFT JOIN — otherwise an ad with N creatives counts its reach N times (the test's `total_eu_reach == 150` catches this). The creative count uses `count(DISTINCT c.id)` so its own fan-out doesn't inflate the ad count.
 
 - [ ] **Step 4: Run test to verify it passes**
 
