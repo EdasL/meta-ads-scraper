@@ -1634,10 +1634,72 @@ git commit -m "feat(plan-2): Extractor facade (§3.4) over the warm-session pool
 
 ## Risks (carried from research)
 
-- **`doc_id` rotation (~2-4 wks):** `heal_doc_id` reads the JS bundle each warm; fallbacks `27201872659451053`/`25464068859919530`/`33730956806489539` cover gaps. On a GraphQL `400`/`doc_id` error, `SessionPool.invalidate()` forces a re-warm.
+- **`doc_id` rotation (~2-4 wks):** `heal_doc_id_from_bundles` fetches the linked JS bundles each warm (the id is NOT in the page HTML — see addendum A); fallbacks `24922295957467452`/`27201872659451053`/`25464068859919530`/`33730956806489539` cover gaps. On a GraphQL `400`/`doc_id` error, `SessionPool.invalidate()` forces a re-warm.
 - **`rd_challenge` upgraded to a real challenge:** the optional Task 11 browser warmer is the escape hatch (swap Chromium→Camoufox if detected).
 - **TLS/IP at volume:** curl_cffi covers TLS; residential proxies (via `AGF_PROXIES`) cover IP — pin one proxy per warm session, never rotate mid-session.
 - **Session staleness signals to wire into callers:** 403+`__rd_verify`, 429, FB codes 1357004/1357001 (session) and 1675004 (rate limit), HTTP 400 (stale doc_id/dtsg), empty edges on a known-good query → `pool.invalidate()` + backoff.
+
+---
+
+## Live validation addendum (2026-06-04)
+
+Before building, the "not-yet-exercised" paths were stress-tested live (browserless, `curl_cffi`, one warmed session). **Confirmed working:** pagination (4 pages × 10 ads = 40 unique, zero dupes, cursor fed), session reuse (one warm → many POSTs), EU impressions firehose (DE + empty query + `SORT_BY_TOTAL_IMPRESSIONS` → real big spenders incl. Shopify/blinkit), EU→US bridge (`viewAllPageID` + `country=US` returned the page's US ads), and `doc_id` self-heal. Two refinements below are folded into the tasks above.
+
+### Refinement A — `doc_id` lives in a JS bundle, not the page HTML (affects Task 5 + Task 6/10)
+
+The live page HTML did **not** contain the `doc_id` inline; it was harvested from a linked JS bundle (live value `24922295957467452`). So an HTML-only `heal_doc_id(html)` would always fall back. Add a bundle-fetching variant and call it from the warm flow. Update the fallback list (freshest first):
+
+```python
+# token_heal.py — replace FALLBACK_DOC_IDS and add a bundle-fetching healer
+FALLBACK_DOC_IDS = ["24922295957467452", "27201872659451053",
+                    "25464068859919530", "33730956806489539"]  # live-verified 2026-06-04 first
+
+import re as _re
+_SCRIPT_SRC_RE = _re.compile(r'<script[^>]+src="([^"]+\.js[^"]*)"')
+
+
+def heal_doc_id_from_bundles(session, html: str, *, max_bundles: int = 12) -> str:
+    """Prefer inline/HTML; else fetch linked JS bundles (capped) and grep the
+    AdLibrarySearchPaginationQuery relay-operation doc_id; else fall back."""
+    inline = _DOCID_BUNDLE_RE.search(html) or _DOCID_INLINE_RE.search(html)
+    if inline:
+        return inline.group(1)
+    for src in _SCRIPT_SRC_RE.findall(html)[:max_bundles]:
+        try:
+            m = _DOCID_BUNDLE_RE.search(session.get(src).text)
+        except Exception:
+            m = None
+        if m:
+            return m.group(1)
+    return FALLBACK_DOC_IDS[0]
+```
+- **Task 5 test:** add a unit case with a fake session whose `get(bundle_url)` returns HTML containing the relay-operation stub → asserts the id is harvested from the bundle, plus a no-match case → asserts `FALLBACK_DOC_IDS[0]`.
+- **Task 6/10:** the warm flow builds `SessionTokens.doc_id` via `heal_doc_id_from_bundles(session, html)` (it needs the session), not the HTML-only `heal_doc_id`. `heal_from_html` keeps doing LSD/fb_dtsg from the page; the pool wires the bundle healer for `doc_id`.
+
+### Refinement B — deeplink: classify direct links without network; handle non-HTTP redirect schemes (affects Task 9)
+
+Most `snapshot.link_url`s are already direct store URLs (`apps.apple.com`/`itunes.apple.com`/`play.google.com`) that `classify_url` resolves with **zero** network. Only follow redirects for MMP wrappers, and the chain can terminate at a non-HTTP scheme (`itms-apps://`, `market://`) which curl rejects.
+
+```python
+# deeplink.py — short-circuit + scheme-safe following
+_MMP_HOSTS = ("app.link", "onelink.to", "apple.co", "go.link", "adj.st", "lnk.to")
+
+
+def resolve_deeplink(session, url: str, ua: str = "ios") -> ResolvedLink:
+    direct = classify_url(url)
+    if direct.kind in ("ios", "android"):              # already a store link — no network
+        return ResolvedLink(final_url=url, intent=direct)
+    if not any(h in (url or "") for h in _MMP_HOSTS):  # plain web funnel — don't chase
+        return ResolvedLink(final_url=url, intent=direct)
+    headers = {"User-Agent": _IOS_UA if ua == "ios" else _DESKTOP_UA}
+    try:
+        resp = session.get(url, headers=headers, allow_redirects=True, max_redirects=10)
+        final_url = str(getattr(resp, "url", None) or url)
+    except Exception:
+        final_url = url                                # curl rejects itms-apps://; keep last good URL
+    return ResolvedLink(final_url=final_url, intent=classify_url(final_url))
+```
+**Task 9 test:** add (a) a direct `apps.apple.com` link → resolved with **no** `session.get` call, and (b) a fake session that raises on `.get` → falls back to the original URL's classification.
 
 ---
 
