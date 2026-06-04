@@ -133,7 +133,9 @@ def build_features(conn, advertiser_id: int, as_of) -> FeatureVector:
         app_name=app.name if app else None,
         wow_log_growth=log_growth_wow(series),
         accel=acceleration(series),
-        ewma_velocity=ewma(series),
+        # smooth the weekly *velocity* (deltas), not the level — else a big flat
+        # incumbent (high count, zero growth) outscores a small fast-growing gem.
+        ewma_velocity=ewma([series[i] - series[i - 1] for i in range(1, len(series))]),
         max_longevity_days=max_long,
         longevity_share=long_share,
         active_ad_count=len(active),

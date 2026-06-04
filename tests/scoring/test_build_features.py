@@ -33,6 +33,7 @@ def test_build_features_accel_and_longevity_share(pg_conn):
     assert fv.cohort == "Health & Fitness×US"
     assert fv.weeks_observed == 4
     assert fv.accel > 0                         # 1,2,4,8 is convex in log space
+    assert fv.ewma_velocity == 2.75             # ewma of weekly deltas [1,2,4], not the level
     assert fv.max_longevity_days >= 20
     assert fv.longevity_share == 0.5            # 1 of 2 active ads >= 14d
     assert fv.rating_count == 120

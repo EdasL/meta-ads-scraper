@@ -1222,6 +1222,8 @@ git commit -m "feat(plan-5): build_features — per-advertiser FeatureVector fro
 
 `score_all` builds features for every advertiser with ≥1 ad, normalizes each axis **within its cohort** (pctile for "higher = better", `1 - pctile` for "higher = more known"), computes sub-scores → `gem_score`, applies vetoes, and writes `adtech.advertiser_scores` with `alert = gem_score ≥ 70 AND not vetoed`. `refresh_emerging_matview` does the `REFRESH … CONCURRENTLY` on its own autocommit connection.
 
+> **SV refinements the live run forced (the "RUN IT LIVE" lesson):** the first cut had SV pull from raw **EWMA level** and raw **max-longevity** — both of which a big incumbent wins on size alone, so a small fast-growing gem could never top SV and never cleared 70. Fixed two ways without touching the frozen formula/weights: (1) `build_features.ewma_velocity` now smooths the weekly **deltas** (velocity), not the level; (2) `_sv_components` "longevity" uses the bounded **`longevity_share`** (0–1, gate-based), not raw days. This is exactly the class of bug fakes + contract-adherence hide — only seeding a real gem/brand/spike and reading the scores back surfaced it.
+
 **Files:**
 - Create: `src/agf/scoring/run_scoring.py`
 - Test: `tests/scoring/test_run_scoring_e2e.py`
@@ -1233,49 +1235,53 @@ git commit -m "feat(plan-5): build_features — per-advertiser FeatureVector fro
 """Live e2e against real Postgres. Uses _migrated_engine directly (not pg_conn)
 because REFRESH ... CONCURRENTLY needs committed rows + an autocommit connection,
 which the rolled-back pg_conn fixture cannot provide. Cleans up its sentinels."""
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timezone, timedelta
 from sqlalchemy import text
+from agf.parse import AdRecord
+from agf.db import repo
 from agf.db.engine import begin
 from agf.scoring.run_scoring import score_all, refresh_emerging_matview
 
 AS_OF = date(2026, 6, 4)
+NOW = int(datetime(2026, 6, 4, tzinfo=timezone.utc).timestamp())
+DAY = 86_400
+WEEK0 = date(2026, 3, 2)
 SENTINELS = ("P5GEM", "P5BRAND", "P5SPIKE")
 
-
-def _epoch(days_old):
-    return int(datetime(2026, 6, 4, tzinfo=timezone.utc).timestamp()) - days_old * 86_400
+# pid: (genre, rating_count, release_date, is_emerging, longevity_days,
+#       weekly active-ad-count series, weekly total_eu_reach, has_funnel)
+# GEM + BRAND share a cohort so the UR contrast (unknown vs famous) is meaningful;
+# SPIKE sits in its own cohort so it can't skew GEM/BRAND normalization, and is
+# present only to prove the seasonal-spike veto fires regardless of score.
+SPECS = {
+    "P5GEM":   ("Health & Fitness", 80,        "2026-05-25", True, 25,
+                [2, 5, 12, 30], 50, True),
+    "P5BRAND": ("Health & Fitness", 8_000_000, "2017-01-01", False, 500,
+                [80, 81, 82, 83], 9_000_000, False),
+    "P5SPIKE": ("Education", 300, "2026-05-01", True, 30,
+                [2, 1, 2, 6] * 3, 60, False),   # period-4 seasonal, ends on a peak
+}
 
 
 def _seed(conn):
-    from agf.parse import AdRecord
-    from agf.db import repo
-    out = {}
-    specs = {
-        # page_id: (genre, rating_count, release_date, longevity_days, weekly series, parent)
-        "P5GEM":   ("Health & Fitness", 150,     "2026-05-20", 20,
-                    [1, 2, 4, 8], None),
-        "P5BRAND": ("Health & Fitness", 5_000_000, "2019-01-01", 400,
-                    [40, 41, 42, 43], None),
-        "P5SPIKE": ("Health & Fitness", 300,     "2026-05-01", 30,
-                    [2, 1, 2, 6] * 3, None),
-    }
-    for pid, (genre, ratings, rel, longd, series, parent) in specs.items():
-        ar = AdRecord(f"{pid}-AD", pid, pid, True, _epoch(longd), None, 5,
+    ids = {}
+    for pid, (genre, ratings, rel, emerging, longd, series, reach, funnel) in SPECS.items():
+        ar = AdRecord(f"{pid}-AD", pid, pid, True, NOW - longd * DAY, None, 5,
                       "INSTALL_MOBILE_APP", "Install",
                       f"https://apps.apple.com/us/app/x/id{pid}", "body")
         adv = repo.upsert_advertiser(conn, ar)
         app = repo.upsert_app(conn, {"store": "ios", "store_id": pid, "name": pid,
                                      "genre": genre, "rating_count": ratings,
-                                     "release_date": rel, "is_emerging": True})
-        repo.upsert_ad(conn, ar, adv, app)
+                                     "release_date": rel, "is_emerging": emerging})
+        ad_id = repo.upsert_ad(conn, ar, adv, app)
+        if funnel:
+            repo.upsert_funnel(conn, ad_id, f"https://{pid}.example",
+                               f"https://{pid}.example/checkout", "shot.png")
         for i, n in enumerate(series):
-            wk = date(2026, 3, 2)  # any Monday; spacing only needs to be weekly-ordered
-            wk = wk.replace(day=2) if False else wk
-            from datetime import timedelta
-            repo.upsert_app_advertiser_metric(conn, adv, date(2026, 3, 2) + timedelta(weeks=i),
-                                              n, n, n * 10)
-        out[pid] = adv
-    return out
+            repo.upsert_app_advertiser_metric(conn, adv, WEEK0 + timedelta(weeks=i),
+                                              n, n, reach)
+        ids[pid] = adv
+    return ids
 
 
 def _cleanup(engine):
@@ -1287,6 +1293,8 @@ def _cleanup(engine):
             conn.execute(text("DELETE FROM adtech.app_advertiser_metrics WHERE advertiser_id = ANY(:i)"), {"i": ids})
             conn.execute(text("DELETE FROM adtech.ad_metrics m USING public.ads a "
                               "WHERE m.ad_id=a.id AND a.advertiser_id = ANY(:i)"), {"i": ids})
+            conn.execute(text("DELETE FROM public.funnels f USING public.ads a "
+                              "WHERE f.ad_id=a.id AND a.advertiser_id = ANY(:i)"), {"i": ids})
             conn.execute(text("DELETE FROM public.creatives c USING public.ads a "
                               "WHERE c.ad_id=a.id AND a.advertiser_id = ANY(:i)"), {"i": ids})
             conn.execute(text("DELETE FROM public.ads WHERE advertiser_id = ANY(:i)"), {"i": ids})
@@ -1357,11 +1365,13 @@ def _values(members, attr):
 
 
 def _sv_components(fv, members):
+    # all "higher raw = faster scaling"; longevity uses the bounded share so a big
+    # incumbent's raw run-length can't dominate a fast-growing gem.
     return {
         "wow": pctile(fv.wow_log_growth, _values(members, "wow_log_growth")),
         "accel": pctile(fv.accel, _values(members, "accel")),
         "ewma": pctile(fv.ewma_velocity, _values(members, "ewma_velocity")),
-        "longevity": pctile(fv.max_longevity_days, _values(members, "max_longevity_days")),
+        "longevity": pctile(fv.longevity_share, _values(members, "longevity_share")),
     }
 
 
