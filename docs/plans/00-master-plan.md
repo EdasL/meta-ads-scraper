@@ -126,8 +126,8 @@ Critical path: **1 → 2 → 4 → 5 → 6 → 7**. Plan 3 runs parallel to Plan
 | 3 | Data spine | 1 | ✅ done | claude | `03-data-spine-plan.md` · 25 DB/worker + 1 S3 green (skip-clean w/o infra) |
 | 4 | Discovery firehoses (B + C) | 1,2,3 | ✅ done | claude | `04-discovery-plan.md` · 15 tests green (skip-clean w/o infra) |
 | 5 | Velocity + GemScore | 1,2,3,4 | ✅ done | claude | `05-scoring-plan.md` · 38 tests green (pure-stats unit + live Postgres e2e + assembled smoke: gem alerts ≥70, brand UR-gated low, spike STL-vetoed; REFRESH … CONCURRENTLY ok ×2) |
-| 6 | Enrichment | 2,3,5 | ⬜ ready (deps met) | — | TBD |
-| 7 | Output + ops | 1,2,3,4,5,6 | ⬜ blocked | — | TBD |
+| 6 | Enrichment | 2,3,5 | ✅ done | claude | `06-enrichment-plan.md` · 34 tests (pure + live Postgres/MinIO) + **live assembled smoke** (real iTunes/chromium→MinIO/WHOIS/creative bytes→MinIO/Node gplay sidecar) + adversarial review hardening |
+| 7 | Output + ops | 1,2,3,4,5,6 | ⬜ ready (deps met) | — | TBD |
 
 Status legend: ⬜ not started · 🟡 in progress (`agent-id`) · ✅ done · 🔴 blocked/issue.
 Estimate (sequential): ~31 dev-days; with Plan 2 ∥ Plan 3 parallel, ~27.
@@ -236,16 +236,16 @@ Prove the full chain (US search → app-classify → emerging-enrich → scaling
 **Owns:** `src/agf/enrich_full/` (`appstore`, `funnel_capture`, `creatives`, `company`, `schemas`, `run_enrich`), `src/agf/enrich_full/sidecar/` (Node gp_lookup), `tests/enrich_full/`. Appends `# --- plan-6 ---` (python-whois). (aria2c/ffmpeg system deps documented in Plan 7 compose.)
 **Exposes:** `lookup_itunes_batch`/`lookup_google_play`; `resolve_landing` (delegates to Plan 2 `resolve_deeplink`); `capture_funnel`/`extract_pricing`/`autoconsent_cmp`; `download_creative`/`is_duplicate` (reuse Plan 3 dedup+s3); `domain_age`/`builtwith_tech`/`publisher_from_app`; `enrich_gem(conn, advertiser_id, *, top_n=5, deps)` worker job (adapter §3.9).
 
-- [ ] **P6-T1** `schemas.py` frozen dataclasses (ResolvedTarget, FunnelStep, PricingExtract, CreativeAsset, CompanyInfo, EnrichResult) — done: import+construct+frozen · verify: `pytest tests/enrich_full/test_schemas.py -q`
-- [ ] **P6-T2** `lookup_itunes_batch` (200-chunk, reuse Plan 1 `parse_lookup`) — done: 2-chunk fixture, correct count · verify: `pytest tests/enrich_full/test_appstore.py -q`
-- [ ] **P6-T3** Node `gp_lookup.js` sidecar + `lookup_google_play` — done: mock stdout→AppMeta; opt-in live · verify: `pytest tests/enrich_full/test_google_play.py -q`
-- [ ] **P6-T4** `resolve_landing` **delegating to Plan 2 `Extractor.resolve_deeplink`** — done: branch chain → ResolvedTarget kind+store_id · verify: `pytest tests/enrich_full/test_resolve_landing.py -q`
-- [ ] **P6-T5** `autoconsent_cmp(page)` — done: CMP fixture dismissed, no-banner→False · verify: `pytest tests/enrich_full/test_autoconsent.py -q`
-- [ ] **P6-T6** `capture_funnel` (reuse Plan 2 Playwright + geo proxy, per-step screenshots → S3) — done: 3-step local fixture → 3 FunnelSteps · verify: `pytest tests/enrich_full/test_capture_funnel.py -q`
-- [ ] **P6-T7** `extract_pricing` (JSON-LD Offer + regex fallback) — done: 2 paywall fixtures → plans/trial; none→None · verify: `pytest tests/enrich_full/test_extract_pricing.py -q`
-- [ ] **P6-T8** `download_creative` (aria2c/ffmpeg, sha256+phash via Plan 3 dedup, → S3) — done: near-dup phash hamming < threshold → deduped · verify: `pytest tests/enrich_full/test_creatives.py -q`
-- [ ] **P6-T9** `company.py` `domain_age`(whois)/`builtwith_tech`/`publisher_from_app` — done: whois+builtwith fixtures parsed; writes `upsert_advertiser_enrichment` · verify: `pytest tests/enrich_full/test_company.py -q`
-- [ ] **P6-T10** `enrich_gem(conn, advertiser_id, top_n)` worker job (top-N gated, adapter §3.9) — done: only top_n ads processed, funnels/creatives/apps rows written · verify: `pytest tests/enrich_full -q`
+- [x] **P6-T1** `schemas.py` frozen dataclasses (ResolvedTarget, FunnelStep, PricingExtract, CreativeAsset, CompanyInfo, EnrichResult) — done: import+construct+frozen · verify: `pytest tests/enrich_full/test_schemas.py -q`
+- [x] **P6-T2** `lookup_itunes_batch` (200-chunk, reuse Plan 1 `parse_lookup`) — done: 2-chunk fixture, correct count · verify: `pytest tests/enrich_full/test_appstore.py -q`
+- [x] **P6-T3** Node `gp_lookup.js` sidecar + `lookup_google_play` — done: mock stdout→AppMeta; opt-in live · verify: `pytest tests/enrich_full/test_google_play.py -q`
+- [x] **P6-T4** `resolve_landing` **delegating to Plan 2 `Extractor.resolve_deeplink`** — done: branch chain → ResolvedTarget kind+store_id · verify: `pytest tests/enrich_full/test_resolve_landing.py -q`
+- [x] **P6-T5** `autoconsent_cmp(page)` — done: CMP fixture dismissed, no-banner→False · verify: `pytest tests/enrich_full/test_autoconsent.py -q`
+- [x] **P6-T6** `capture_funnel` (reuse Plan 2 Playwright + geo proxy, per-step screenshots → S3) — done: 3-step local fixture → 3 FunnelSteps · verify: `pytest tests/enrich_full/test_capture_funnel.py -q`
+- [x] **P6-T7** `extract_pricing` (JSON-LD Offer + regex fallback) — done: 2 paywall fixtures → plans/trial; none→None · verify: `pytest tests/enrich_full/test_extract_pricing.py -q`
+- [x] **P6-T8** `download_creative` (aria2c/ffmpeg, sha256+phash via Plan 3 dedup, → S3) — done: near-dup phash hamming < threshold → deduped · verify: `pytest tests/enrich_full/test_creatives.py -q`
+- [x] **P6-T9** `company.py` `domain_age`(whois)/`builtwith_tech`/`publisher_from_app` — done: whois+builtwith fixtures parsed; writes `upsert_advertiser_enrichment` · verify: `pytest tests/enrich_full/test_company.py -q`
+- [x] **P6-T10** `enrich_gem(conn, advertiser_id, top_n)` worker job (top-N gated, adapter §3.9) — done: only top_n ads processed, funnels/creatives/apps rows written · verify: `pytest tests/enrich_full -q`
 
 **Phase-verify:** `pytest tests/enrich_full -q` green; `enrich_gem` on a seeded GemScore≥70 gem produces updated app metadata, ≥1 funnel row w/ screenshot key, deduped creatives, advertiser enrichment.
 **Risks:** fbcdn signed URLs expire → download at scrape time; Playwright funnel capture is brittle/memory-heavy → cap contexts + top-N; pricing extraction fragile across vendors (keep raw screenshot as ground truth).
