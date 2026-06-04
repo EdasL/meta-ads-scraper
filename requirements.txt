@@ -28,3 +28,7 @@ python-whois==0.9.5    # domain_age (WHOIS creation_date) in company.py
 #   cd src/agf/enrich_full/sidecar && npm install   (needs Node)
 # Playwright is the OPTIONAL standby (funnel capture); install only if used:
 #   playwright==1.49.0   (+ `playwright install chromium`)
+
+# --- plan-7 ---
+fastapi==0.115.6
+uvicorn==0.34.0    # ASGI server for production (ops/docker-compose api service)

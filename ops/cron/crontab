@@ -1,0 +1,7 @@
+# ops/cron/crontab — Field Desk scheduled jobs (times in UTC). All jobs read
+# AGF_DATABASE_URL (and snapshot.sh the venv/PYTHONPATH) from the container env.
+# Install in the `cron` service: crontab /app/ops/cron/crontab
+15 2 * * *  /app/ops/cron/snapshot.sh        >> /var/log/agf/snapshot.log 2>&1
+0  * * * *  /app/ops/cron/refresh_matview.sh >> /var/log/agf/refresh.log 2>&1
+30 3 * * *  /app/ops/cron/prune.sh           >> /var/log/agf/prune.log 2>&1
+0  4 * * *  /app/ops/cron/backup.sh          >> /var/log/agf/backup.log 2>&1

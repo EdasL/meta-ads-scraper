@@ -127,7 +127,7 @@ Critical path: **1 → 2 → 4 → 5 → 6 → 7**. Plan 3 runs parallel to Plan
 | 4 | Discovery firehoses (B + C) | 1,2,3 | ✅ done | claude | `04-discovery-plan.md` · 15 tests green (skip-clean w/o infra) |
 | 5 | Velocity + GemScore | 1,2,3,4 | ✅ done | claude | `05-scoring-plan.md` · 38 tests green (pure-stats unit + live Postgres e2e + assembled smoke: gem alerts ≥70, brand UR-gated low, spike STL-vetoed; REFRESH … CONCURRENTLY ok ×2) |
 | 6 | Enrichment | 2,3,5 | ✅ done | claude | `06-enrichment-plan.md` · 34 tests (pure + live Postgres/MinIO) + **live assembled smoke** (real iTunes/chromium→MinIO/WHOIS/creative bytes→MinIO/Node gplay sidecar) + adversarial review hardening |
-| 7 | Output + ops | 1,2,3,4,5,6 | ⬜ ready (deps met) | — | TBD |
+| 7 | Output + ops | 1,2,3,4,5,6 | ✅ done | claude | `07-output-ops-plan.md` · 25 tests (queries/routes/metrics/cron/compose/runbook) + **live API smoke 7/7** (matview→FastAPI shortlist/dossier/review/health, RO write-denial, `compose config -q`) |
 
 Status legend: ⬜ not started · 🟡 in progress (`agent-id`) · ✅ done · 🔴 blocked/issue.
 Estimate (sequential): ~31 dev-days; with Plan 2 ∥ Plan 3 parallel, ~27.
@@ -257,16 +257,16 @@ Prove the full chain (US search → app-classify → emerging-enrich → scaling
 **Owns:** `src/agf/api/` (`app`, `deps`, `routers/{shortlist,gems,review,health}`, `schemas`, `queries`), `db/schema/100_frontend_review.sql`, `ops/` (`docker-compose.yml`, `cron/*`, `proxy/gateway.conf`, `monitoring/*`, `RUNBOOK.md`), `tests/api/`, `tests/ops/`. Appends `# --- plan-7 ---` (fastapi, uvicorn).
 **Exposes:** `GET /api/shortlist?cohort=&min_score=&limit=&offset=`; `GET /api/gems/{advertiser_id}` dossier; `GET /api/gems/{advertiser_id}/scaling`; `GET /api/review/queue` + `POST /api/review/{advertiser_id}/decision`; `GET /healthz` + `/metrics`; `frontend.review_decisions` (§3.7); `create_app(engine)`; ops scripts; `RUNBOOK.md`.
 
-- [ ] **P7-T1** `queries.py` parameterized SELECTs over matview (§3.6 columns) — done: 3 fake gems, ranked by gem_score DESC, filters · verify: `pytest tests/api/test_queries.py -q`
-- [ ] **P7-T2** `schemas.py` Pydantic (`ShortlistRow` w/ `cohort`+`app_name`, `GemDossier`, `ReviewQueueRow`, `ReviewDecisionIn`) — done: sample dict validates, missing gem_score rejected · verify: `pytest tests/api/test_schemas.py -q`
-- [ ] **P7-T3** `app.py` `create_app(engine)` + read-only `get_conn` (SET TRANSACTION READ ONLY) — done: `/healthz` 200, OpenAPI lists only GETs + one POST review · verify: `pytest tests/api/test_app.py -q`
-- [ ] **P7-T4** shortlist + gems routers (advertiser_id-keyed) — done: ranked filtered shortlist, dossier, 404 unknown · verify: `pytest tests/api/test_routes_shortlist.py tests/api/test_routes_gems.py -q`
-- [ ] **P7-T5** `100_frontend_review.sql` (§3.7, advertiser_id PK) + review router — done: queue=undecided≥70, POST inserts + removes from queue · verify: `pytest tests/api/test_routes_review.py -q`
-- [ ] **P7-T6** health/metrics over crawl_log — done: seeded rows → correct rates, degraded flips on stale snapshot · verify: `pytest tests/api/test_routes_health.py tests/ops/test_health_checks_sql.py -q`
-- [ ] **P7-T7** cron scripts (snapshot, `REFRESH … CONCURRENTLY`, 365d prune, backup) + crontab — done: executable, absolute psql/pg_dump, CONCURRENTLY, valid cron · verify: `pytest tests/ops/test_cron_scripts.py -q && bash -n ops/cron/*.sh`
-- [ ] **P7-T8** `ops/docker-compose.yml` full stack (7 services, env-only creds, single source for PG/MinIO §3.10) — done: 7 services + depends_on edges; `docker compose config -q` ok · verify: `pytest tests/ops/test_compose.py -q`
-- [ ] **P7-T9** `monitoring/metrics.py` + doc_id-rotation & rate-limit alerts — done: each threshold fires its Alert · verify: `pytest tests/ops/test_metrics.py -q`
-- [ ] **P7-T10** `RUNBOOK.md` (doc_id rotation → re-heal via Plan 2 → verify; proxy refresh; restore) + ops smoke — done: mentions each script/module by name incl fallback doc_id · verify: `pytest tests/ops/test_runbook.py -q`
+- [x] **P7-T1** `queries.py` parameterized SELECTs over matview (§3.6 columns) — done: 3 fake gems, ranked by gem_score DESC, filters · verify: `pytest tests/api/test_queries.py -q`
+- [x] **P7-T2** `schemas.py` Pydantic (`ShortlistRow` w/ `cohort`+`app_name`, `GemDossier`, `ReviewQueueRow`, `ReviewDecisionIn`) — done: sample dict validates, missing gem_score rejected · verify: `pytest tests/api/test_schemas.py -q`
+- [x] **P7-T3** `app.py` `create_app(engine)` + read-only `get_conn` (SET TRANSACTION READ ONLY) — done: `/healthz` 200, OpenAPI lists only GETs + one POST review · verify: `pytest tests/api/test_app.py -q`
+- [x] **P7-T4** shortlist + gems routers (advertiser_id-keyed) — done: ranked filtered shortlist, dossier, 404 unknown · verify: `pytest tests/api/test_routes_shortlist.py tests/api/test_routes_gems.py -q`
+- [x] **P7-T5** `100_frontend_review.sql` (§3.7, advertiser_id PK) + review router — done: queue=undecided≥70, POST inserts + removes from queue · verify: `pytest tests/api/test_routes_review.py -q`
+- [x] **P7-T6** health/metrics over crawl_log — done: seeded rows → correct rates, degraded flips on stale snapshot · verify: `pytest tests/api/test_routes_health.py tests/ops/test_health_checks_sql.py -q`
+- [x] **P7-T7** cron scripts (snapshot, `REFRESH … CONCURRENTLY`, 365d prune, backup) + crontab — done: executable, absolute psql/pg_dump, CONCURRENTLY, valid cron · verify: `pytest tests/ops/test_cron_scripts.py -q && bash -n ops/cron/*.sh`
+- [x] **P7-T8** `ops/docker-compose.yml` full stack (7 services, env-only creds, single source for PG/MinIO §3.10) — done: 7 services + depends_on edges; `docker compose config -q` ok · verify: `pytest tests/ops/test_compose.py -q`
+- [x] **P7-T9** `monitoring/metrics.py` + doc_id-rotation & rate-limit alerts — done: each threshold fires its Alert · verify: `pytest tests/ops/test_metrics.py -q`
+- [x] **P7-T10** `RUNBOOK.md` (doc_id rotation → re-heal via Plan 2 → verify; proxy refresh; restore) + ops smoke — done: mentions each script/module by name incl fallback doc_id · verify: `pytest tests/ops/test_runbook.py -q`
 
 **Phase-verify:** `pytest tests/api tests/ops -q` green; `docker compose -f ops/docker-compose.yml config -q` exits 0; stack up → `/healthz` ok, `/api/shortlist?min_score=70` returns matview rows.
 **Risks:** matview/crawl_log schema drift breaks queries (gate on §3.5/§3.6 frozen); `REFRESH … CONCURRENTLY` needs Plan 5's UNIQUE index; read-only enforcement easy to bypass — test default-deny on writes.
