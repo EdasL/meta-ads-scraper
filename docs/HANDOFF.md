@@ -1,6 +1,6 @@
 # Emerging App Finder — Build Handoff
 
-**Last updated:** 2026-06-04 · **Branch:** `main` (all work merged) · **Tests:** 115 passing + a live end-to-end verified
+**Last updated:** 2026-06-04 · **Branch:** `main` (all work merged) · **Tests:** 153 passing + live end-to-end verified (incl. Plan 5 live Postgres e2e + assembled smoke)
 
 This is the single orientation doc for picking the build back up. The **source of truth** is `docs/plans/00-master-plan.md` (§3 frozen contracts, §5 dashboard, §6 phases, §8 decision log). Read this, then that.
 
@@ -15,11 +15,11 @@ This is the single orientation doc for picking the build back up. The **source o
 | 3 | Data spine (Postgres-as-queue) | ✅ done | 25 DB/worker + 1 S3 against **real Postgres 17 + MinIO** |
 | 4 | Discovery firehoses (B + C) | ✅ done | 16 unit (fakes + live Postgres) |
 | **—** | **Full 4-plan pipeline** | ✅ **proven** | **live e2e: real Meta Ad Library → discovery → bridge → 14-day confirm → rows in Postgres** |
-| 5 | Velocity tracker + GemScore | ⬜ **NEXT** (deps 1,2,3,4 ✅) | — |
-| 6 | Enrichment | ⬜ blocked (needs 2,3,5) | — |
+| 5 | Velocity tracker + GemScore | ✅ done | 38 tests: pure-stats unit + **live Postgres** e2e + assembled smoke (gem alerts ≥70, brand UR-gated, spike STL-vetoed; REFRESH … CONCURRENTLY ok) |
+| 6 | Enrichment | ⬜ **NEXT** (deps 2,3,5 ✅) | — |
 | 7 | Output + ops | ⬜ blocked (needs 1–6) | — |
 
-**Critical path remaining:** 5 → 6 → 7.
+**Critical path remaining:** 6 → 7.
 
 ### What is NOT yet proven (be honest about this)
 - Sustained volume / behind **residential proxies** (no creds wired; don't hammer Meta). `ProxyPool`/`backoff`/`SessionPool.invalidate` are built for it.
@@ -79,11 +79,15 @@ docker compose -f db/docker-compose.yml down       # tidy up
 
 ---
 
-## 6. Plan 5 scope (from master-plan §6)
+## 6. Plan 5 (✅ done — as-built) + what Plan 6 picks up
 
-**Owns:** `src/agf/tracker/snapshots.py`, `src/agf/scoring/` (`cohorts`, `features`, `gemscore`, `vetoes`, `run_scoring`), `db/schema/050_scoring.sql`, `db/schema/051_emerging_matview.sql`, `tests/tracker/`, `tests/scoring/`. Appends `# --- plan-5 ---` deps: **numpy, statsmodels, scipy**.
+**Plan 5 — Velocity tracker + GemScore — COMPLETE.** Detailed/as-built doc: `docs/plans/05-scoring-plan.md`. Built TDD on `feat/plan-5-scoring`, merged `--no-ff`. **Owns:** `src/agf/tracker/snapshots.py`, `src/agf/scoring/` (`cohorts`, `features`, `gemscore`, `vetoes`, `run_scoring`), `db/schema/050_scoring.sql` (`adtech.advertiser_scores`), `db/schema/051_emerging_matview.sql` (`frontend.emerging_scaling_apps`, UNIQUE index on `advertiser_id`), `tests/tracker/`, `tests/scoring/`. Pinned `# --- plan-5 ---`: numpy/scipy/statsmodels.
 
-**Key pieces (P5-T1…T10):** `snapshot_ad_metrics` (calls `extractor.ad_details`) · `snapshot_advertiser_week` (reuse Plan 1 `scale.aggregate_advertisers`) · `cohort_key`/`robust_z`(MAD)/`pctile` · `log_growth_wow`/`acceleration`/`ewma`/`build_features` · sub-scores `scaling_velocity`/`under_radar`/`funnel_intent` · **`gem_score = 100·clamp01(SV)^.5·clamp01(UR)^.35·clamp01(FI)^.15`** (multiplicative AND-gate + per-axis floor — famous brand → UR≈0 → ~0, but a sparse-data gem isn't killed) · `vetoes` (STL deseasonalize, longevity-floor, disguised-incumbent via parent_company_id/pixel, relaunch, persistence-gate) · `050/051_*.sql` · `run_scoring.score_all`. Cohort = category × country; normalize within cohort. **Back-test the weights against known past breakouts before trusting the score** (they're starter priors).
+Exposed: `snapshot_ad_metrics(conn, extractor, date)` (async; active ads → `ad_metrics` via `extractor.ad_details`) · `snapshot_advertiser_week(conn, week)` (SQL rollup; reach summed in its own CTE to avoid creative fan-out) · `cohort_key`/`robust_z`(MAD, matches scipy)/`pctile` · `log_growth_wow`/`acceleration`/`ewma`/`build_features(conn, advertiser_id, as_of)→FeatureVector` · `scaling_velocity`/`under_radar`/`funnel_intent`/`gem_score(sv,ur,fi,floor=.05)` (`100·clamp01(SV)^.5·UR^.35·FI^.15`; None axis→floor, present-low axis still gates) · `apply_vetoes` (persistence, longevity-floor, disguised-incumbent via `parent_company_id`, relaunch, STL seasonal-spike) · `score_all(conn, as_of)` + `refresh_emerging_matview(engine)` (autocommit, `REFRESH … CONCURRENTLY`) + `run_scoring(engine, as_of)`. Cohort = category × country, normalized within cohort.
+
+**Two as-built notes for downstream:** (1) SV normalizes on **velocity** signals — `ewma_velocity` smooths weekly *deltas* (not the level) and SV-longevity uses bounded `longevity_share` — so incumbents don't win SV on size (the live e2e forced this). (2) **GemScore weights/thresholds are starter priors** (SV/UR/FI .5/.35/.15, floor .05, ALERT≥70, RELAUNCH_RATING_MAX 100k, STL period 4) — **back-test against known past breakouts before trusting the score in production.**
+
+**Plan 6 — Enrichment (NEXT, deps 2,3,5 ✅).** Scope in master-plan §6 Plan 6 (P6-T1…T10): app-store metadata, funnel screenshots + pricing, deduped creative bytes → S3, company/WHOIS/tech, for **top-N flagged gems only** (`enrich_gem(conn, advertiser_id, top_n=5)`). Reuses Plan 2 `Extractor.resolve_deeplink` + Playwright; backfills `upsert_advertiser_enrichment` (feeds Plan 5's disguised-incumbent veto). Gems to enrich = `frontend.emerging_scaling_apps WHERE alert` (or `gem_score ≥ 70`).
 
 ---
 

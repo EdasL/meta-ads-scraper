@@ -16,3 +16,8 @@ ImageHash==4.3.2
 # --- plan-4 ---
 # No new deps: Firehose A (feedparser) was dropped; funnel-tech signature detection
 # is stdlib substring matching; the fingerprint search client reuses httpx.
+
+# --- plan-5 ---
+numpy==2.2.1
+scipy==1.15.1
+statsmodels==0.14.4   # pulls pandas + patsy (STL deseasonalize in vetoes.py)

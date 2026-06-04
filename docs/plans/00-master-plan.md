@@ -125,8 +125,8 @@ Critical path: **1 → 2 → 4 → 5 → 6 → 7**. Plan 3 runs parallel to Plan
 | 2 | Extraction core | 1 | ✅ done | claude | `02-extraction-plan.md` · 44 unit + 2 live-integration green (curl_cffi + rd_challenge) |
 | 3 | Data spine | 1 | ✅ done | claude | `03-data-spine-plan.md` · 25 DB/worker + 1 S3 green (skip-clean w/o infra) |
 | 4 | Discovery firehoses (B + C) | 1,2,3 | ✅ done | claude | `04-discovery-plan.md` · 15 tests green (skip-clean w/o infra) |
-| 5 | Velocity + GemScore | 1,2,3,4 | ⬜ ready (deps met) | — | `00-master-plan.md` §6 (needs detailed plan) |
-| 6 | Enrichment | 2,3,5 | ⬜ blocked | — | TBD |
+| 5 | Velocity + GemScore | 1,2,3,4 | ✅ done | claude | `05-scoring-plan.md` · 38 tests green (pure-stats unit + live Postgres e2e + assembled smoke: gem alerts ≥70, brand UR-gated low, spike STL-vetoed; REFRESH … CONCURRENTLY ok ×2) |
+| 6 | Enrichment | 2,3,5 | ⬜ ready (deps met) | — | TBD |
 | 7 | Output + ops | 1,2,3,4,5,6 | ⬜ blocked | — | TBD |
 
 Status legend: ⬜ not started · 🟡 in progress (`agent-id`) · ✅ done · 🔴 blocked/issue.
@@ -215,16 +215,16 @@ Prove the full chain (US search → app-classify → emerging-enrich → scaling
 **Owns:** `src/agf/tracker/snapshots.py`, `src/agf/scoring/` (`cohorts`, `features`, `gemscore`, `vetoes`, `run_scoring`), `db/schema/050_scoring.sql`, `db/schema/051_emerging_matview.sql`, `tests/tracker/`, `tests/scoring/`. Appends `# --- plan-5 ---` (numpy, statsmodels, scipy).
 **Exposes:** `snapshot_ad_metrics(conn,date)` (calls `extractor.ad_details` for `eu_total_reach`/active), `snapshot_advertiser_week(conn,week)`; `cohort_key`/`robust_z`/`pctile`; `log_growth_wow`/`acceleration`/`ewma`/`build_features`; `scaling_velocity`/`under_radar`/`funnel_intent`/`gem_score(sv,ur,fi,floor=.05)`; `apply_vetoes`; `score_all(conn,as_of)`; `frontend.emerging_scaling_apps` (§3.6 columns).
 
-- [ ] **P5-T1** `snapshot_ad_metrics` (active ads → ad_metrics, eu_total_reach via `extractor.ad_details`) — done: idempotent on PK, active flag correct · verify: `pytest tests/tracker/test_snapshot_ad_metrics.py -q`
-- [ ] **P5-T2** `snapshot_advertiser_week` (roll into app_advertiser_metrics, reuse Plan 1 `aggregate`) — done: counts correct, idempotent · verify: `pytest tests/tracker/test_snapshot_advertiser_week.py -q`
-- [ ] **P5-T3** `cohorts.py` `cohort_key`/`robust_z`(MAD)/`pctile` — done: matches scipy ref, degenerate→0 not NaN · verify: `pytest tests/scoring/test_cohorts.py -q`
-- [ ] **P5-T4** `features.py` `log_growth_wow`/`acceleration`/`ewma` — done: flat→0, accelerating→positive · verify: `pytest tests/scoring/test_features_primitives.py -q`
-- [ ] **P5-T5** `build_features(conn, advertiser_id, as_of)` → `FeatureVector` — done: 4-week fixture → expected accel/longevity_share · verify: `pytest tests/scoring/test_build_features.py -q`
-- [ ] **P5-T6** sub-scores `scaling_velocity`/`under_radar`/`funnel_intent` (weighted-sum within axis) — done: famous fixture → UR≈0; missing within-axis re-normalizes · verify: `pytest tests/scoring/test_subscores.py -q`
-- [ ] **P5-T7** `gem_score` multiplicative AND-gate + per-axis floor — done: (1,1,1)→100; incumbent→small; sparse-axis imputed not 0 · verify: `pytest tests/scoring/test_gemscore.py -q`
-- [ ] **P5-T8** `vetoes.py` (STL deseasonalize, longevity-floor, disguised-incumbent via parent_company_id/pixel, relaunch, persistence-gate) — done: each veto fires on its fixture, clean gem passes · verify: `pytest tests/scoring/test_vetoes.py -q`
-- [ ] **P5-T9** `050_scoring.sql` + `051_emerging_matview.sql` (§3.6 columns, UNIQUE index, `DROP … IF EXISTS` first) — done: `REFRESH … CONCURRENTLY` succeeds · verify: `pytest tests/scoring/test_schema_matview.py -q`
-- [ ] **P5-T10** `run_scoring.score_all` (features→score→vetoes→write→refresh) — done: gem alert=true, brand low, spike vetoed · verify: `pytest tests/scoring/test_run_scoring_e2e.py -q`
+- [x] **P5-T1** `snapshot_ad_metrics` (active ads → ad_metrics, eu_total_reach via `extractor.ad_details`) — done: idempotent on PK, active flag correct · verify: `pytest tests/tracker/test_snapshot_ad_metrics.py -q`
+- [x] **P5-T2** `snapshot_advertiser_week` (roll into app_advertiser_metrics, reuse Plan 1 `aggregate`) — done: counts correct, idempotent · verify: `pytest tests/tracker/test_snapshot_advertiser_week.py -q`
+- [x] **P5-T3** `cohorts.py` `cohort_key`/`robust_z`(MAD)/`pctile` — done: matches scipy ref, degenerate→0 not NaN · verify: `pytest tests/scoring/test_cohorts.py -q`
+- [x] **P5-T4** `features.py` `log_growth_wow`/`acceleration`/`ewma` — done: flat→0, accelerating→positive · verify: `pytest tests/scoring/test_features_primitives.py -q`
+- [x] **P5-T5** `build_features(conn, advertiser_id, as_of)` → `FeatureVector` — done: 4-week fixture → expected accel/longevity_share · verify: `pytest tests/scoring/test_build_features.py -q`
+- [x] **P5-T6** sub-scores `scaling_velocity`/`under_radar`/`funnel_intent` (weighted-sum within axis) — done: famous fixture → UR≈0; missing within-axis re-normalizes · verify: `pytest tests/scoring/test_subscores.py -q`
+- [x] **P5-T7** `gem_score` multiplicative AND-gate + per-axis floor — done: (1,1,1)→100; incumbent→small; sparse-axis imputed not 0 · verify: `pytest tests/scoring/test_gemscore.py -q`
+- [x] **P5-T8** `vetoes.py` (STL deseasonalize, longevity-floor, disguised-incumbent via parent_company_id/pixel, relaunch, persistence-gate) — done: each veto fires on its fixture, clean gem passes · verify: `pytest tests/scoring/test_vetoes.py -q`
+- [x] **P5-T9** `050_scoring.sql` + `051_emerging_matview.sql` (§3.6 columns, UNIQUE index, `DROP … IF EXISTS` first) — done: `REFRESH … CONCURRENTLY` succeeds · verify: `pytest tests/scoring/test_schema_matview.py -q`
+- [x] **P5-T10** `run_scoring.score_all` (features→score→vetoes→write→refresh) — done: gem alert=true, brand low, spike vetoed · verify: `pytest tests/scoring/test_run_scoring_e2e.py -q`
 
 **Phase-verify:** `pytest tests/tracker tests/scoring -q` green; `score_all` on seeded gem+brand+spike → matview with alert=true only for the gem; `REFRESH … CONCURRENTLY` succeeds.
 **Risks:** 3–4 week warmup before acceleration trustworthy (degrade gracefully); small cohorts (<3) need fallback; STL needs ≥2 seasonal periods (short-circuit pass).
