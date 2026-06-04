@@ -2,6 +2,7 @@
 (advertiser), enrich its top-N ads: resolve landing → app-store metadata OR funnel
 capture + pricing, download deduped creatives, then company enrichment. conn-first
 (no commit); cross-cutting deps arrive via EnrichDeps (worker adapter §3.9)."""
+import asyncio
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from urllib.parse import urlparse
@@ -88,8 +89,11 @@ async def enrich_gem(conn, advertiser_id, *, top_n=5, deps: EnrichDeps) -> Enric
                 except Exception:
                     company_html = None
             if deps.capture:
-                steps = capture_funnel(target.final_url, page=deps.page, put=deps.put,
-                                       s3=deps.s3, proxy=deps.proxy)
+                # capture_funnel uses Playwright's SYNC API, which cannot run inside an
+                # asyncio loop — offload to a worker thread (mirrors the Plan 2 facade).
+                steps = await asyncio.to_thread(
+                    capture_funnel, target.final_url, page=deps.page, put=deps.put,
+                    s3=deps.s3, proxy=deps.proxy)
                 if steps:
                     repo.upsert_funnel(conn, ad.id, ad.link_url, steps[-1].url,
                                        steps[0].screenshot_s3_key)
@@ -112,7 +116,6 @@ def make_enrich_handler(deps_factory, *, top_n=5):
     """Adapter (§3.9): handler(conn, advertiser_id) for run_worker. deps_factory(conn,
     advertiser_id)->EnrichDeps builds per-gem deps (e.g. a fresh extractor.search for
     current creative URLs — fbcdn signed URLs expire)."""
-    import asyncio
 
     def handler(conn, advertiser_id):
         deps = deps_factory(conn, advertiser_id)
