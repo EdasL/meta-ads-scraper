@@ -97,3 +97,94 @@ def autoconsent_cmp(page) -> bool:
             except Exception:
                 continue
     return False
+
+
+import hashlib
+from contextlib import contextmanager
+from agf.storage.s3 import put_bytes
+from agf.enrich_full.schemas import FunnelStep
+
+_NEXT_SELECTORS = ("a.cta", "button[type='submit']", ".btn-primary", "a.button",
+                   "button.primary", "[data-testid='continue']")
+
+
+def _url_hash(url: str) -> str:
+    return hashlib.sha256((url or "").encode()).hexdigest()[:16]
+
+
+def _next_element(page):
+    for sel in _NEXT_SELECTORS:
+        try:
+            el = page.query_selector(sel)
+        except Exception:
+            el = None
+        if el:
+            return el
+    return None
+
+
+def _safe_title(page):
+    try:
+        return page.title()
+    except Exception:
+        return None
+
+
+def _run_capture(page, start_url, max_steps, put, s3):
+    steps = []
+    page.goto(start_url)
+    for i in range(max_steps):
+        autoconsent_cmp(page)
+        key = None
+        try:
+            shot = page.screenshot()
+            key = f"funnels/{_url_hash(start_url)}/step{i + 1}.png"
+            put(key, shot, "image/png", client=s3)
+        except Exception:
+            key = None
+        steps.append(FunnelStep(step=i + 1, url=getattr(page, "url", start_url),
+                                screenshot_s3_key=key, title=_safe_title(page)))
+        if i == max_steps - 1:
+            break
+        nxt = _next_element(page)
+        if not nxt:
+            break
+        try:
+            nxt.click()
+            if hasattr(page, "wait_for_load_state"):
+                page.wait_for_load_state("domcontentloaded")
+        except Exception:
+            break
+    return steps
+
+
+@contextmanager
+def _playwright_page(proxy=None, timeout_ms=30_000):
+    from playwright.sync_api import sync_playwright   # lazy: optional dep
+    with sync_playwright() as p:
+        ctx_kw = {}
+        if proxy:
+            host = proxy.split("@")[-1]
+            ctx_kw["proxy"] = {"server": f"http://{host}"}
+            if "@" in proxy:
+                user, _, pw = proxy.split("@")[0].partition(":")
+                ctx_kw["proxy"].update(username=user, password=pw)
+        browser = p.chromium.launch(headless=True)
+        context = browser.new_context(**ctx_kw)
+        page = context.new_page()
+        page.set_default_timeout(timeout_ms)
+        try:
+            yield page
+        finally:
+            browser.close()
+
+
+def capture_funnel(start_url, *, max_steps=3, put=put_bytes, s3=None,
+                   page=None, proxy=None) -> list:
+    """Screenshot a funnel step-by-step (reuses the Plan 2 Playwright standby; one
+    context, capped at max_steps). Each step's PNG → S3; returns FunnelSteps. Pass
+    `page` to drive an existing page (tests); otherwise a headless chromium is opened."""
+    if page is not None:
+        return _run_capture(page, start_url, max_steps, put, s3)
+    with _playwright_page(proxy) as p:
+        return _run_capture(p, start_url, max_steps, put, s3)
