@@ -6,6 +6,10 @@
 
 ---
 
+> **DECISION (2026-06-04, founder): Firehose A is DROPPED.** This doc's analysis stands, but the founder chose **not** to build the app-store new-apps seed at all — even as a free daily accumulator. Rationale: a day-0 RSS app carries no Meta-spend signal and is discarded at the 14-day scaling gate anyway, so the seed is noise. **Meta Ad Library (B) is the sole discovery engine + funnel fingerprint (C); iTunes is used ONLY for enrichment** (Lookup → release date / ratings / genre). Everything below about the legacy RSS feed is therefore *retained-but-unused* reference (it works, we just don't wire it). See master plan §8 + §6 Plan 4.
+
+---
+
 ## 1. The strategic conclusion (adversarially verified: *supported*)
 
 For "apps **scaling on paid Meta**," the Meta Ad Library spend signal beats any app-store "new/trending" chart, because:
