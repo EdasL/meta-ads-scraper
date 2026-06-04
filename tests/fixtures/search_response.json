@@ -1,0 +1,13 @@
+{"data":{"ad_library_main":{"search_results_connection":{
+  "edges":[{"node":{"collated_results":[
+    {"ad_archive_id":"111","page_id":"P1","page_name":"FitGem","is_active":true,
+     "start_date":1714500000,"end_date":null,"collation_count":7,
+     "publisher_platform":["FACEBOOK","INSTAGRAM"],
+     "snapshot":{"cta_type":"INSTALL_MOBILE_APP","cta_text":"Install",
+       "link_url":"https://apps.apple.com/us/app/fitgem/id6470000001",
+       "body":{"text":"Get fit in 7"},"title":"FitGem",
+       "images":[{"original_image_url":"https://scontent.fbcdn.net/x.jpg"}],
+       "videos":[{"video_hd_url":"https://video.fbcdn.net/y.mp4"}],"cards":[]}}
+  ]}}],
+  "page_info":{"has_next_page":true,"end_cursor":"CUR_NEXT"}
+}}}}
