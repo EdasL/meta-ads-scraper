@@ -4,7 +4,7 @@ AGF_DATABASE_URL engine. Never auto-calls — the only mutation is a human verdi
 import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from agf.api.routers import shortlist, gems, review, health
+from agf.api.routers import shortlist, gems, review, health, media
 
 # The Next.js dossier UI calls this API from the browser, so cross-origin must be
 # allowed. AGF_CORS_ORIGINS is a comma-separated allowlist; defaults to the local
@@ -31,6 +31,7 @@ def create_app(engine) -> FastAPI:
     app.include_router(gems.router)
     app.include_router(review.router)
     app.include_router(health.router)
+    app.include_router(media.router)
 
     @app.get("/healthz")
     def healthz():
