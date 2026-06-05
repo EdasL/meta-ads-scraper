@@ -280,9 +280,13 @@ def main():
         with begin(engine) as conn:
             ids = _seed(conn)
             _apply_parent_links(conn, ids)
-            n_scored = score_all(conn, AS_OF)
+            # only_ids isolates scoring + cohort normalization to THIS corpus, so the
+            # report is reproducible and never overwrites other advertisers' scores
+            # (score_all is global by default — it would otherwise mix in any rows
+            # sharing the Health & Fitness / Education cohorts).
+            n_scored = score_all(conn, AS_OF, only_ids=list(ids.values()))
         refresh_emerging_matview(engine)
-        print(f"\nScored {n_scored} advertisers (includes any pre-existing rows).\n")
+        print(f"\nScored {n_scored} advertisers (isolated to the synthetic corpus).\n")
 
         # ---- Fetch results -----------------------------------------------
         pid_to_id = ids   # {page_id: advertiser_id}
@@ -423,14 +427,17 @@ def main():
         ]
         print(f"{'Exponent set':<38}  {'Pair':<12}  {'Breakout':>8}  {'Incumbent':>9}  {'B>I?':>5}")
         print("-" * 80)
+        # mirror gem_score's imputation EXACTLY: a MISSING axis (None) → floor 0.05;
+        # a genuinely-zero axis stays 0.0 (it must gate the product to 0). `or 0.05`
+        # wrongly lifted a real 0.0 to the floor.
+        def _imp(pid, ax):
+            v = _axis(pid, ax)
+            return 0.05 if v is None else v
+
         for label, sv_e, ur_e, fi_e in alt_exps:
             for bp, ip in pairs:
-                sv_b = _axis(bp, "sv") or 0.05
-                ur_b = _axis(bp, "ur") or 0.05
-                fi_b = _axis(bp, "fi") or 0.05
-                sv_i = _axis(ip, "sv") or 0.05
-                ur_i = _axis(ip, "ur") or 0.05
-                fi_i = _axis(ip, "fi") or 0.05
+                sv_b, ur_b, fi_b = _imp(bp, "sv"), _imp(bp, "ur"), _imp(bp, "fi")
+                sv_i, ur_i, fi_i = _imp(ip, "sv"), _imp(ip, "ur"), _imp(ip, "fi")
 
                 def _gs(sv, ur, fi):
                     return 100.0 * (clamp01(sv) ** sv_e) * (clamp01(ur) ** ur_e) * (clamp01(fi) ** fi_e)

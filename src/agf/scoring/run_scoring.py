@@ -52,10 +52,20 @@ def _fi_components(fv):
     }
 
 
-def score_all(conn, as_of) -> int:
+def score_all(conn, as_of, only_ids=None) -> int:
     """Build features, normalize within cohort, score, veto, write advertiser_scores.
-    conn-first: no commit. Returns the number of advertisers scored."""
-    fvs = [build_features(conn, aid, as_of) for aid in _eligible_advertiser_ids(conn)]
+    conn-first: no commit. Returns the number of advertisers scored.
+
+    Production passes only_ids=None → scores EVERY advertiser, so cohort percentiles
+    reflect the full population (correct). only_ids (an id allowlist) restricts both the
+    scored set AND the cohort-normalization population to those ids — used by the
+    backtest/synthetic harness so its corpus is scored against itself, isolated from any
+    other rows sharing a cohort in the shared DB (score_all is otherwise global)."""
+    aids = _eligible_advertiser_ids(conn)
+    if only_ids is not None:
+        keep = set(only_ids)
+        aids = [a for a in aids if a in keep]
+    fvs = [build_features(conn, aid, as_of) for aid in aids]
     by_cohort = defaultdict(list)
     for fv in fvs:
         by_cohort[fv.cohort].append(fv)

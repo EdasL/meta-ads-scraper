@@ -51,6 +51,13 @@ def _env_int(name, default):
         return default
 
 
+def _env_float(name, default):
+    try:
+        return float(os.environ[name])
+    except (KeyError, ValueError):
+        return default
+
+
 def _env_bool(name):
     return os.environ.get(name, "").lower() in ("1", "true", "yes", "on")
 
@@ -79,47 +86,63 @@ def dry_run_deps_factory(extractor):
     return factory
 
 
-def production_deps_factory(extractor):
-    """Full per-gem deps (RUNBOOK §5): a FRESH extractor.search for current creative
-    URLs (fbcdn signed URLs expire) + real iTunes/HTTP/S3/WHOIS clients. Clients are
-    lazy-imported so a dry-run never needs httpx/boto3/whois installed."""
+def prefetch_creative_urls(extractor, conn, advertiser_ids) -> dict:
+    """Fetch current creative URLs per gem via a live page search, OUTSIDE any write
+    transaction (fbcdn signed URLs expire, so they must be fresh). This is deliberately
+    NOT done inside the per-gem deps_factory: run_worker calls that handler inside an open
+    write transaction, and a slow Meta search there would pin a DB connection + hold
+    write locks across the network round-trip. Returns {advertiser_id: {external_ad_id:
+    [(type, url)]}}."""
+    out: dict = {}
+    for aid in advertiser_ids:
+        page_id = conn.execute(text("SELECT page_id FROM public.advertisers WHERE id=:a"),
+                               {"a": aid}).scalar()
+        if not page_id:
+            continue
+        ads = asyncio.run(extractor.search(query="", countries=["US"],
+                                           search_type="page", view_all_page_id=page_id))
+        per_ad = {}
+        for ad in ads:
+            urls = [("image", u) for u in (getattr(ad, "image_urls", None) or [])]
+            urls += [("video", u) for u in (getattr(ad, "video_urls", None) or [])]
+            if urls:
+                per_ad[str(ad.ad_archive_id)] = urls
+        if per_ad:
+            out[aid] = per_ad
+    return out
+
+
+def production_deps_factory(extractor, http_client, creative_urls_by_adv):
+    """Full per-gem deps (RUNBOOK §5) + real iTunes/HTTP/S3/WHOIS clients. `http_client`
+    is a sweep-scoped httpx.Client owned (and closed) by main(), shared across gems so
+    enrichment doesn't leak a pool per gem. The factory is PURE (no network/DB): creative
+    URLs are prefetched out-of-transaction (see prefetch_creative_urls). Heavy deps are
+    lazy-imported so a dry-run never needs boto3/whois installed.
+
+    NOTE: enrich_gem itself still does network (resolve_landing/iTunes/funnel-capture/
+    creative downloads) inside run_worker's per-gem write txn — that is the Plan 6 §3.9
+    handler contract; keep AGF_ENRICH_LIMIT modest and avoid a tight idle-in-transaction
+    server timeout."""
+    from agf.storage.s3 import get_s3, put_bytes
+    try:
+        import whois as _whois
+        whois_fn = _whois.whois
+    except Exception:
+        whois_fn = None
+
+    def fetch_text(url):
+        return http_client.get(url).text
+
+    def fetch_bytes(url):
+        r = http_client.get(url)
+        return r.content, r.headers.get("content-type", "")
+
     def factory(conn, advertiser_id):
-        import httpx
-        from agf.storage.s3 import get_s3, put_bytes
-        try:
-            import whois as _whois
-            whois_fn = _whois.whois
-        except Exception:
-            whois_fn = None
-
-        client = httpx.Client(timeout=20, follow_redirects=True)
-
-        def fetch_text(url):
-            return client.get(url).text
-
-        def fetch_bytes(url):
-            r = client.get(url)
-            return r.content, r.headers.get("content-type", "")
-
-        # fresh creative URLs via a live page search (signed URLs expire fast)
-        page_id = conn.execute(
-            text("SELECT page_id FROM public.advertisers WHERE id=:a"),
-            {"a": advertiser_id}).scalar()
-        creative_urls = {}
-        if page_id:
-            ads = asyncio.run(extractor.search(query="", countries=["US"],
-                                               search_type="page", view_all_page_id=page_id))
-            for ad in ads:
-                urls = [("image", u) for u in (getattr(ad, "image_urls", None) or [])]
-                urls += [("video", u) for u in (getattr(ad, "video_urls", None) or [])]
-                if urls:
-                    creative_urls[str(ad.ad_archive_id)] = urls
-
-        return EnrichDeps(extractor=extractor, itunes_client=client,
+        return EnrichDeps(extractor=extractor, itunes_client=http_client,
                           fetch_text=fetch_text, fetch_bytes=fetch_bytes,
                           put=put_bytes, s3=get_s3(), whois_fn=whois_fn, page=None,
-                          proxy=os.environ.get("AGF_FUNNEL_PROXY"),
-                          capture=True, creative_urls=creative_urls)
+                          proxy=os.environ.get("AGF_FUNNEL_PROXY"), capture=True,
+                          creative_urls=creative_urls_by_adv.get(advertiser_id, {}))
     return factory
 
 
@@ -141,11 +164,13 @@ def eligible_gem_ids(conn, min_score):
 
 
 # --- one sweep ---------------------------------------------------------------
-def run_once(engine, extractor, *, now_epoch, as_of, dry_run, deps_factory,
+def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
              eu_countries=("DE", "GB"), eu_max_pages=3, min_running_days=25,
              min_longevity_days=14, enrich_limit=10, enrich_top_n=5,
              enrich_ttl_hours=168, score_after=False, min_score=ALERT_THRESHOLD) -> dict:
-    """One discovery→(score)→enrich pass. Returns a summary dict (no printing)."""
+    """One discovery→(score)→enrich pass. Returns a summary dict (no printing).
+    http_client is the sweep-scoped httpx.Client for the production enrich path (None in
+    a dry-run, which uses the no-network fake deps)."""
     # 1) discovery — one committed transaction
     with begin(engine) as conn:
         disc = asyncio.run(run_discovery(
@@ -158,10 +183,16 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, deps_factory,
 
     # 3) enrich — one transaction per gem (run_worker, source=engine). A dry-run has
     #    no scored history yet, so enrich the just-confirmed advertisers to drive the
-    #    path; production enriches flagged gems (alert + score≥min).
+    #    path; production enriches flagged gems (alert + score≥min). Creative URLs are
+    #    prefetched here on a READ connection (no write txn open) before run_worker.
     with engine.connect() as conn:
         cand_ids = (_advertiser_ids_for_pages(conn, disc["confirmed"]) if dry_run
                     else eligible_gem_ids(conn, min_score))
+        if dry_run:
+            deps_factory = dry_run_deps_factory(extractor)
+        else:
+            creative_urls = prefetch_creative_urls(extractor, conn, cand_ids[:enrich_limit])
+            deps_factory = production_deps_factory(extractor, http_client, creative_urls)
     due_before = datetime.now(timezone.utc) - timedelta(hours=enrich_ttl_hours)
     enriched = run_worker("enrich", "advertiser",
                           make_enrich_handler(deps_factory, top_n=enrich_top_n),
@@ -219,7 +250,7 @@ def main(argv=None) -> None:
         enrich_top_n=_env_int("AGF_ENRICH_TOP_N", 5),
         enrich_ttl_hours=_env_int("AGF_ENRICH_TTL_HOURS", 168),
         score_after=_env_bool("AGF_SCORE_AFTER_SWEEP"),
-        min_score=float(_env_int("AGF_MIN_GEM_SCORE", int(ALERT_THRESHOLD))),
+        min_score=_env_float("AGF_MIN_GEM_SCORE", ALERT_THRESHOLD),
     )
     interval = _env_int("AGF_SWEEP_INTERVAL_SEC", 3600)
     mode = "DRY-RUN (fake extractor, no Meta traffic)" if dry_run else "LIVE"
@@ -229,17 +260,22 @@ def main(argv=None) -> None:
     while True:
         now_epoch = int(time.time())
         extractor = build_extractor(dry_run, now_epoch)
-        deps_factory = (dry_run_deps_factory(extractor) if dry_run
-                        else production_deps_factory(extractor))
+        http_client = None
+        if not dry_run:
+            import httpx
+            http_client = httpx.Client(timeout=20, follow_redirects=True)  # one per sweep
         try:
             summary = run_once(engine, extractor, now_epoch=now_epoch,
                                as_of=date.today(), dry_run=dry_run,
-                               deps_factory=deps_factory, **cfg)
+                               http_client=http_client, **cfg)
             print(_summary_line(summary), flush=True)
         except Exception as exc:                      # one bad sweep must not kill the loop
             print(f"[worker] sweep failed: {exc!r}", file=sys.stderr, flush=True)
             if once:
                 raise
+        finally:
+            if http_client is not None:
+                http_client.close()
         _touch_heartbeat()
         if once:
             break

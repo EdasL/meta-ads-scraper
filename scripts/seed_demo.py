@@ -200,6 +200,11 @@ def _clean(engine) -> None:
             conn.execute(text("DELETE FROM public.advertisers WHERE id = ANY(:i)"), {"i": ids})
         conn.execute(text("DELETE FROM public.apps WHERE store_id = ANY(:p)"),
                      {"p": [s["store_id"] for s in SPECS if s["store_id"]]})
+        # drop the demo domains too, but only if nothing else still references them
+        conn.execute(text(
+            "DELETE FROM public.domains WHERE domain = ANY(:d) AND id NOT IN "
+            "(SELECT domain_id FROM public.advertisers WHERE domain_id IS NOT NULL)"),
+            {"d": [s["domain"] for s in SPECS]})
     refresh_emerging_matview(engine)
 
 

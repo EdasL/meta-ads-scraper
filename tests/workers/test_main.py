@@ -10,7 +10,7 @@ from datetime import date
 from sqlalchemy import text
 
 from agf.db.engine import begin
-from agf.workers.main import run_once, build_extractor, dry_run_deps_factory
+from agf.workers.main import run_once, build_extractor
 
 NOW = 1_749_000_000          # ~2026-06-04, matches tests/discovery/conftest
 FAKE_PAGES = ("FAKE1", "FAKE2")
@@ -44,7 +44,7 @@ def test_dry_run_sweep_discovers_confirms_and_enriches(_migrated_engine):
     try:
         ex = build_extractor(dry_run=True, now_epoch=NOW)   # in-src fake, no network
         summary = run_once(eng, ex, now_epoch=NOW, as_of=date(2026, 6, 4), dry_run=True,
-                           deps_factory=dry_run_deps_factory(ex), score_after=False)
+                           score_after=False)
         # discovery: both seeded EU pages survive the 25d collapse + 14d confirm
         assert summary["discovery"]["pages"] == 2
         assert set(summary["discovery"]["confirmed"]) == set(FAKE_PAGES)

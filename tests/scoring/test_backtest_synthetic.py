@@ -234,7 +234,10 @@ def scored(_migrated_engine):
         with begin(eng) as conn:
             ids = _seed(conn)
             _apply_parent_links(conn, ids)
-            score_all(conn, AS_OF)
+            # only_ids scopes scoring + cohort normalization to the synthetic corpus, so
+            # the harness is isolated/deterministic even when the shared DB holds other
+            # advertisers in the same cohorts (score_all is global by default).
+            score_all(conn, AS_OF, only_ids=list(ids.values()))
         refresh_emerging_matview(eng)
 
         with eng.connect() as conn:

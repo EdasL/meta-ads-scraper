@@ -63,6 +63,11 @@ All 14 property tests pass:
 
 ## 4. Calibration Report Numbers
 
+These are the verbatim output of `scripts/backtest.py`. The harness scopes scoring to
+its own corpus (`score_all(..., only_ids=<corpus ids>)`), so the numbers are
+**reproducible and independent of any other rows** in the shared DB (`score_all` is
+otherwise global and would mix in anything sharing the Health&Fitness/Education cohorts).
+
 ### 4a. Per-Label GemScore Distribution
 
 ```
@@ -90,8 +95,8 @@ BT01    true_breakout              73.3   0.57   0.91   1.00    YES  -
 BT02    true_breakout              72.2   0.59   0.84   1.00    YES  -
 BT05    disguised_incumbent        66.5   0.57   0.69   1.00     no  disguised_incumbent
 BT17    disguised_incumbent        63.9   0.69   0.47   1.00     no  disguised_incumbent
-BT07    seasonal_only              61.3   0.72   0.?    1.00     no  seasonal_spike
-BT08    seasonal_with_trend        54.9   0.?    0.?    1.00     no  -
+BT07    seasonal_only              61.3   0.72   0.39   1.00     no  seasonal_spike
+BT08    seasonal_with_trend        54.9   0.50   0.48   1.00     no  -
 BT06    relaunch                   53.8   0.69   0.25   1.00     no  relaunch
 BT18    relaunch                   51.3   0.69   0.25   1.00     no  relaunch
 BT15    one_week_blip              47.5   0.33   0.59   1.00     no  insufficient_persistence

@@ -15,11 +15,14 @@ def _ad(ext, active=True):
 def test_snapshots_active_ads_only_and_is_idempotent(pg_conn):
     adv = repo.upsert_advertiser(pg_conn, _ad("A1"))
     active_id = repo.upsert_ad(pg_conn, _ad("A1", active=True), adv, None)
-    repo.upsert_ad(pg_conn, _ad("A2", active=False), adv, None)   # inactive -> skipped
+    inactive_id = repo.upsert_ad(pg_conn, _ad("A2", active=False), adv, None)  # inactive -> skipped
     ex = FakeDetailsExtractor({"A1": AdDetails(eu_total_reach=4321, active=True)})
 
-    n1 = asyncio.run(snapshot_ad_metrics(pg_conn, ex, "2026-06-04"))
-    n2 = asyncio.run(snapshot_ad_metrics(pg_conn, ex, "2026-06-04"))  # re-run same day
+    # scope to this test's two ads so committed rows elsewhere in the shared DB (e.g. a
+    # demo seed) can't inflate the global active-ad count; A2 is still filtered by is_active
+    scope = [active_id, inactive_id]
+    n1 = asyncio.run(snapshot_ad_metrics(pg_conn, ex, "2026-06-04", only_ids=scope))
+    n2 = asyncio.run(snapshot_ad_metrics(pg_conn, ex, "2026-06-04", only_ids=scope))  # re-run same day
 
     assert n1 == 1 and n2 == 1                       # one active ad, idempotent
     assert ex.calls == ["A1", "A1"]                  # only the active ad queried

@@ -6,13 +6,20 @@ from agf.db import repo
 from agf.db.repo import _as_date   # reuse the date coercion helper
 
 
-async def snapshot_ad_metrics(conn, extractor, snapshot_date) -> int:
+async def snapshot_ad_metrics(conn, extractor, snapshot_date, only_ids=None) -> int:
     """For each ACTIVE ad, fetch eu_total_reach + active via extractor.ad_details
     (§3.4) and record an ad_metrics row. Idempotent on (ad_id, snapshot_date).
-    Returns the number of metrics written."""
-    rows = conn.execute(text(
-        "SELECT id, external_ad_id FROM public.ads WHERE is_active = TRUE "
-        "ORDER BY id")).all()
+    Returns the number of metrics written.
+
+    Production passes only_ids=None → snapshots EVERY active ad (the daily tracker).
+    only_ids (an ad-id allowlist) restricts the snapshot to those ads — used by tests so
+    a committed row elsewhere in the shared DB doesn't inflate the count."""
+    sql = "SELECT id, external_ad_id FROM public.ads WHERE is_active = TRUE"
+    params: dict = {}
+    if only_ids is not None:
+        sql += " AND id = ANY(:ids)"
+        params["ids"] = list(only_ids)
+    rows = conn.execute(text(sql + " ORDER BY id"), params).all()
     n = 0
     for ad_id, external_ad_id in rows:
         details = await extractor.ad_details(external_ad_id)

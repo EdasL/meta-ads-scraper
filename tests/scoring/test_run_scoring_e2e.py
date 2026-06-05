@@ -72,7 +72,9 @@ def test_score_all_flags_gem_not_brand_not_spike(_migrated_engine):
     try:
         with begin(eng) as conn:
             ids = _seed(conn)
-            score_all(conn, AS_OF)
+            # only_ids isolates scoring to these sentinels so the assertions hold even if
+            # the shared DB holds other advertisers in the same cohort (e.g. a demo seed)
+            score_all(conn, AS_OF, only_ids=list(ids.values()))
         refresh_emerging_matview(eng)
         with eng.connect() as conn:
             rows = {r.advertiser_id: r for r in conn.execute(text(
