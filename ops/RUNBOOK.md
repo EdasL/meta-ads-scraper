@@ -41,13 +41,28 @@ and rotate proxies (see §3). Pull creative bytes outside the residential proxy.
 
 ---
 
-## 3. Proxy refresh
+## 3. Proxies (`AGF_PROXIES`)
 
-Proxies are the single env contract **`AGF_PROXIES`** (newline/comma list of
-`user:pass@host:port`), read by Plan 2 `ProxyPool.from_env` and the `proxy` gateway
-(`ops/proxy/gateway.conf`). To rotate: update `AGF_PROXIES` in `ops/.env` and
-`docker compose -f ops/docker-compose.yml up -d worker proxy`. Use rotating residential
-or static ISP IPs; avoid datacenter ASNs at volume.
+Proxies are **in-process** — the single env contract **`AGF_PROXIES`** (newline/comma list
+of `user:pass@host:port`) is read by `ProxyPool.from_env` (`src/agf/extract/proxy.py`) and
+applied per request via curl_cffi. There is **no proxy gateway container** (the old
+placeholder was a no-op and was removed).
+
+Requirements (Meta is strict):
+- **Residential or static-ISP IPs, never datacenter** — Meta blocks datacenter ASNs at volume.
+- **Sticky sessions** — the warm session holds an `rd_challenge` cookie (~24h); the IP must
+  stay stable for the session's life or the cookie/TLS fingerprint mismatches and re-challenges.
+  Most providers expose this via a session id in the username
+  (e.g. `user-session-ab12:pass@gate.host:port`). Use one sticky endpoint per pool entry.
+- **Several entries** — the pool round-robins and benches a proxy after 3 failures for 5 min
+  (`max_failures=3`, `cooldown=300s`).
+- Optional `AGF_FUNNEL_PROXY` for enrichment funnel-capture / creative downloads (use a cheaper
+  proxy or leave unset = direct, to spare residential bandwidth).
+
+To set/rotate: edit `AGF_PROXIES` in `ops/.env`, then
+`docker compose -f ops/docker-compose.yml --env-file ops/.env up -d worker`.
+**Verify before crawling:** `AGF_PROXIES="…" PYTHONPATH=src python scripts/check_proxies.py`
+(shows each proxy's egress IP/country/ISP + a live Meta smoke through the pool).
 
 ---
 

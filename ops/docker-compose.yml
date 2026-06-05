@@ -1,6 +1,7 @@
 # Field Desk — PRODUCTION stack (master-plan §3.10: this file is the single source
 # for PG/MinIO image tags + creds; db/docker-compose.yml is local-test only).
-# All credentials come from the environment (see ops/.env.example). 7 services.
+# All credentials come from the environment (see ops/.env.example). 6 services.
+# (Proxies are in-process via AGF_PROXIES — there is no proxy gateway container.)
 name: field-desk
 
 services:
@@ -97,8 +98,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      proxy:
-        condition: service_started
       minio-init:
         condition: service_completed_successfully
 
@@ -113,16 +112,11 @@ services:
       postgres:
         condition: service_healthy
 
-  proxy:
-    image: alpine:3.20
-    restart: unless-stopped
-    # residential-proxy gateway (forwards worker traffic through AGF_PROXIES). The
-    # config template lives in ops/proxy/gateway.conf; swap alpine for your gateway image.
-    command: ["sh", "-c", "echo 'proxy gateway: configure AGF_PROXIES upstreams (see ops/proxy/gateway.conf)'; sleep infinity"]
-    environment:
-      AGF_PROXIES: ${AGF_PROXIES}
-    volumes:
-      - ./proxy/gateway.conf:/etc/agf/gateway.conf:ro
+  # NOTE: there is no proxy gateway container. Proxies are configured IN-PROCESS — the
+  # worker reads AGF_PROXIES and routes Meta requests through them via ProxyPool/curl_cffi
+  # (src/agf/extract/proxy.py). Set AGF_PROXIES in ops/.env (residential, sticky sessions);
+  # verify with `scripts/check_proxies.py`. A centralized egress gateway would be a separate,
+  # deliberate addition — the old placeholder service was a no-op and was removed.
 
 volumes:
   pg_data:
