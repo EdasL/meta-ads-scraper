@@ -41,6 +41,12 @@ def _seed(engine):
                     (advertiser_id, week_start, active_ad_count, distinct_creative_count, total_eu_reach)
                     VALUES (:a,:w,:n,:n,:r) ON CONFLICT (advertiser_id, week_start) DO NOTHING"""),
                     {"a": adv, "w": WEEK0 + timedelta(weeks=i), "n": n, "r": n * 100})
+        # enrichment backfill (§3.3): ig_* on Alpha; Bravo is owned by Alpha so the
+        # dossier resolves a parent_company name. NULL-tolerant for everyone else.
+        conn.execute(text("UPDATE public.advertisers SET ig_username='alphafit', "
+                          "ig_followers=1200 WHERE id=:a"), {"a": ids["P7A"]})
+        conn.execute(text("UPDATE public.advertisers SET parent_company_id=:p "
+                          "WHERE id=:a"), {"p": ids["P7A"], "a": ids["P7B"]})
     refresh_emerging_matview(engine)
     return ids
 
@@ -53,6 +59,9 @@ def _cleanup(engine):
             for t in ("frontend.review_decisions", "adtech.advertiser_scores",
                       "adtech.app_advertiser_metrics"):
                 conn.execute(text(f"DELETE FROM {t} WHERE advertiser_id = ANY(:i)"), {"i": ids})
+            # break the self-FK (Bravo→Alpha) before deleting the rows
+            conn.execute(text("UPDATE public.advertisers SET parent_company_id=NULL "
+                              "WHERE id = ANY(:i)"), {"i": ids})
             conn.execute(text("DELETE FROM public.advertisers WHERE id = ANY(:i)"), {"i": ids})
     refresh_emerging_matview(engine)
 

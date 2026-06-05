@@ -23,6 +23,24 @@ def test_dossier_and_scaling_and_missing(seeded):
         assert [p["active_ad_count"] for p in series] == [1, 2, 4, 6]
 
 
+def test_dossier_includes_enrichment(seeded):
+    engine, ids = seeded
+    with engine.connect() as conn:
+        a = queries.gem_dossier(conn, ids["P7A"])
+        assert a["ig_username"] == "alphafit" and a["ig_followers"] == 1200
+        assert a["parent_company"] is None                  # Alpha is independent
+        b = queries.gem_dossier(conn, ids["P7B"])
+        assert b["parent_company"] == "Alpha"               # Bravo owned by Alpha
+
+
+def test_review_queue_carries_velocity_columns(seeded):
+    engine, ids = seeded
+    with engine.connect() as conn:
+        rows = {r["advertiser_id"]: r for r in queries.review_queue(conn, min_score=70)}
+        a = rows[ids["P7A"]]
+        assert a["active_ad_count"] == 6 and a["max_longevity_days"] == 30
+
+
 def test_review_queue_and_record_decision(seeded):
     engine, ids = seeded
     with engine.connect() as conn:

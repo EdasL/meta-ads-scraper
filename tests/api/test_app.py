@@ -22,6 +22,19 @@ def test_openapi_only_write_is_review_decision(_migrated_engine):
     assert _writes(client) == {("/api/review/{advertiser_id}/decision", "POST")}
 
 
+def test_cors_allows_web_origin(_migrated_engine, monkeypatch):
+    # the browser SPA at localhost:3000 must be allowed cross-origin (preflight + simple)
+    monkeypatch.setenv("AGF_CORS_ORIGINS", "http://localhost:3000")
+    client = TestClient(create_app(_migrated_engine))
+    r = client.get("/healthz", headers={"Origin": "http://localhost:3000"})
+    assert r.headers.get("access-control-allow-origin") == "http://localhost:3000"
+    pre = client.options("/api/shortlist", headers={
+        "Origin": "http://localhost:3000",
+        "Access-Control-Request-Method": "GET"})
+    assert pre.status_code == 200
+    assert pre.headers.get("access-control-allow-origin") == "http://localhost:3000"
+
+
 def test_read_only_conn_denies_writes(_migrated_engine):
     app = create_app(_migrated_engine)
 

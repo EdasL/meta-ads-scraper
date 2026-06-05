@@ -41,10 +41,15 @@ def gem_dossier(conn, advertiser_id):
         "SELECT c.type, c.s3_key, c.body_text, c.title "
         "FROM public.creatives c JOIN public.ads a ON a.id = c.ad_id "
         "WHERE a.advertiser_id = :a"), {"a": advertiser_id}).mappings().all()
-    page_category = conn.execute(text(
-        "SELECT page_category FROM public.advertisers WHERE id = :a"),
-        {"a": advertiser_id}).scalar()
-    return {"gem": dict(gem), "domain": domain, "page_category": page_category,
+    enr = conn.execute(text(
+        "SELECT a.page_category, a.ig_username, a.ig_followers, p.page_name AS parent_company "
+        "FROM public.advertisers a "
+        "LEFT JOIN public.advertisers p ON p.id = a.parent_company_id "
+        "WHERE a.id = :a"), {"a": advertiser_id}).mappings().first() or {}
+    return {"gem": dict(gem), "domain": domain,
+            "page_category": enr.get("page_category"),
+            "ig_username": enr.get("ig_username"), "ig_followers": enr.get("ig_followers"),
+            "parent_company": enr.get("parent_company"),
             "apps": [dict(r) for r in apps], "funnels": [dict(r) for r in funnels],
             "creatives": [dict(r) for r in creatives]}
 
@@ -58,7 +63,8 @@ def gem_scaling(conn, advertiser_id):
 
 def review_queue(conn, *, min_score=70.0, limit=50, offset=0):
     return conn.execute(text("""
-        SELECT advertiser_id, cohort, page_name, app_name, gem_score
+        SELECT advertiser_id, cohort, page_name, app_name, gem_score,
+               active_ad_count, max_longevity_days
         FROM frontend.emerging_scaling_apps e
         WHERE e.alert = TRUE AND e.gem_score >= :min_score
           AND NOT EXISTS (SELECT 1 FROM frontend.review_decisions r

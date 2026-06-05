@@ -50,6 +50,9 @@ class GemDossier(BaseModel):
     gem: ShortlistRow
     domain: str | None = None
     page_category: str | None = None
+    ig_username: str | None = None
+    ig_followers: int | None = None
+    parent_company: str | None = None        # resolved name of the owning advertiser, if any
     apps: list[AppInfo] = []
     funnels: list[FunnelInfo] = []
     creatives: list[CreativeInfo] = []
@@ -68,6 +71,8 @@ class ReviewQueueRow(BaseModel):
     page_name: str | None
     app_name: str | None = None
     gem_score: float
+    active_ad_count: int | None = None
+    max_longevity_days: int | None = None
 
 
 class ReviewDecisionIn(BaseModel):
