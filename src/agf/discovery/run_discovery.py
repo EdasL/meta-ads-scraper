@@ -11,9 +11,12 @@ from agf.discovery.seeds import Candidate, upsert_candidate
 
 async def run_discovery(conn, extractor, now_epoch: int, *, eu_countries=("DE", "GB"),
                         min_running_days: int = 25, min_longevity_days: int = 14,
+                        eu_max_pages: int = 5,
                         fingerprint_client=None, fingerprint_queries=()) -> dict:
-    # Firehose B — EU impressions radar → advertiser pages running ≥ min_running_days
-    ads = await run_eu_impressions_firehose(extractor, eu_countries)
+    # Firehose B — EU impressions radar → advertiser pages running ≥ min_running_days.
+    # eu_max_pages bounds the per-country sweep (the live loop caps it via AGF_EU_MAX_PAGES
+    # so a sweep can't hammer Meta).
+    ads = await run_eu_impressions_firehose(extractor, eu_countries, max_pages=eu_max_pages)
     page_cands = collapse_to_advertisers(ads, now_epoch, min_running_days)
     # EU → US bridge → richer US ads → app + page candidates
     bridge_cands = await run_bridge(extractor, [c.page_id for c in page_cands])

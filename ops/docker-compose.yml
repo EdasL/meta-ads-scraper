@@ -68,7 +68,9 @@ services:
   worker:
     build: { context: .., dockerfile: ops/Dockerfile }
     restart: unless-stopped
-    command: python -m agf.discovery.run_discovery        # discovery + enrich + snapshot loop
+    # the real warm→discover→(score)→enrich loop (agf.workers.main). Set AGF_DRY_RUN=1
+    # to smoke the wiring with the in-process fake extractor (zero Meta traffic).
+    command: python -m agf.workers.main
     environment:
       AGF_DATABASE_URL: ${AGF_DATABASE_URL}
       AGF_PROXIES: ${AGF_PROXIES}
@@ -76,6 +78,22 @@ services:
       MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
       MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
       S3_BUCKET: ${S3_BUCKET}
+      # sweep caps so a real run can't hammer Meta (all have in-code defaults)
+      AGF_DRY_RUN: ${AGF_DRY_RUN:-}
+      AGF_EU_COUNTRIES: ${AGF_EU_COUNTRIES:-DE,GB}
+      AGF_EU_MAX_PAGES: ${AGF_EU_MAX_PAGES:-3}
+      AGF_ENRICH_LIMIT: ${AGF_ENRICH_LIMIT:-10}
+      AGF_ENRICH_TTL_HOURS: ${AGF_ENRICH_TTL_HOURS:-168}
+      AGF_SCORE_AFTER_SWEEP: ${AGF_SCORE_AFTER_SWEEP:-}
+      AGF_SWEEP_INTERVAL_SEC: ${AGF_SWEEP_INTERVAL_SEC:-3600}
+    healthcheck:
+      # the loop writes a heartbeat each sweep; --healthcheck fails if it goes stale
+      # (catches a hung/crash-looping worker that `restart` alone would mask).
+      test: ["CMD", "python", "-m", "agf.workers.main", "--healthcheck"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     depends_on:
       postgres:
         condition: service_healthy

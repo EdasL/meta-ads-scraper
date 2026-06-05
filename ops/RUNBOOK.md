@@ -65,15 +65,36 @@ Logs: `/var/log/agf/*.log`.
 
 ---
 
-## 5. Enrichment worker wiring (Plan 6)
+## 5. The worker loop (`agf.workers.main`)
 
-Enrichment runs for **top-N flagged gems only** (`frontend.emerging_scaling_apps WHERE
-alert`). Wire it with the §3.9 adapter: `agf.enrich_full.run_enrich.make_enrich_handler(
-deps_factory)`, where `deps_factory(conn, advertiser_id)` builds `EnrichDeps` — crucially
-doing a **fresh `extractor.search(view_all_page_id=page_id)`** to fetch current creative
-URLs, because **fbcdn signed URLs expire** (download at scrape time). The Node
-`google-play-scraper` sidecar (`src/agf/enrich_full/sidecar`, needs `npm install`) and
-Playwright (optional/standby, funnel screenshots) are bundled in the app image.
+The `worker` service runs `python -m agf.workers.main` — one guarded loop that each
+sweep: builds the Extractor (warms a curl_cffi session lazily via `SessionPool` +
+`ProxyPool.from_env`) → `run_discovery` (Firehose B + EU→US bridge + 14-day confirm) →
+optionally `run_scoring` → enriches flagged gems via `run_worker(make_enrich_handler(
+deps_factory))`, then sleeps `AGF_SWEEP_INTERVAL_SEC` (default 1h) and repeats.
+
+**Enrichment** runs for **flagged gems only** (`emerging_scaling_apps WHERE alert AND
+gem_score ≥ AGF_MIN_GEM_SCORE`), capped at `AGF_ENRICH_LIMIT` per sweep, `AGF_ENRICH_TTL_HOURS`
+between re-enriches. The production `deps_factory` does a **fresh
+`extractor.search(view_all_page_id=page_id)`** for current creative URLs (**fbcdn signed
+URLs expire**) and wires the iTunes/HTTP/S3/WHOIS clients; the Node `google-play-scraper`
+sidecar (`src/agf/enrich_full/sidecar`, `npm install`) + standby Playwright are in the image.
+
+**Sweep caps (so a real run can't hammer Meta), all with in-code defaults:**
+`AGF_EU_COUNTRIES` (DE,GB) · `AGF_EU_MAX_PAGES` (3) · `AGF_MIN_RUNNING_DAYS` (25) ·
+`AGF_MIN_LONGEVITY_DAYS` (14) · `AGF_ENRICH_LIMIT` (10) · `AGF_ENRICH_TOP_N` (5) ·
+`AGF_ENRICH_TTL_HOURS` (168) · `AGF_SCORE_AFTER_SWEEP` (off — the cron owns daily scoring) ·
+`AGF_SWEEP_INTERVAL_SEC` (3600). Set `AGF_PROXIES` before a live run.
+
+**Dry-run (no Meta traffic).** `AGF_DRY_RUN=1` (or `--dry-run`) swaps an in-process
+`agf.extract.fake.FakeExtractor`, runs exactly ONE sweep, and enriches the just-confirmed
+advertisers — so the whole path can be smoked offline:
+`docker compose -f ops/docker-compose.yml run --rm -e AGF_DRY_RUN=1 worker`, or locally
+`AGF_DRY_RUN=1 AGF_DATABASE_URL=… PYTHONPATH=src python -m agf.workers.main`.
+
+**Health.** The loop writes a heartbeat each sweep; the compose healthcheck runs
+`python -m agf.workers.main --healthcheck` (fails if the heartbeat goes stale > 2 sweeps),
+so a hung/crash-looping worker is reported down instead of silently restarting.
 
 ---
 
