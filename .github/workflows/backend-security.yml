@@ -1,0 +1,25 @@
+name: backend-security
+
+on:
+  push:
+    branches: [main]
+    paths: ['backend/**', '.github/workflows/backend-security.yml']
+  pull_request:
+    branches: [main]
+    paths: ['backend/**', '.github/workflows/backend-security.yml']
+
+jobs:
+  gosec:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache-dependency-path: backend/go.sum
+      # Run from the module directory so gosec resolves go.mod.
+      - name: Gosec security scanner
+        working-directory: backend
+        run: |
+          go install github.com/securego/gosec/v2/cmd/gosec@latest
+          gosec ./...

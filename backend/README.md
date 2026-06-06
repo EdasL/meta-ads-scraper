@@ -32,6 +32,16 @@ single row: the human review decision.
 - **Sentry** (optional, env-gated `SENTRY_DSN`) captures panics; a JSON
   panic-recovery middleware returns `{"detail":...}` 500s.
 - **Timeouts**: per-request DB context cap (15s) + `http.Server` slowloris guards.
+- **Write auth** (optional, env-gated `AGF_API_TOKEN`): when set, the review
+  POST requires `Authorization: Bearer <token>` (constant-time compare). Unset =
+  no auth (default), so the existing web client is unaffected.
+
+## CI
+
+`.github/workflows/backend-ci.yml` runs build, vet, staticcheck, golangci-lint,
+and `go test -race` against a Postgres service (schema applied from
+`db/schema/`). `backend-security.yml` runs gosec. Dependabot watches `gomod`
+(`/backend`) and the GitHub Actions. All gates pass locally.
 
 ## Layout
 

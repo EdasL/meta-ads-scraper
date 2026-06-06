@@ -1,0 +1,69 @@
+name: backend-ci
+
+on:
+  push:
+    branches: [main]
+    paths: ['backend/**', 'db/schema/**', '.github/workflows/backend-ci.yml']
+  pull_request:
+    branches: [main]
+    paths: ['backend/**', 'db/schema/**', '.github/workflows/backend-ci.yml']
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: agf
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres -d agf"
+          --health-interval 10s --health-timeout 5s --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache-dependency-path: backend/go.sum
+
+      # The Go API reads the schema the Python migrations own; apply it so the
+      # integration suite can run against a real Postgres.
+      - name: Apply database schema
+        run: |
+          for f in $(ls db/schema/*.sql | sort); do
+            PGPASSWORD=postgres psql -h localhost -U postgres -d agf -v ON_ERROR_STOP=1 -f "$f"
+          done
+
+      - name: Verify dependencies
+        working-directory: backend
+        run: go mod verify
+
+      - name: Build
+        working-directory: backend
+        run: go build -v ./...
+
+      - name: Vet
+        working-directory: backend
+        run: go vet ./...
+
+      - name: Staticcheck
+        working-directory: backend
+        run: |
+          go install honnef.co/go/tools/cmd/staticcheck@latest
+          staticcheck ./...
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+          working-directory: backend
+
+      - name: Test (race) + integration DB
+        working-directory: backend
+        env:
+          AGF_IT_DB_URL: postgres://postgres:postgres@localhost:5432/agf?sslmode=disable
+        run: go test -race -vet=off ./...
