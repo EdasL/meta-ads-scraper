@@ -50,14 +50,19 @@ func main() {
 		log.Fatalf("s3: %v", err)
 	}
 
-	// Explicit middleware stack (not gin.Default) so panics render our JSON error
-	// shape and Sentry — when enabled — captures them.
+	// Explicit middleware stack (not gin.Default). Order is outer→inner: CORS
+	// handles preflight first; RequestID/AccessLog/Prometheus sit OUTSIDE Recovery
+	// so a panic'd request is still logged + counted with its final 500; Sentry
+	// sits INSIDE Recovery (Repanic) so Recovery catches the re-panic.
 	r := gin.New()
-	r.Use(gin.Logger(), middlewares.Recovery())
+	r.Use(middlewares.CORS(cfg.CorsOrigins))
+	r.Use(middlewares.RequestID())
+	r.Use(middlewares.AccessLog())
+	r.Use(monitoring.PrometheusMiddleware())
+	r.Use(middlewares.Recovery())
 	if monitoring.Enabled() {
 		r.Use(sentrygin.New(sentrygin.Options{Repanic: true}))
 	}
-	r.Use(middlewares.CORS(cfg.CorsOrigins))
 	routers.Init(r)
 
 	srv := &http.Server{

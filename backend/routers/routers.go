@@ -10,6 +10,7 @@ import (
 
 	"github.com/edaslakavicius/emerging-app-finder/backend/controllers"
 	"github.com/edaslakavicius/emerging-app-finder/backend/db"
+	"github.com/edaslakavicius/emerging-app-finder/backend/monitoring"
 	"github.com/edaslakavicius/emerging-app-finder/backend/storage"
 )
 
@@ -33,6 +34,9 @@ func Init(r *gin.Engine) {
 		api.GET("/health/metrics", health.Metrics)
 		api.GET("/media/*key", media.Get)
 	}
+
+	// Prometheus exposition.
+	r.GET("/metrics", monitoring.MetricsHandler())
 
 	// Liveness: the process is up (no dependencies checked).
 	r.GET("/healthz", func(c *gin.Context) {

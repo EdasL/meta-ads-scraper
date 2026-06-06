@@ -18,7 +18,20 @@ single row: the human review decision.
 | POST | `/api/review/{advertiser_id}/decision` | the only write |
 | GET  | `/api/health/metrics` | crawl-log metrics + rotation alerts |
 | GET  | `/api/media/*key` | streams creative/funnel bytes from S3 (key-allowlisted) |
-| GET  | `/healthz` | liveness |
+| GET  | `/healthz` | liveness (process up) |
+| GET  | `/readyz` | readiness (DB reachable; 503 if not) |
+| GET  | `/metrics` | Prometheus exposition |
+
+## Observability & resilience
+
+- **Request IDs**: every request gets an `X-Request-ID` (inbound honored), echoed
+  on the response and included in access logs for correlation.
+- **Structured access logs** replace gin's default logger.
+- **Prometheus** `/metrics`: `agf_http_requests_total{method,route,status}` and
+  `agf_http_request_duration_seconds{method,route}` (labelled by route template).
+- **Sentry** (optional, env-gated `SENTRY_DSN`) captures panics; a JSON
+  panic-recovery middleware returns `{"detail":...}` 500s.
+- **Timeouts**: per-request DB context cap (15s) + `http.Server` slowloris guards.
 
 ## Layout
 

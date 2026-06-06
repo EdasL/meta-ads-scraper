@@ -233,6 +233,14 @@ func TestHealthMetrics(t *testing.T) {
 	require.Equal(t, "critical", m.Alerts[0].Severity)
 }
 
+func TestMetricsEndpoint(t *testing.T) {
+	r := router()
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	require.Equal(t, 200, w.Code)
+	require.Contains(t, w.Body.String(), "# HELP", "prometheus exposition format")
+}
+
 func TestMediaForbiddenKey(t *testing.T) {
 	r := router()
 	w := httptest.NewRecorder()
