@@ -34,6 +34,9 @@ func Dossier(ctx context.Context, g *gorm.DB, advertiserID int) (*models.GemDoss
 			return nil // out stays nil → caller returns 404
 		}
 
+		// LEFT JOIN: an advertiser with no domain_id yields a NULL domain. GORM's
+		// Scan leaves NullString invalid (not an error) on a null/absent row, so
+		// d.Domain correctly stays nil — do NOT add a no-rows error check here.
 		var domain sql.NullString
 		if err := tx.Raw(
 			`SELECT d.domain FROM public.advertisers a

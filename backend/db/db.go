@@ -62,6 +62,9 @@ func WithReadTx(ctx context.Context, g *gorm.DB, fn func(tx *gorm.DB) error) err
 	if tx.Error != nil {
 		return tx.Error
 	}
+	// Always roll back: a read-only transaction carries no writes, so rollback is
+	// equivalent to commit. This deliberately mirrors the Python API's get_conn,
+	// which also rolls back in its finally (src/agf/api/deps.py).
 	defer tx.Rollback()
 	if err := tx.Exec("SET TRANSACTION READ ONLY").Error; err != nil {
 		return err

@@ -50,7 +50,12 @@ explicitly (`Origin, Content-Type, Accept, Authorization, X-Requested-With`).
 Functionally equivalent for the web client.
 
 ## Acceptable, semantically-irrelevant differences vs the Python API
-JSON numbers may render as `74` vs Python's `74.0`, object key order may differ,
-and a UTC datetime may print `+00:00` vs `Z` — all parse identically in JS/JSON.
-The parity harness (`internal/parity`) compares **semantically** (parsed values),
-not byte-for-byte, for exactly this reason.
+- **Numbers**: a whole-valued float may render as `74` here vs Python's `74.0`,
+  and a Postgres `REAL` (float4) read in binary may differ from Python's
+  text-parsed value in the ~8th significant digit (`0.69999999` vs `0.7`).
+- **Object key order** may differ (both decode identically).
+
+Datetimes are NOT in this list: `APITime` reproduces Pydantic v2 exactly (UTC
+`Z` suffix, six fractional digits only when sub-second), so `refreshed_at` is
+byte-identical. The parity harness (`internal/parity`) compares **semantically**
+(parsed values) so the number differences above don't fail it.

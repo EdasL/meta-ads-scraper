@@ -15,8 +15,17 @@ import (
 type APITime time.Time
 
 func (t APITime) MarshalJSON() ([]byte, error) {
-	// Normalize to UTC so the API never leaks the server's local timezone.
-	return []byte(`"` + time.Time(t).UTC().Format("2006-01-02T15:04:05.999999-07:00") + `"`), nil
+	// Match Pydantic v2's datetime output exactly: UTC with a "Z" suffix, and six
+	// fractional digits ONLY when sub-second precision is present (Python omits
+	// the fraction entirely on a whole second). A fixed ".000000" would wrongly
+	// add ".000000" to whole seconds; ".999999" would wrongly trim ".500000" to
+	// ".5" — hence the conditional layout.
+	tt := time.Time(t).UTC()
+	layout := "2006-01-02T15:04:05Z07:00"
+	if tt.Nanosecond() != 0 {
+		layout = "2006-01-02T15:04:05.000000Z07:00"
+	}
+	return []byte(`"` + tt.Format(layout) + `"`), nil
 }
 
 func (t *APITime) Scan(v any) error {

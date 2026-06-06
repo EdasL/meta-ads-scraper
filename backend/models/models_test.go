@@ -63,14 +63,25 @@ func TestAPIDate_MarshalsDateOnly(t *testing.T) {
 	}
 }
 
-func TestAPITime_MarshalsWithOffset(t *testing.T) {
-	tm := APITime(time.Date(2026, 6, 5, 13, 30, 0, 0, time.UTC))
-	b, err := json.Marshal(tm)
-	if err != nil {
-		t.Fatal(err)
+func TestAPITime_MarshalsLikePydantic(t *testing.T) {
+	cases := []struct {
+		name string
+		tm   time.Time
+		want string
+	}{
+		{"whole second omits fraction", time.Date(2026, 6, 5, 13, 30, 0, 0, time.UTC), `"2026-06-05T13:30:00Z"`},
+		{"sub-second keeps six digits", time.Date(2026, 6, 5, 13, 30, 0, 500000000, time.UTC), `"2026-06-05T13:30:00.500000Z"`},
+		{"microsecond precision", time.Date(2026, 6, 5, 8, 8, 56, 926285000, time.UTC), `"2026-06-05T08:08:56.926285Z"`},
+		{"non-UTC normalized to Z", time.Date(2026, 6, 5, 16, 30, 0, 0, time.FixedZone("x", 3*3600)), `"2026-06-05T13:30:00Z"`},
 	}
-	if string(b) != `"2026-06-05T13:30:00+00:00"` {
-		t.Errorf("APITime = %s, want \"2026-06-05T13:30:00+00:00\"", b)
+	for _, c := range cases {
+		b, err := json.Marshal(APITime(c.tm))
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		if string(b) != c.want {
+			t.Errorf("%s: APITime = %s, want %s", c.name, b, c.want)
+		}
 	}
 }
 
