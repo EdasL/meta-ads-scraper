@@ -1,6 +1,7 @@
 # Field Desk — PRODUCTION stack (master-plan §3.10: this file is the single source
 # for PG/MinIO image tags + creds; db/docker-compose.yml is local-test only).
-# All credentials come from the environment (see ops/.env.example). 6 services.
+# All credentials come from the environment (see ops/.env.example). 6 runtime
+# services (api = the Go backend/; + an optional api-py FastAPI fallback profile).
 # (Proxies are in-process via AGF_PROXIES — there is no proxy gateway container.)
 name: field-desk
 
@@ -50,7 +51,34 @@ services:
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
       S3_BUCKET: ${S3_BUCKET}
 
+  # The read-only HTTP API is now the Go service (backend/). It is a second
+  # client of this same Postgres + MinIO; the Python worker/cron/scoring and all
+  # migrations are unchanged. Schema stays Python-owned — the Go service never
+  # migrates, it only reads (and writes the single review-decision row).
   api:
+    build: { context: ../backend, dockerfile: Dockerfile }
+    restart: unless-stopped
+    environment:
+      AGF_DATABASE_URL: ${AGF_DATABASE_URL}
+      AGF_CORS_ORIGINS: ${AGF_CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
+      S3_ENDPOINT: ${S3_ENDPOINT}
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      S3_BUCKET: ${S3_BUCKET}
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+
+  # ROLLBACK fallback: the original Python FastAPI, identical contract on :8000.
+  # Disabled by default. To revert the cutover, stop `api` and run:
+  #   docker compose --profile fallback up -d api-py
+  # Kept until the Go cutover has run in production for a cycle, then removed.
+  api-py:
+    profiles: ["fallback"]
     build: { context: .., dockerfile: ops/Dockerfile }
     restart: unless-stopped
     command: uvicorn agf.api.asgi:app --host 0.0.0.0 --port 8000

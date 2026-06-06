@@ -1,0 +1,7 @@
+# Keep the build context small and reproducible.
+agf-api
+*.out
+.env
+.env.*
+*_test.go
+internal/
