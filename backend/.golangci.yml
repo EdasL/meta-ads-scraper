@@ -1,0 +1,14 @@
+run:
+  timeout: 5m
+
+linters:
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+
+issues:
+  # Keep golangci's default exclusions (e.g. unchecked deferred Close()).
+  exclude-use-default: true
