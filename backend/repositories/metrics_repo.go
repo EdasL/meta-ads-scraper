@@ -1,6 +1,7 @@
 package repositories
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -30,9 +31,9 @@ type crawlCount struct {
 
 // Metrics ports compute_metrics (24h) + rotation_alerts (1h) and the health
 // router's assembly of {window_hours,total,errors,ok,alerts,degraded}.
-func Metrics(g *gorm.DB, now time.Time) (models.HealthMetrics, error) {
+func Metrics(ctx context.Context, g *gorm.DB, now time.Time) (models.HealthMetrics, error) {
 	out := models.HealthMetrics{WindowHours: 24, Alerts: make([]models.Alert, 0)}
-	err := db.WithReadTx(g, func(tx *gorm.DB) error {
+	err := db.WithReadTx(ctx, g, func(tx *gorm.DB) error {
 		since24 := now.UTC().Add(-24 * time.Hour)
 		var counts []crawlCount
 		if err := tx.Raw(

@@ -1,6 +1,7 @@
 package repositories
 
 import (
+	"context"
 	"database/sql"
 
 	"github.com/edaslakavicius/emerging-app-finder/backend/db"
@@ -19,9 +20,9 @@ type dossierEnrichment struct {
 
 // Dossier ports queries.py:gem_dossier — five reads in one read-only snapshot.
 // Returns (nil, nil) when the advertiser is not in the matview (→ 404).
-func Dossier(g *gorm.DB, advertiserID int) (*models.GemDossier, error) {
+func Dossier(ctx context.Context, g *gorm.DB, advertiserID int) (*models.GemDossier, error) {
 	var out *models.GemDossier
-	err := db.WithReadTx(g, func(tx *gorm.DB) error {
+	err := db.WithReadTx(ctx, g, func(tx *gorm.DB) error {
 		gems := make([]models.ShortlistRow, 0, 1)
 		if err := tx.Raw(
 			`SELECT `+mvCols+` FROM frontend.emerging_scaling_apps WHERE advertiser_id = ?`,

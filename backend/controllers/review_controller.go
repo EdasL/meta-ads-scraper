@@ -33,7 +33,9 @@ func (c *ReviewController) Queue(ctx *gin.Context) {
 		helpers.Detail(ctx, http.StatusUnprocessableEntity, "bad offset.")
 		return
 	}
-	rows, err := repositories.ReviewQueue(db.DB(), minScore, limit, offset)
+	rctx, cancel := reqCtx(ctx)
+	defer cancel()
+	rows, err := repositories.ReviewQueue(rctx, db.DB(), minScore, limit, offset)
 	if err != nil {
 		helpers.Detail(ctx, http.StatusInternalServerError, "grug board broke.")
 		return
@@ -53,7 +55,9 @@ func (c *ReviewController) Decision(ctx *gin.Context) {
 		helpers.Detail(ctx, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
-	if err := repositories.RecordDecision(db.DB(), id, body.Verdict, body.Reviewer, body.Note); err != nil {
+	rctx, cancel := reqCtx(ctx)
+	defer cancel()
+	if err := repositories.RecordDecision(rctx, db.DB(), id, body.Verdict, body.Reviewer, body.Note); err != nil {
 		helpers.Detail(ctx, http.StatusInternalServerError, "could not save decision.")
 		return
 	}

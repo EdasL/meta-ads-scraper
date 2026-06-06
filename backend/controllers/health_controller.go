@@ -17,7 +17,9 @@ type HealthController struct{}
 func NewHealthController() *HealthController { return &HealthController{} }
 
 func (c *HealthController) Metrics(ctx *gin.Context) {
-	m, err := repositories.Metrics(db.DB(), time.Now())
+	rctx, cancel := reqCtx(ctx)
+	defer cancel()
+	m, err := repositories.Metrics(rctx, db.DB(), time.Now())
 	if err != nil {
 		helpers.Detail(ctx, http.StatusInternalServerError, "metrics broke.")
 		return

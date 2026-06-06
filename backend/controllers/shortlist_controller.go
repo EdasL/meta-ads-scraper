@@ -37,7 +37,9 @@ func (c *ShortlistController) List(ctx *gin.Context) {
 		helpers.Detail(ctx, http.StatusUnprocessableEntity, "bad offset.")
 		return
 	}
-	rows, err := repositories.Shortlist(db.DB(), cohort, minScore, limit, offset)
+	rctx, cancel := reqCtx(ctx)
+	defer cancel()
+	rows, err := repositories.Shortlist(rctx, db.DB(), cohort, minScore, limit, offset)
 	if err != nil {
 		helpers.Detail(ctx, http.StatusInternalServerError, "grug board broke.")
 		return

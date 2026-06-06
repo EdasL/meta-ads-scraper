@@ -22,7 +22,9 @@ func (c *GemsController) Get(ctx *gin.Context) {
 		helpers.Detail(ctx, http.StatusUnprocessableEntity, "advertiser_id must be an integer.")
 		return
 	}
-	d, err := repositories.Dossier(db.DB(), id)
+	rctx, cancel := reqCtx(ctx)
+	defer cancel()
+	d, err := repositories.Dossier(rctx, db.DB(), id)
 	if err != nil {
 		helpers.Detail(ctx, http.StatusInternalServerError, "grug board broke.")
 		return
@@ -40,7 +42,9 @@ func (c *GemsController) Scaling(ctx *gin.Context) {
 		helpers.Detail(ctx, http.StatusUnprocessableEntity, "advertiser_id must be an integer.")
 		return
 	}
-	pts, err := repositories.Scaling(db.DB(), id)
+	rctx, cancel := reqCtx(ctx)
+	defer cancel()
+	pts, err := repositories.Scaling(rctx, db.DB(), id)
 	if err != nil {
 		helpers.Detail(ctx, http.StatusInternalServerError, "grug board broke.")
 		return

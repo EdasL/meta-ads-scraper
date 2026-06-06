@@ -248,6 +248,14 @@ func TestHealthz(t *testing.T) {
 	require.JSONEq(t, `{"status":"ok"}`, w.Body.String())
 }
 
+func TestReadyz(t *testing.T) {
+	r := router()
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	require.Equal(t, 200, w.Code, "DB reachable → ready")
+	require.JSONEq(t, `{"status":"ok"}`, w.Body.String())
+}
+
 // seed loads a small, deterministic dataset and refreshes the product matview.
 func seed(g *gorm.DB) {
 	must(g.Exec(`TRUNCATE frontend.review_decisions, adtech.app_advertiser_metrics,

@@ -2,11 +2,14 @@
 package routers
 
 import (
+	"context"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
 	"github.com/edaslakavicius/emerging-app-finder/backend/controllers"
+	"github.com/edaslakavicius/emerging-app-finder/backend/db"
 	"github.com/edaslakavicius/emerging-app-finder/backend/storage"
 )
 
@@ -31,7 +34,20 @@ func Init(r *gin.Engine) {
 		api.GET("/media/*key", media.Get)
 	}
 
+	// Liveness: the process is up (no dependencies checked).
 	r.GET("/healthz", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	})
+
+	// Readiness: the process can reach its database. Used by orchestrators to
+	// gate traffic; returns 503 when the DB is unreachable.
+	r.GET("/readyz", func(c *gin.Context) {
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
+		defer cancel()
+		if err := db.Ready(ctx); err != nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "not ready"})
+			return
+		}
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
 }

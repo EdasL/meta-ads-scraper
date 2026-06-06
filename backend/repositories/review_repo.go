@@ -1,15 +1,17 @@
 package repositories
 
 import (
+	"context"
+
 	"github.com/edaslakavicius/emerging-app-finder/backend/db"
 	"github.com/edaslakavicius/emerging-app-finder/backend/models"
 	"gorm.io/gorm"
 )
 
 // ReviewQueue ports queries.py:review_queue — alerting gems not yet decided.
-func ReviewQueue(g *gorm.DB, minScore float64, limit, offset int) ([]models.ReviewQueueRow, error) {
+func ReviewQueue(ctx context.Context, g *gorm.DB, minScore float64, limit, offset int) ([]models.ReviewQueueRow, error) {
 	rows := make([]models.ReviewQueueRow, 0)
-	err := db.WithReadTx(g, func(tx *gorm.DB) error {
+	err := db.WithReadTx(ctx, g, func(tx *gorm.DB) error {
 		return tx.Raw(
 			`SELECT advertiser_id, cohort, page_name, app_name, gem_score,
 			        active_ad_count, max_longevity_days
@@ -29,8 +31,8 @@ func ReviewQueue(g *gorm.DB, minScore float64, limit, offset int) ([]models.Revi
 }
 
 // RecordDecision ports queries.py:record_decision — the only write in the API.
-func RecordDecision(g *gorm.DB, advertiserID int, verdict, reviewer string, note *string) error {
-	return db.WithWriteTx(g, func(tx *gorm.DB) error {
+func RecordDecision(ctx context.Context, g *gorm.DB, advertiserID int, verdict, reviewer string, note *string) error {
+	return db.WithWriteTx(ctx, g, func(tx *gorm.DB) error {
 		return tx.Exec(
 			`INSERT INTO frontend.review_decisions
 			   (advertiser_id, verdict, reviewer, note, decided_at)

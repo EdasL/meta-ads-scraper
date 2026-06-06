@@ -12,12 +12,14 @@ import (
 	"syscall"
 	"time"
 
+	sentrygin "github.com/getsentry/sentry-go/gin"
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 
 	"github.com/edaslakavicius/emerging-app-finder/backend/config"
 	"github.com/edaslakavicius/emerging-app-finder/backend/db"
 	"github.com/edaslakavicius/emerging-app-finder/backend/middlewares"
+	"github.com/edaslakavicius/emerging-app-finder/backend/monitoring"
 	"github.com/edaslakavicius/emerging-app-finder/backend/routers"
 	"github.com/edaslakavicius/emerging-app-finder/backend/storage"
 )
@@ -29,6 +31,12 @@ func main() {
 	if os.Getenv("GIN_MODE") == "release" {
 		gin.SetMode(gin.ReleaseMode)
 	}
+
+	// Optional error tracking (no-op unless SENTRY_DSN is set) — mirrors femrun.
+	if err := monitoring.InitSentry(); err != nil {
+		log.Printf("sentry init failed: %v", err)
+	}
+	defer monitoring.Flush()
 
 	ctx := context.Background()
 	gdb, err := db.Init(cfg.DatabaseURL)
@@ -42,11 +50,26 @@ func main() {
 		log.Fatalf("s3: %v", err)
 	}
 
-	r := gin.Default()
+	// Explicit middleware stack (not gin.Default) so panics render our JSON error
+	// shape and Sentry — when enabled — captures them.
+	r := gin.New()
+	r.Use(gin.Logger(), middlewares.Recovery())
+	if monitoring.Enabled() {
+		r.Use(sentrygin.New(sentrygin.Options{Repanic: true}))
+	}
 	r.Use(middlewares.CORS(cfg.CorsOrigins))
 	routers.Init(r)
 
-	srv := &http.Server{Addr: ":" + cfg.Port, Handler: r}
+	srv := &http.Server{
+		Addr:    ":" + cfg.Port,
+		Handler: r,
+		// Slowloris guard. WriteTimeout is intentionally left unset (0): the media
+		// proxy streams arbitrarily large objects, and per-request context
+		// timeouts already bound the DB-backed handlers.
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
 	go func() {
 		log.Printf("Field Desk API (Go) listening on :%s", cfg.Port)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {

@@ -8,6 +8,7 @@ package db
 
 import (
 	"context"
+	"errors"
 	"log"
 
 	"gorm.io/driver/postgres"
@@ -16,6 +17,8 @@ import (
 )
 
 var pool *gorm.DB
+
+var errNoPool = errors.New("db: pool not initialized")
 
 // Init opens the pool and verifies connectivity.
 func Init(dsn string) (*gorm.DB, error) {
@@ -51,11 +54,11 @@ func Cleanup() {
 	}
 }
 
-// WithReadTx runs fn in a READ ONLY transaction. Postgres rejects any write on
-// this connection — the same default-deny guarantee the Python API gets from
-// `SET TRANSACTION READ ONLY` (src/agf/api/deps.py:get_conn).
-func WithReadTx(g *gorm.DB, fn func(tx *gorm.DB) error) error {
-	tx := g.Begin()
+// WithReadTx runs fn in a READ ONLY transaction bound to ctx. Postgres rejects
+// any write on this connection — the same default-deny guarantee the Python API
+// gets from `SET TRANSACTION READ ONLY` (src/agf/api/deps.py:get_conn).
+func WithReadTx(ctx context.Context, g *gorm.DB, fn func(tx *gorm.DB) error) error {
+	tx := g.WithContext(ctx).Begin()
 	if tx.Error != nil {
 		return tx.Error
 	}
@@ -66,10 +69,23 @@ func WithReadTx(g *gorm.DB, fn func(tx *gorm.DB) error) error {
 	return fn(tx)
 }
 
-// WithWriteTx runs fn in a read-write transaction, committing on success and
-// rolling back on error. This is the single write path: the review decision.
-func WithWriteTx(g *gorm.DB, fn func(tx *gorm.DB) error) error {
-	return g.Transaction(fn)
+// WithWriteTx runs fn in a ctx-bound read-write transaction, committing on
+// success and rolling back on error. This is the single write path: the review
+// decision.
+func WithWriteTx(ctx context.Context, g *gorm.DB, fn func(tx *gorm.DB) error) error {
+	return g.WithContext(ctx).Transaction(fn)
+}
+
+// Ready pings the database for readiness probes (distinct from liveness).
+func Ready(ctx context.Context) error {
+	if pool == nil {
+		return errNoPool
+	}
+	sqlDB, err := pool.DB()
+	if err != nil {
+		return err
+	}
+	return sqlDB.PingContext(ctx)
 }
 
 // SanityCheck logs a loud warning if the product matview the API serves is
