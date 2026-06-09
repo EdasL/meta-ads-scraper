@@ -6,6 +6,7 @@ package models
 
 import (
 	"database/sql/driver"
+	"encoding/json"
 	"fmt"
 	"time"
 )
@@ -146,6 +147,94 @@ type ReviewDecisionIn struct {
 	Verdict  string  `json:"verdict" binding:"required,oneof=accept reject hold"`
 	Reviewer string  `json:"reviewer" binding:"required"`
 	Note     *string `json:"note"`
+}
+
+// StringList is a []string persisted as a JSON text column. Storing tags as
+// JSON text (not a Postgres text[]) means binding and scanning work identically
+// across drivers — no array plumbing — and JSON in / JSON out on the wire.
+type StringList []string
+
+func (s *StringList) Scan(v any) error {
+	if v == nil {
+		*s = StringList{}
+		return nil
+	}
+	var b []byte
+	switch x := v.(type) {
+	case []byte:
+		b = x
+	case string:
+		b = []byte(x)
+	default:
+		return fmt.Errorf("StringList: cannot scan %T", v)
+	}
+	if len(b) == 0 {
+		*s = StringList{}
+		return nil
+	}
+	return json.Unmarshal(b, (*[]string)(s))
+}
+
+func (s StringList) Value() (driver.Value, error) {
+	b, err := json.Marshal([]string(s))
+	if err != nil {
+		return nil, err
+	}
+	return string(b), nil
+}
+
+func (s StringList) MarshalJSON() ([]byte, error) {
+	if s == nil {
+		return []byte("[]"), nil
+	}
+	return json.Marshal([]string(s))
+}
+
+// SavedGemRow is one row of frontend.saved_gems (a user's watchlist entry). The
+// score axes are the snapshot frozen at save time; tags/note/stage/verdict are
+// the user's mutable annotations.
+type SavedGemRow struct {
+	UserEmail       string     `json:"user_email" gorm:"column:user_email"`
+	AdvertiserID    int        `json:"advertiser_id" gorm:"column:advertiser_id"`
+	PageName        *string    `json:"page_name" gorm:"column:page_name"`
+	AppName         *string    `json:"app_name" gorm:"column:app_name"`
+	Cohort          string     `json:"cohort" gorm:"column:cohort"`
+	GemScore        float64    `json:"gem_score" gorm:"column:gem_score"`
+	ScalingVelocity *float64   `json:"scaling_velocity" gorm:"column:scaling_velocity"`
+	UnderRadar      *float64   `json:"under_radar" gorm:"column:under_radar"`
+	FunnelIntent    *float64   `json:"funnel_intent" gorm:"column:funnel_intent"`
+	ActiveAdCount   *int       `json:"active_ad_count" gorm:"column:active_ad_count"`
+	Tags            StringList `json:"tags" gorm:"column:tags"`
+	Note            string     `json:"note" gorm:"column:note"`
+	Stage           string     `json:"stage" gorm:"column:stage"`
+	Verdict         *string    `json:"verdict" gorm:"column:verdict"`
+	Confidence      *int       `json:"confidence" gorm:"column:confidence"`
+	SavedAt         *APITime   `json:"saved_at" gorm:"column:saved_at"`
+	UpdatedAt       *APITime   `json:"updated_at" gorm:"column:updated_at"`
+}
+
+// SavedGemIn is the upsert body. On a re-save (conflict) only the mutable fields
+// are updated; the snapshot columns keep their original save-time values.
+type SavedGemIn struct {
+	UserEmail       string     `json:"user_email" binding:"required"`
+	PageName        *string    `json:"page_name"`
+	AppName         *string    `json:"app_name"`
+	Cohort          string     `json:"cohort"`
+	GemScore        float64    `json:"gem_score"`
+	ScalingVelocity *float64   `json:"scaling_velocity"`
+	UnderRadar      *float64   `json:"under_radar"`
+	FunnelIntent    *float64   `json:"funnel_intent"`
+	ActiveAdCount   *int       `json:"active_ad_count"`
+	Tags            StringList `json:"tags"`
+	Note            string     `json:"note"`
+	Stage           string     `json:"stage" binding:"omitempty,oneof=just_saw watching looks_real building"`
+	Verdict         *string    `json:"verdict" binding:"omitempty,oneof=build clone pass revisit"`
+	Confidence      *int       `json:"confidence" binding:"omitempty,min=1,max=5"`
+}
+
+// SavedGemRemoveIn carries the owner for an unsave (mirrors the reviewer pattern).
+type SavedGemRemoveIn struct {
+	UserEmail string `json:"user_email" binding:"required"`
 }
 
 // Alert mirrors monitoring.metrics.Alert (a frozen dataclass).

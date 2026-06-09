@@ -22,6 +22,7 @@ func Init(r *gin.Engine) {
 	shortlist := controllers.NewShortlistController()
 	gems := controllers.NewGemsController()
 	review := controllers.NewReviewController()
+	saved := controllers.NewSavedGemsController()
 	health := controllers.NewHealthController()
 	media := controllers.NewMediaController(storage.Client(), storage.Bucket())
 
@@ -34,6 +35,11 @@ func Init(r *gin.Engine) {
 		// The single write is guarded by an optional bearer token (no-op unless
 		// AGF_API_TOKEN is set), so production can require auth on mutations.
 		api.POST("/review/:advertiser_id/decision", middlewares.RequireToken(), review.Decision)
+		// Saved gems (a user's watchlist). Writes use POST (CORS allows GET/POST
+		// only) and are token-guarded like the review decision.
+		api.GET("/saved-gems", saved.List)
+		api.POST("/saved-gems/:advertiser_id", middlewares.RequireToken(), saved.Save)
+		api.POST("/saved-gems/:advertiser_id/remove", middlewares.RequireToken(), saved.Remove)
 		api.GET("/health/metrics", health.Metrics)
 		api.GET("/media/*key", media.Get)
 	}
