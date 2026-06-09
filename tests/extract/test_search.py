@@ -1,7 +1,12 @@
 from pathlib import Path
+import pytest
 from agf.extract.search import build_search_variables, search_ads
 from agf.extract.token_heal import SessionTokens
+from agf.extract.errors import ErrorKind, ExtractError
 from tests.extract.conftest import FakeResponse, FakeSession
+
+RATE_LIMIT_BODY = ('{"errors":[{"message":"Rate limit exceeded","severity":"CRITICAL",'
+                   '"code":1675004}],"extensions":{"is_final":true}}')
 
 FX = Path(__file__).parent / "fixtures"
 PAGE1 = (FX / "search_page1.json").read_text()
@@ -48,3 +53,24 @@ def test_search_ads_respects_max_pages():
                                            countries=["US"], max_pages=1)
     assert len(records) == 1                  # only page 1 fetched
     assert sum(1 for m, u in session.calls if m == "POST") == 1
+
+
+def test_search_ads_raises_on_rate_limit():
+    # Meta returns HTTP 200 with an errors[] body when throttling; must surface as RATE_LIMIT
+    session = FakeSession(responses={
+        ("POST", "/api/graphql/"): [FakeResponse(200, RATE_LIMIT_BODY)],
+    })
+    with pytest.raises(ExtractError) as ei:
+        search_ads(session, TOKENS, query="x", countries=["DE"], max_pages=1)
+    assert ei.value.kind is ErrorKind.RATE_LIMIT
+
+
+def test_search_ads_sleeps_between_pages():
+    # polite pacing: a jittered delay between consecutive page requests (not before the first)
+    slept = []
+    session = FakeSession(responses={
+        ("POST", "/api/graphql/"): [FakeResponse(200, PAGE1), FakeResponse(200, PAGE2)],
+    })
+    search_ads(session, TOKENS, query="x", countries=["US"], max_pages=5,
+               delay=1.0, jitter=0.0, sleep=slept.append)
+    assert slept == [1.0]            # exactly one inter-page sleep for two pages

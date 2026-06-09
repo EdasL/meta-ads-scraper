@@ -1,7 +1,8 @@
 # Field Desk — Operations RUNBOOK
 
 Production stack: `ops/docker-compose.yml` (7 services: postgres, minio, minio-init,
-api, worker, cron, proxy). Credentials live in `ops/.env` (template: `ops/.env.example`).
+api, api-py, worker, cron — proxies are in-process via `AGF_PROXIES`, not a gateway
+container). Credentials live in `ops/.env` (template: `ops/.env.example`).
 Bring it up: `docker compose -f ops/docker-compose.yml --env-file ops/.env up -d`.
 
 The Ad Library scrape is a **maintenance treadmill** (master-plan §2): the `doc_id`
