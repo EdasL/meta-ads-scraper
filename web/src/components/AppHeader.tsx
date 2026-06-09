@@ -3,15 +3,18 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { signOut } from "next-auth/react";
-import { IconLayoutKanban, IconStack2, IconLogout } from "@tabler/icons-react";
-
-const LINKS = [
-  { href: "/board", label: "board", Icon: IconLayoutKanban },
-  { href: "/review", label: "the pile", Icon: IconStack2 },
-];
+import { IconBookmark, IconLogout, IconSearch } from "@tabler/icons-react";
+import { useSavedList } from "@/lib/useSaved";
 
 export function AppHeader() {
   const pathname = usePathname();
+  const savedCount = useSavedList().length;
+
+  const links = [
+    { href: "/discover", label: "find", Icon: IconSearch },
+    { href: "/saved", label: savedCount ? `saved ${savedCount}` : "saved", Icon: IconBookmark },
+  ];
+
   return (
     <header
       style={{
@@ -21,26 +24,25 @@ export function AppHeader() {
         display: "flex",
         alignItems: "center",
         justifyContent: "space-between",
-        padding: "14px 22px",
-        background: "var(--paper)",
+        padding: "12px 22px",
+        background: "var(--surface-1)",
         borderBottom: "1.5px solid var(--ink)",
       }}
     >
-      <Link href="/" className="display" style={{ fontSize: "1.2rem", textTransform: "uppercase", textDecoration: "none", color: "var(--ink)" }}>
+      <Link href="/discover" className="w-heavy caps" style={{ fontSize: "var(--fs-md)", letterSpacing: "-0.02em", textDecoration: "none", color: "var(--ink)" }}>
         Field Desk
       </Link>
-      <nav style={{ display: "flex", gap: 22, alignItems: "center" }}>
-        {LINKS.map((l) => {
+      <nav style={{ display: "flex", gap: 20, alignItems: "center" }}>
+        {links.map((l) => {
           const active = pathname === l.href || pathname.startsWith(l.href + "/");
           return (
             <Link
               key={l.href}
               href={l.href}
-              className="font-mono"
+              className="font-mono caps"
               style={{
-                fontSize: "0.74rem",
+                fontSize: "var(--fs-xs)",
                 letterSpacing: "0.1em",
-                textTransform: "uppercase",
                 textDecoration: "none",
                 color: "var(--ink)",
                 borderBottom: active ? "2px solid var(--ink)" : "2px solid transparent",
@@ -57,11 +59,10 @@ export function AppHeader() {
         })}
         <button
           onClick={() => signOut({ redirectTo: "/login" })}
-          className="font-mono"
+          className="font-mono caps"
           style={{
-            fontSize: "0.74rem",
+            fontSize: "var(--fs-xs)",
             letterSpacing: "0.1em",
-            textTransform: "uppercase",
             background: "transparent",
             border: "none",
             cursor: "pointer",

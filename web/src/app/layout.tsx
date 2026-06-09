@@ -1,10 +1,9 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono, Roboto_Mono } from "next/font/google";
 import "./globals.css";
-import { Backdrop, Grain } from "@/components/chrome";
+import { Backdrop } from "@/components/chrome";
 
-// Geist = body + display, Geist Mono = data, Roboto Mono = technical chrome.
-// These mirror nrthview.com's actual type stack.
+// Geist = body + display, Geist Mono = data, Roboto Mono = technical labels.
 const geistSans = Geist({ variable: "--font-sans", subsets: ["latin"] });
 const geistMono = Geist_Mono({ variable: "--font-mono", subsets: ["latin"] });
 const robotoMono = Roboto_Mono({ variable: "--font-tech", subsets: ["latin"] });
@@ -27,7 +26,6 @@ export default function RootLayout({
       <body className="min-h-full">
         <Backdrop />
         {children}
-        <Grain />
       </body>
     </html>
   );

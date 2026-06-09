@@ -9,7 +9,7 @@ import { IconArrowRight } from "@tabler/icons-react";
 export function LoginForm() {
   const router = useRouter();
   const params = useSearchParams();
-  const callbackUrl = params.get("callbackUrl") ?? "/board";
+  const callbackUrl = params.get("callbackUrl") ?? "/discover";
 
   const [email, setEmail] = useState("founder@fielddesk.local");
   const [password, setPassword] = useState("");
@@ -47,7 +47,7 @@ export function LoginForm() {
         <form onSubmit={onSubmit} style={{ padding: "28px 28px 32px" }}>
           <h1 className="display-x" style={{ fontSize: "2.6rem", margin: 0 }}>Field Desk</h1>
           <p className="font-mono" style={{ fontSize: "0.68rem", color: "var(--muted)", marginTop: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>
-            say who you are. then grug open board.
+            say who you are. then grug show gem.
           </p>
 
           <label className="eyebrow" style={{ display: "block", marginTop: 22, color: INK }}>

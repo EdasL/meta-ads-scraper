@@ -1,5 +1,9 @@
-import { Landing } from "@/components/landing/Landing";
+import { redirect } from "next/navigation";
+import { auth } from "@/lib/auth";
+import { Hero } from "@/components/landing/Hero";
 
-export default function HomePage() {
-  return <Landing />;
+export default async function HomePage() {
+  const session = await auth();
+  if (session?.user) redirect("/discover");
+  return <Hero />;
 }
