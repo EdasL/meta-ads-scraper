@@ -29,20 +29,30 @@ async def snapshot_ad_metrics(conn, extractor, snapshot_date, only_ids=None) -> 
     return n
 
 
-def snapshot_advertiser_week(conn, week_start) -> int:
+def snapshot_advertiser_week(conn, week_start, only_ids=None) -> int:
     """Roll the week [week_start, week_start+7) into app_advertiser_metrics:
     active ad count, distinct creatives, total EU reach (latest in-week snapshot
     per ad). DB-native analogue of scale.aggregate_advertisers. Idempotent on
     (advertiser_id, week_start). Returns rows upserted.
 
     Reach is aggregated in its own CTE (one row per ad) so the creative LEFT JOIN
-    fan-out cannot double-count it."""
+    fan-out cannot double-count it.
+
+    only_ids (an advertiser-id allowlist) restricts the rollup to those advertisers —
+    the worker scopes each sweep to the advertisers it just confirmed, so the rollup
+    only touches the tracked set (and a shared DB's other rows — demo, prior tests — are
+    never recounted). only_ids=None rolls up every advertiser with active ads."""
     wk = _as_date(week_start)
     wk_end = wk + timedelta(days=7)
-    rows = conn.execute(text("""
+    params = {"wk": wk, "wk_end": wk_end}
+    adv_filter = ""
+    if only_ids is not None:
+        adv_filter = " AND advertiser_id = ANY(:ids)"
+        params["ids"] = list(only_ids)
+    rows = conn.execute(text(f"""
         WITH active_ads AS (
             SELECT id, advertiser_id FROM public.ads
-            WHERE is_active = TRUE AND advertiser_id IS NOT NULL
+            WHERE is_active = TRUE AND advertiser_id IS NOT NULL{adv_filter}
         ),
         ad_reach AS (   -- latest in-week eu_total_reach per ad
             SELECT DISTINCT ON (m.ad_id) m.ad_id, m.eu_total_reach
@@ -68,7 +78,7 @@ def snapshot_advertiser_week(conn, week_start) -> int:
                COALESCE(r.total_eu_reach, 0) AS total_eu_reach
         FROM per_adv p
         LEFT JOIN reach_adv r ON r.advertiser_id = p.advertiser_id
-    """), {"wk": wk, "wk_end": wk_end}).all()
+    """), params).all()
     for advertiser_id, active_ad_count, distinct_creative_count, total_eu_reach in rows:
         repo.upsert_app_advertiser_metric(
             conn, advertiser_id, wk, active_ad_count,

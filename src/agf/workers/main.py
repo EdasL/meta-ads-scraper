@@ -187,7 +187,8 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
     #      it adds no Meta traffic.
     week_start = as_of - timedelta(days=as_of.weekday())
     with begin(engine) as conn:
-        snapshot_weeks = snapshot_advertiser_week(conn, week_start)
+        snap_ids = _advertiser_ids_for_pages(conn, disc["confirmed"])
+        snapshot_weeks = snapshot_advertiser_week(conn, week_start, only_ids=snap_ids)
 
     # 2) scoring — optional; its own committed txn + CONCURRENT matview refresh
     scored = run_scoring(engine, as_of) if score_after else None
