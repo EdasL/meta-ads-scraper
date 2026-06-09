@@ -1,0 +1,171 @@
+@import "tailwindcss";
+
+/*
+ * Field Desk — dark monochrome editorial (brutalist) design tokens.
+ *
+ * The skin is intentionally kept: near-monochrome, heavy tight type, bold
+ * ink borders + hard offset shadows. What changed is RIGOR — a tokenized
+ * type scale, an 8pt spacing scale, a surface ladder, WCAG-checked grays,
+ * and tabular numerals. No accent hue: hierarchy comes from weight + shade.
+ * See docs/superpowers/specs/2026-06-09-fielddesk-ui-redesign-design.md §4.
+ */
+:root {
+  /* --- canvas + surface ladder (lighter = higher; depth via lightness, not shadow) --- */
+  --bg: #0d0d0f; /* canvas — never #000 (halation) */
+  --surface-1: #161619; /* header / sidebar */
+  --surface-2: #1c1c20; /* cards (alias --paper) */
+  --surface-3: #232329; /* hover / expanded (alias --paper-2) */
+  --surface-4: #2b2b32; /* drawer / popover */
+  --paper: var(--surface-2);
+  --paper-2: var(--surface-3);
+
+  /* --- ink (text + brutalist borders) --- */
+  --ink: #ededed; /* primary text + bold borders — never #fff (halation) */
+  --ink-soft: #d4d4d4; /* secondary text */
+  --muted: #a3a3a3; /* tertiary text — still clears 4.5:1 on surfaces */
+  --faint: #74747e; /* non-text only (large glyphs, decorative) — below body contrast */
+
+  /* --- lines --- */
+  --line: #34343c; /* subtle hairline divider */
+  --hair: rgba(237, 237, 237, 0.1); /* faintest rule */
+  --watermark: #18181b;
+
+  /* --- type scale (px @ 16px root) : size / line-height / tracking --- */
+  --fs-xs: 0.75rem;   --lh-xs: 1rem;     --ls-xs: 0.02em;   /* 12 / 16 */
+  --fs-sm: 0.8125rem; --lh-sm: 1.125rem; --ls-sm: 0;        /* 13 / 18 */
+  --fs-base: 0.875rem;--lh-base: 1.3125rem;--ls-base: -0.006em;/* 14 / 21 */
+  --fs-md: 1rem;      --lh-md: 1.5rem;   --ls-md: -0.01em;  /* 16 / 24 */
+  --fs-lg: 1.25rem;   --lh-lg: 1.625rem; --ls-lg: -0.02em;  /* 20 / 26 */
+  --fs-xl: 1.5rem;    --lh-xl: 1.8125rem;--ls-xl: -0.03em;  /* 24 / 29 */
+  --fs-2xl: 2rem;     --lh-2xl: 2.25rem; --ls-2xl: -0.04em; /* 32 / 36 */
+  --fs-3xl: 3rem;     --lh-3xl: 3.125rem;--ls-3xl: -0.06em; /* 48 / 50 */
+  --fs-4xl: 4rem;     --lh-4xl: 4rem;    --ls-4xl: -0.06em; /* 64 / 64 */
+
+  /* --- spacing scale (8pt + 4px half-step, 2px micro) --- */
+  --sp-0: 2px;  --sp-1: 4px;  --sp-2: 8px;  --sp-3: 12px; --sp-4: 16px;
+  --sp-6: 24px; --sp-8: 32px; --sp-10: 40px; --sp-12: 48px; --sp-14: 56px;
+
+  /* --- shape --- */
+  --radius-xs: 2px;
+  --radius-sm: 4px;
+  --shadow-hard: 5px 5px 0 var(--ink); /* brutalist offset shadow (identity) */
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-paper: var(--paper);
+  --color-paper-2: var(--paper-2);
+  --color-surface-1: var(--surface-1);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-surface-4: var(--surface-4);
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--ink-soft);
+  --color-muted: var(--muted);
+  --color-line: var(--line);
+
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+  --font-tech: var(--font-tech);
+}
+
+html {
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  background-color: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-sans), system-ui, sans-serif;
+  font-size: var(--fs-base);
+  line-height: var(--lh-base);
+  letter-spacing: var(--ls-base);
+}
+
+/* ---------------------------------------------------------------------------
+ * Composable type system. Size classes set size/line-height/tracking only;
+ * weight/family/transform are separate so they never conflict when combined,
+ * e.g. <h1 className="t-3xl w-heavy caps">.
+ * ------------------------------------------------------------------------- */
+.t-xs  { font-size: var(--fs-xs);  line-height: var(--lh-xs);  letter-spacing: var(--ls-xs); }
+.t-sm  { font-size: var(--fs-sm);  line-height: var(--lh-sm);  letter-spacing: var(--ls-sm); }
+.t-base{ font-size: var(--fs-base);line-height: var(--lh-base);letter-spacing: var(--ls-base); }
+.t-md  { font-size: var(--fs-md);  line-height: var(--lh-md);  letter-spacing: var(--ls-md); }
+.t-lg  { font-size: var(--fs-lg);  line-height: var(--lh-lg);  letter-spacing: var(--ls-lg); }
+.t-xl  { font-size: var(--fs-xl);  line-height: var(--lh-xl);  letter-spacing: var(--ls-xl); }
+.t-2xl { font-size: var(--fs-2xl); line-height: var(--lh-2xl); letter-spacing: var(--ls-2xl); }
+.t-3xl { font-size: var(--fs-3xl); line-height: var(--lh-3xl); letter-spacing: var(--ls-3xl); }
+.t-4xl { font-size: var(--fs-4xl); line-height: var(--lh-4xl); letter-spacing: var(--ls-4xl); }
+
+.w-ui     { font-family: var(--font-sans), system-ui, sans-serif; font-weight: 510; }
+.w-strong { font-family: var(--font-sans), system-ui, sans-serif; font-weight: 590; }
+.w-heavy  { font-family: var(--font-sans), system-ui, sans-serif; font-weight: 700; }
+.caps     { text-transform: uppercase; }
+.nums     { font-variant-numeric: tabular-nums; }
+.measure  { max-width: 34em; } /* ~45-75ch prose cap */
+
+/* Display — Geist heavy, tight, editorial (kept for back-compat). */
+.display {
+  font-family: var(--font-sans), system-ui, sans-serif;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 0.94;
+}
+.display-x {
+  font-family: var(--font-sans), system-ui, sans-serif;
+  font-weight: 800;
+  letter-spacing: -0.045em;
+  line-height: 0.88;
+  text-transform: uppercase;
+}
+.font-mono {
+  font-family: var(--font-mono), ui-monospace, monospace;
+}
+
+/* Eyebrow — small technical mono label, tracked, uppercase. */
+.eyebrow {
+  font-family: var(--font-tech), monospace;
+  font-size: var(--fs-xs);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* HUD / technical mono label (kept for back-compat). */
+.hud {
+  font-family: var(--font-tech), monospace;
+  font-size: 0.6rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  line-height: 1.5;
+}
+
+.blackout {
+  background: var(--ink);
+  color: var(--bg);
+  padding: 0 0.12em;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+.uline {
+  border-bottom: 2px solid var(--ink);
+  padding-bottom: 1px;
+}
+
+/* Accessibility: always-visible focus ring (spec §4.1). */
+:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+
+::selection {
+  background: var(--ink);
+  color: var(--bg);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--surface-4) transparent;
+}
