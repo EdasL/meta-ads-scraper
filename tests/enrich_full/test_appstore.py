@@ -1,4 +1,5 @@
-from agf.enrich_full.appstore import lookup_itunes_batch
+from sqlalchemy import text
+from agf.enrich_full.appstore import lookup_itunes_batch, resolve_pending_app_metadata
 
 
 class FakeITunes:
@@ -36,3 +37,26 @@ def test_empty_ids_no_calls():
     cl = FakeITunes()
     assert lookup_itunes_batch(cl, []) == {}
     assert cl.calls == []
+
+
+def test_resolve_pending_app_metadata_fills_null_name_apps(pg_conn):
+    # discovery's app-linking creates apps with NULL name; resolution fills them in so they
+    # are interpretable AND feed genre/release/ratings into scoring (no Meta traffic).
+    aid = pg_conn.execute(text(
+        "INSERT INTO public.apps (store, store_id) VALUES ('ios','7771') RETURNING id")).scalar()
+    n = resolve_pending_app_metadata(pg_conn, FakeITunes())
+    assert n >= 1
+    row = pg_conn.execute(text(
+        "SELECT name, genre, rating_count FROM public.apps WHERE id=:i"), {"i": aid}).first()
+    assert row.name == "App 7771"
+    assert row.genre == "Health & Fitness"
+    assert row.rating_count == 123
+
+
+def test_resolve_pending_app_metadata_noop_when_all_named(pg_conn):
+    pg_conn.execute(text(
+        "INSERT INTO public.apps (store, store_id, name) VALUES ('ios','8881','Named')"))
+    # no NULL-name ios/android apps inserted here → the lookup client is never needed
+    before = pg_conn.execute(text("SELECT count(*) FROM public.apps WHERE name IS NULL")).scalar()
+    if before == 0:
+        assert resolve_pending_app_metadata(pg_conn, FakeITunes()) == 0

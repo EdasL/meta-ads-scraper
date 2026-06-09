@@ -190,6 +190,16 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
         snap_ids = _advertiser_ids_for_pages(conn, disc["confirmed"])
         snapshot_weeks = snapshot_advertiser_week(conn, week_start, only_ids=snap_ids)
 
+    # 1.6) resolve metadata for newly-linked apps (name/genre/release/ratings). Cheap
+    #      iTunes/gplay lookups (no Meta traffic), so every sweep makes discovered apps
+    #      interpretable AND feeds genre (cohort), release_date (emerging gate), and
+    #      rating_count (under_radar) into scoring for ALL advertisers — not just enriched
+    #      gems. Production only (needs the sweep's HTTP client); idempotent.
+    if not dry_run and http_client is not None:
+        from agf.enrich_full.appstore import resolve_pending_app_metadata
+        with begin(engine) as conn:
+            resolve_pending_app_metadata(conn, http_client)
+
     # 2) scoring — optional; its own committed txn + CONCURRENT matview refresh
     scored = run_scoring(engine, as_of) if score_after else None
 
