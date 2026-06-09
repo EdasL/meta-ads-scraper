@@ -243,6 +243,8 @@ export function getSnapshot(): SavedGem[] {
   read();
   return cachedList;
 }
+// Must be a stable reference — useSyncExternalStore loops if this changes.
+const EMPTY: SavedGem[] = [];
 export function getServerSnapshot(): SavedGem[] {
-  return [];
+  return EMPTY;
 }
