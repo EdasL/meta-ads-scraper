@@ -202,7 +202,8 @@ export function unsave(id: number): void {
   commit(next);
 }
 export function toggleSave(row: ShortlistRow): void {
-  isSaved(row.advertiser_id) ? unsave(row.advertiser_id) : save(row);
+  if (isSaved(row.advertiser_id)) unsave(row.advertiser_id);
+  else save(row);
 }
 export function setNote(id: number, note: string): void {
   mutate(id, (g) => ({ ...g, note }));
