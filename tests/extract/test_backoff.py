@@ -1,6 +1,24 @@
 import pytest
-from agf.extract.backoff import classify_error, with_backoff, raise_for_fb_error
+from agf.extract.backoff import classify_error, with_backoff, raise_for_fb_error, classify_exception
 from agf.extract.errors import ErrorKind, ExtractError
+
+
+def _curl_exc(name):
+    """A stand-in for a curl_cffi transport exception (module-tagged, no curl_cffi import)."""
+    exc_type = type(name, (Exception,), {})
+    exc_type.__module__ = "curl_cffi.requests.exceptions"
+    return exc_type("boom")
+
+
+def test_classify_exception_curl_network_is_transient():
+    assert classify_exception(_curl_exc("Timeout")) is ErrorKind.TRANSIENT
+    assert classify_exception(_curl_exc("ConnectionError")) is ErrorKind.TRANSIENT
+
+
+def test_classify_exception_passes_through_non_transport():
+    # a real programming error must NOT be swallowed as retryable
+    assert classify_exception(ValueError("a bug")) is None
+    assert classify_exception(KeyError("k")) is None
 
 
 def test_classify_http_status():

@@ -26,6 +26,17 @@ def classify_error(*, status: int | None = None, fb_code: int | None = None) -> 
     return ErrorKind.FATAL
 
 
+def classify_exception(exc: BaseException) -> ErrorKind | None:
+    """Classify a transport-level exception into a retryable ErrorKind, or None if it is
+    not a known network error (so real bugs propagate instead of being silently retried).
+
+    curl_cffi raises Timeout/ConnectionError/etc. on a slow or dead proxy exit — those are
+    TRANSIENT: retry (the rotating gateway hands out a fresh IP on the next request)."""
+    if type(exc).__module__.startswith("curl_cffi"):
+        return ErrorKind.TRANSIENT
+    return None
+
+
 def raise_for_fb_error(parsed) -> None:
     """Surface a Facebook GraphQL error carried in a 200 response body.
 

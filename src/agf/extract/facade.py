@@ -7,8 +7,8 @@ from agf.extract.search import search_ads
 from agf.extract.session_pool import SessionPool
 from agf.extract.tls_client import AdLibrarySession
 from agf.extract.proxy import ProxyPool
-from agf.extract.backoff import with_backoff
-from agf.extract.errors import ErrorKind
+from agf.extract.backoff import with_backoff, classify_exception
+from agf.extract.errors import ErrorKind, ExtractError
 
 # A throttle/session error means THIS IP is burned → drop the warm session so the next
 # attempt re-warms on a fresh proxy (Meta rate-limits the GraphQL search by IP reputation).
@@ -41,6 +41,29 @@ class Extractor:
         self._backoff_base = backoff_base
         self._sleep = sleep
 
+    def _run_resilient(self, attempt_fn):
+        """Run a session-bound operation with transport-error translation, exponential
+        backoff, and proxy rotation on rate-limit/session errors. A curl_cffi transport
+        error (timeout / dead exit) becomes a retryable TRANSIENT — the rotating gateway
+        hands out a fresh IP on retry. Synchronous; call inside asyncio.to_thread."""
+        def guarded():
+            try:
+                return attempt_fn()
+            except ExtractError:
+                raise
+            except Exception as exc:                       # transport-level (curl_cffi) error
+                kind = classify_exception(exc)
+                if kind is None:
+                    raise                                  # a real bug — don't mask it
+                raise ExtractError(f"{type(exc).__name__}: {exc}", kind) from exc
+
+        def on_retry(err, _attempt):
+            if err.kind in _ROTATE_ON:                     # burned IP → re-warm on a fresh proxy
+                self._pool.invalidate()
+
+        return with_backoff(guarded, max_attempts=self._max_attempts,
+                            base=self._backoff_base, sleep=self._sleep, on_retry=on_retry)
+
     async def search(self, *, query="", countries=["US"], active_status="ACTIVE",
                      sort_by_impressions=False, search_type="KEYWORD_UNORDERED",
                      view_all_page_id=None, max_pages=10) -> list[AdRecord]:
@@ -52,24 +75,16 @@ class Extractor:
                 search_type=search_type, view_all_page_id=view_all_page_id, max_pages=max_pages,
                 delay=self._search_delay, jitter=self._search_jitter, sleep=self._sleep)
             return records
-
-        def on_retry(err, _attempt):
-            if err.kind in _ROTATE_ON:
-                self._pool.invalidate()
-
-        def run():
-            return with_backoff(attempt, max_attempts=self._max_attempts,
-                                base=self._backoff_base, sleep=self._sleep, on_retry=on_retry)
-        return await asyncio.to_thread(run)
+        return await asyncio.to_thread(lambda: self._run_resilient(attempt))
 
     async def ad_details(self, ad_archive_id) -> AdDetails:
-        def run():
+        def attempt():
             ws = self._pool.acquire()
             return fetch_ad_details(ws.session, ws.tokens, ad_archive_id)
-        return await asyncio.to_thread(run)
+        return await asyncio.to_thread(lambda: self._run_resilient(attempt))
 
     async def resolve_deeplink(self, url, ua="ios") -> ResolvedLink:
-        def run():
+        def attempt():
             ws = self._pool.acquire()
             return resolve_deeplink(ws.session, url, ua=ua)
-        return await asyncio.to_thread(run)
+        return await asyncio.to_thread(lambda: self._run_resilient(attempt))
