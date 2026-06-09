@@ -9,6 +9,29 @@ def _ad(ext, active=True):
                     "INSTALL_MOBILE_APP", "Install", "https://x.example", "body")
 
 
+def _ad_pg(ext, pg, active=True):
+    return AdRecord(ext, pg, "Co", active, 1_714_500_000, None, 2,
+                    "INSTALL_MOBILE_APP", "Install", "https://x.example", "body")
+
+
+def test_weekly_rollup_only_ids_isolates_other_advertisers(pg_conn):
+    # only_ids must restrict the rollup so a shared DB's other advertisers (demo, prior
+    # tests) are never recounted — the bug that clobbered seeded demo velocity.
+    keep = repo.upsert_advertiser(pg_conn, _ad_pg("K1", "PK"))
+    repo.upsert_ad(pg_conn, _ad_pg("K1", "PK", active=True), keep, None)
+    other = repo.upsert_advertiser(pg_conn, _ad_pg("O1", "PO"))
+    repo.upsert_ad(pg_conn, _ad_pg("O1", "PO", active=True), other, None)
+
+    n = snapshot_advertiser_week(pg_conn, "2026-06-01", only_ids=[keep])
+
+    assert n == 1                                          # only the allowlisted advertiser
+    kept = pg_conn.execute(text("SELECT count(*) FROM adtech.app_advertiser_metrics "
+                                "WHERE advertiser_id=:a"), {"a": keep}).scalar()
+    skipped = pg_conn.execute(text("SELECT count(*) FROM adtech.app_advertiser_metrics "
+                                   "WHERE advertiser_id=:a"), {"a": other}).scalar()
+    assert kept == 1 and skipped == 0                      # other advertiser untouched
+
+
 def test_weekly_rollup_counts_and_reach_idempotent(pg_conn):
     adv = repo.upsert_advertiser(pg_conn, _ad("A1"))
     a1 = repo.upsert_ad(pg_conn, _ad("A1", active=True), adv, None)
