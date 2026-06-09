@@ -6,6 +6,7 @@ currentVersionReleaseDate (last update)."""
 import json
 import subprocess
 from pathlib import Path
+from sqlalchemy import text
 from agf.enrich import parse_lookup, AppMeta
 
 _ITUNES_LOOKUP = "https://itunes.apple.com/lookup"
@@ -63,3 +64,33 @@ def lookup_google_play(package_ids, *, runner=None) -> dict:
             rating_count=int(r.get("ratings") or 0),
             avg_rating=float(r.get("score") or 0.0))
     return out
+
+
+def resolve_pending_app_metadata(conn, itunes_client, *, gplay_runner=None) -> int:
+    """Fill name/genre/release/ratings for linked apps still missing a name (iTunes batch +
+    gplay sidecar). Cheap — no Meta traffic — so it can run every sweep: it makes discovered
+    apps interpretable AND feeds genre (cohort), release_date (emerging gate), and
+    rating_count (under_radar) into scoring for ALL advertisers, not just enriched gems.
+    conn-first: no commit. Idempotent (only touches name-NULL rows). Returns rows updated."""
+    rows = conn.execute(text(
+        "SELECT id, store, store_id FROM public.apps WHERE name IS NULL")).all()
+    if not rows:
+        return 0
+    ios = [sid for _id, store, sid in rows if store == "ios"]
+    android = [sid for _id, store, sid in rows if store == "android"]
+    itunes = lookup_itunes_batch(itunes_client, ios) if ios else {}
+    gplay = lookup_google_play(android, runner=gplay_runner) if android else {}
+    n = 0
+    for app_id, store, store_id in rows:
+        meta = itunes.get(str(store_id)) if store == "ios" else gplay.get(str(store_id))
+        if not meta:
+            continue
+        conn.execute(text(
+            "UPDATE public.apps SET name=:n, developer=:d, genre=:g, "
+            "release_date=CAST(NULLIF(:r,'') AS date), rating=:ar, rating_count=:rc, "
+            "updated_at=clock_timestamp() WHERE id=:id"),
+            {"n": meta.name or None, "d": meta.seller or None, "g": meta.genre or None,
+             "r": meta.release_date or "", "ar": meta.avg_rating, "rc": meta.rating_count,
+             "id": app_id})
+        n += 1
+    return n
