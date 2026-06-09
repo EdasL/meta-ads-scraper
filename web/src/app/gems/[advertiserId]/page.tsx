@@ -1,5 +1,5 @@
 import { AppHeader } from "@/components/AppHeader";
-import { Dossier } from "@/components/dossier/Dossier";
+import { GemDetail } from "@/components/detail/GemDetail";
 
 export default async function GemPage({
   params,
@@ -10,7 +10,7 @@ export default async function GemPage({
   return (
     <>
       <AppHeader />
-      <Dossier advertiserId={Number(advertiserId)} />
+      <GemDetail advertiserId={Number(advertiserId)} />
     </>
   );
 }
