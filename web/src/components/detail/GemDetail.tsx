@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { IconArrowLeft } from "@tabler/icons-react";
 import { getGem } from "@/lib/api";
+import { markVisitedGem } from "@/lib/onboarding";
 import { trendFromScaling } from "@/lib/why";
 import { Fallback } from "@/components/Fallback";
 import { ButtonLink } from "@/components/ui";
@@ -29,6 +30,10 @@ export function GemDetail({ advertiserId }: { advertiserId: number }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [reload, setReload] = useState(0);
+
+  useEffect(() => {
+    markVisitedGem(); // activation: "find a gem"
+  }, []);
 
   useEffect(() => {
     let alive = true;

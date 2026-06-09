@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { IconChevronDown, IconChevronRight } from "@tabler/icons-react";
 import { becauseLine, GEMSCORE_GLOSSARY, pushPull, statusChip, type Trend as TrendData } from "@/lib/why";
+import { markExpandedWhy } from "@/lib/onboarding";
 import { InfoDot, ScoreBadge, SignalChips, StatusBadge, Trend } from "@/components/ui";
 import type { GemDossier } from "@/types/contracts";
 
@@ -35,7 +36,10 @@ export function GemVerdict({ gem, trend }: { gem: GemDossier; trend: TrendData }
           <p className="t-md" style={{ marginTop: 10 }}>{becauseLine(gem)}</p>
           <button
             type="button"
-            onClick={() => setOpen((o) => !o)}
+            onClick={() => {
+              setOpen((o) => !o);
+              markExpandedWhy(); // activation: "see why it climb"
+            }}
             aria-expanded={open}
             className="font-mono caps"
             style={{ display: "inline-flex", alignItems: "center", gap: 5, marginTop: 12, background: "transparent", border: "none", cursor: "pointer", color: "var(--muted)", fontSize: "var(--fs-xs)", letterSpacing: "0.08em", padding: 0 }}

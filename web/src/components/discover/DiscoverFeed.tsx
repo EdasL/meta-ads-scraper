@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { getShortlist } from "@/lib/api";
 import { statusChip } from "@/lib/why";
 import { Fallback } from "@/components/Fallback";
-import { EmptyState } from "@/components/ui";
+import { ActivationChecklist, EmptyState } from "@/components/ui";
 import type { ShortlistRow } from "@/types/contracts";
 import { GemCard } from "./GemCard";
 import { DEFAULT_FILTERS, FilterRail, type Filters, type Sort } from "./FilterRail";
@@ -73,6 +73,8 @@ export function DiscoverFeed() {
             : `grug find ${visible.length} gem. ${filters.view === "rising" ? "the movers first." : "best score first."}`}
         </p>
       </header>
+
+      {!error && !loading && rows.length > 0 && <ActivationChecklist />}
 
       {!error && !loading && (
         <div style={{ marginBottom: 22 }}>
