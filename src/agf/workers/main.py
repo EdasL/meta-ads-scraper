@@ -40,6 +40,7 @@ from agf.db.engine import get_engine, begin
 from agf.discovery.run_discovery import run_discovery
 from agf.enrich_full.run_enrich import make_enrich_handler, EnrichDeps
 from agf.scoring.run_scoring import run_scoring, ALERT_THRESHOLD
+from agf.tracker.snapshots import snapshot_advertiser_week
 from agf.workers.runner import run_worker
 
 
@@ -178,6 +179,16 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
             eu_max_pages=eu_max_pages, min_running_days=min_running_days,
             min_longevity_days=min_longevity_days))
 
+    # 1.5) velocity tracker — roll THIS week's active-ad counts into the weekly
+    #      app_advertiser_metrics series that build_features/GemScore read. Nothing else
+    #      calls this in production, so without it the week-over-week signal never builds,
+    #      scaling_velocity stays flat, and no advertiser can EVER cross the alert
+    #      threshold no matter how long the system runs. Pure DB (counts public.ads), so
+    #      it adds no Meta traffic.
+    week_start = as_of - timedelta(days=as_of.weekday())
+    with begin(engine) as conn:
+        snapshot_weeks = snapshot_advertiser_week(conn, week_start)
+
     # 2) scoring — optional; its own committed txn + CONCURRENT matview refresh
     scored = run_scoring(engine, as_of) if score_after else None
 
@@ -198,7 +209,7 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
                           make_enrich_handler(deps_factory, top_n=enrich_top_n),
                           source=engine, candidate_ids=cand_ids,
                           due_before=due_before, limit=enrich_limit)
-    return {"discovery": disc, "scored": scored,
+    return {"discovery": disc, "scored": scored, "snapshot_weeks": snapshot_weeks,
             "enrich_candidates": cand_ids, "enriched": enriched}
 
 
@@ -227,7 +238,7 @@ def _healthcheck() -> int:
 def _summary_line(s: dict) -> str:
     d = s["discovery"]
     line = (f"[worker] sweep: candidates={d['candidates']} pages={d['pages']} "
-            f"confirmed={len(d['confirmed'])} "
+            f"confirmed={len(d['confirmed'])} weekly_snapshots={s['snapshot_weeks']} "
             f"enriched={len(s['enriched'])}/{len(s['enrich_candidates'])}")
     if s["scored"] is not None:
         line += f" scored={s['scored']}"

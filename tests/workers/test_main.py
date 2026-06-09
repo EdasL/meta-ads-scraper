@@ -5,7 +5,7 @@ run_worker. Skips cleanly without AGF_TEST_DB_URL; cleans up its FAKE* sentinels
 import os
 import subprocess
 import sys
-from datetime import date
+from datetime import date, timedelta
 
 from sqlalchemy import text
 
@@ -58,6 +58,19 @@ def test_dry_run_sweep_discovers_confirms_and_enriches(_migrated_engine):
                 "SELECT count(*) FROM logging.crawl_log WHERE entity_type='advertiser' "
                 "AND entity_id = ANY(:i)"), {"i": summary["enrich_candidates"]}).scalar()
         assert n == 2
+        # velocity tracker: the sweep rolled the current week's active-ad counts into the
+        # weekly series build_features reads. Before this, NOTHING called
+        # snapshot_advertiser_week in production, so the week-over-week signal never built
+        # and GemScore velocity could never move — no advertiser could ever alert.
+        assert summary["snapshot_weeks"] >= 2          # global rollup ran (incl. our 2)
+        with eng.connect() as conn:
+            adv_ids = conn.execute(text(
+                "SELECT id FROM public.advertisers WHERE page_id = ANY(:p)"),
+                {"p": list(FAKE_PAGES)}).scalars().all()
+            weekly = conn.execute(text(
+                "SELECT count(*) FROM adtech.app_advertiser_metrics WHERE advertiser_id = ANY(:i)"),
+                {"i": adv_ids}).scalar()
+        assert weekly == 2                              # one weekly rollup row per confirmed advertiser
     finally:
         _clean_fake(eng)
 
