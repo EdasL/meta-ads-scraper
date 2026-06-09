@@ -9,6 +9,8 @@ import type {
 import type {
   ApiGemDossier,
   ApiReviewQueueRow,
+  ApiSavedGem,
+  ApiSavedGemIn,
   ApiScalingPoint,
   ApiShortlistRow,
 } from "@/types/api";
@@ -151,6 +153,26 @@ export async function postReviewDecision(
     window.localStorage.setItem(REVIEW_DECISION_KEY, JSON.stringify(obj));
   }
   return delay({ ok: true } as const);
+}
+
+// --- Saved gems (server-side watchlist) ---
+// These hit the Go backend directly; they're only invoked in live mode (the
+// saved store keeps a localStorage stub for offline/mock dev, matching the
+// mock/live split used by every other endpoint here).
+
+export async function getSavedGems(userEmail: string): Promise<ApiSavedGem[]> {
+  return live<ApiSavedGem[]>(`/saved-gems?user_email=${encodeURIComponent(userEmail)}`);
+}
+
+export async function upsertSavedGem(advertiserId: number, body: ApiSavedGemIn): Promise<void> {
+  await live(`/saved-gems/${advertiserId}`, { method: "POST", body: JSON.stringify(body) });
+}
+
+export async function removeSavedGem(advertiserId: number, userEmail: string): Promise<void> {
+  await live(`/saved-gems/${advertiserId}/remove`, {
+    method: "POST",
+    body: JSON.stringify({ user_email: userEmail }),
+  });
 }
 
 export const DATA_MODE = MODE;

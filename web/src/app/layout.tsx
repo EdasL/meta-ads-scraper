@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono, Roboto_Mono } from "next/font/google";
 import "./globals.css";
 import { Backdrop } from "@/components/chrome";
+import { Providers } from "@/components/Providers";
 
 // Geist = body + display, Geist Mono = data, Roboto Mono = technical labels.
 const geistSans = Geist({ variable: "--font-sans", subsets: ["latin"] });
@@ -25,7 +26,7 @@ export default function RootLayout({
     >
       <body className="min-h-full">
         <Backdrop />
-        {children}
+        <Providers>{children}</Providers>
       </body>
     </html>
   );

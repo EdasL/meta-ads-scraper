@@ -86,3 +86,44 @@ export interface ApiReviewQueueRow {
   active_ad_count?: number | null;
   max_longevity_days?: number | null;
 }
+
+/** `SavedGemRow` (backend models.go) — a user's watchlist entry; score axes are
+ * the snapshot frozen at save time, the rest are the user's annotations. */
+export interface ApiSavedGem {
+  user_email: string;
+  advertiser_id: number;
+  page_name: string | null;
+  app_name: string | null;
+  cohort: string;
+  gem_score: number;
+  scaling_velocity: number | null;
+  under_radar: number | null;
+  funnel_intent: number | null;
+  active_ad_count: number | null;
+  tags: string[];
+  note: string;
+  stage: string;
+  verdict: string | null;
+  confidence: number | null;
+  saved_at: string | null;
+  updated_at: string | null;
+}
+
+/** `SavedGemIn` (backend) — the upsert body. On a re-save only the mutable
+ * annotations (tags/note/stage/verdict/confidence) are applied server-side. */
+export interface ApiSavedGemIn {
+  user_email: string;
+  page_name: string | null;
+  app_name: string | null;
+  cohort: string;
+  gem_score: number;
+  scaling_velocity: number | null;
+  under_radar: number | null;
+  funnel_intent: number | null;
+  active_ad_count: number | null;
+  tags: string[];
+  note: string;
+  stage: string;
+  verdict: string | null;
+  confidence: number | null;
+}

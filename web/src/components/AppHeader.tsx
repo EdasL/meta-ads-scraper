@@ -65,6 +65,8 @@ export function AppHeader() {
             letterSpacing: "0.1em",
             background: "transparent",
             border: "none",
+            borderBottom: "2px solid transparent",
+            padding: "0 0 2px",
             cursor: "pointer",
             color: "var(--muted)",
             display: "inline-flex",

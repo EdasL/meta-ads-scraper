@@ -1,205 +1,228 @@
 /**
- * saved.ts — the client-side "my gems" store (localStorage), the source of
- * truth for saving + annotating gems in this pass (backend persistence is a
- * later follow-up). Pure helpers (normalizeTag, makeSavedGem, withTag, …) are
- * separated from the storage layer so they unit-test under `node --test`.
+ * saved.ts — the "my gems" store. In LIVE mode the source of truth is the Go
+ * backend (frontend.saved_gems): the store hydrates from GET /saved-gems and
+ * every mutation is persisted via POST /saved-gems (optimistic UI + background
+ * write). In MOCK mode it falls back to localStorage so the app runs offline
+ * for dev — the same mock/live split every other endpoint uses.
  *
- * On save we FREEZE the score snapshot (GemScore + the 3 axes + ad count) so a
- * saved gem becomes a founder's "I called it early" record even as the live
- * metric moves on. See spec §6.
+ * Pure types + helpers live in ./saved-core (unit-tested, no network); this
+ * module adds the stateful, backend-backed store and re-exports the core.
  */
 import type { ShortlistRow } from "@/types/contracts";
+import type { ApiSavedGem, ApiSavedGemIn } from "@/types/api";
+import { DATA_MODE, getSavedGems, removeSavedGem as apiRemove, upsertSavedGem } from "./api";
+import {
+  makeSavedGem,
+  rebuildTagRegistry,
+  withTag,
+  withoutTag,
+  type Confidence,
+  type SavedGem,
+  type SavedVerdict,
+  type Stage,
+  type TagCount,
+} from "./saved-core";
+
+export * from "./saved-core";
 
 const KEY = "fielddesk.saved";
 const TAGS_KEY = "fielddesk.tags";
-
-export type Stage = "just_saw" | "watching" | "looks_real" | "building";
-export type SavedVerdict = "build" | "clone" | "pass" | "revisit";
-export type Confidence = 1 | 2 | 3 | 4 | 5;
-
-/** Ordered stage pipeline; labels are grug (product-facing). */
-export const STAGES: { id: Stage; label: string }[] = [
-  { id: "just_saw", label: "just saw" },
-  { id: "watching", label: "watching" },
-  { id: "looks_real", label: "look real" },
-  { id: "building", label: "building" },
-];
-
-export const VERDICTS: { id: SavedVerdict; label: string }[] = [
-  { id: "build", label: "build" },
-  { id: "clone", label: "clone" },
-  { id: "revisit", label: "later" },
-  { id: "pass", label: "pass" },
-];
-
-export interface ScoreSnapshot {
-  gemScore: number;
-  scalingVelocity: number;
-  underRadar: number;
-  funnelIntent: number;
-  activeAdCount: number;
-  capturedAt: string; // ISO — when the gem was saved (why it was emerging THEN)
-}
-
-export interface SavedGem {
-  advertiserId: number;
-  pageName: string;
-  appName: string | null;
-  cohort: string;
-  savedAt: string; // ISO
-  scoreSnapshot: ScoreSnapshot;
-  tags: string[];
-  note: string;
-  stage: Stage;
-  verdict?: SavedVerdict;
-  confidence?: Confidence;
-}
-
-export interface TagCount {
-  name: string;
-  uses: number;
-}
+const LIVE = DATA_MODE === "live";
 
 // ---------------------------------------------------------------------------
-// Pure helpers (testable, no window / no Date.now)
+// API <-> store mapping
 // ---------------------------------------------------------------------------
 
-/** Normalize a tag: lowercase, collapse non-alphanumerics to single spaces. */
-export function normalizeTag(raw: string): string {
-  return raw.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-}
-
-export function makeSnapshot(row: ShortlistRow, capturedAt: string): ScoreSnapshot {
+function fromApi(r: ApiSavedGem): SavedGem {
+  const savedAt = r.saved_at ?? new Date().toISOString();
   return {
-    gemScore: row.gem_score,
-    scalingVelocity: row.scaling_velocity,
-    underRadar: row.under_radar,
-    funnelIntent: row.funnel_intent,
-    activeAdCount: row.active_ad_count,
-    capturedAt,
-  };
-}
-
-export function makeSavedGem(row: ShortlistRow, savedAt: string): SavedGem {
-  return {
-    advertiserId: row.advertiser_id,
-    pageName: row.page_name,
-    appName: row.app_name,
-    cohort: row.cohort,
+    advertiserId: r.advertiser_id,
+    pageName: r.page_name ?? "",
+    appName: r.app_name,
+    cohort: r.cohort,
     savedAt,
-    scoreSnapshot: makeSnapshot(row, savedAt),
-    tags: [],
-    note: "",
-    stage: "just_saw",
+    scoreSnapshot: {
+      gemScore: r.gem_score,
+      scalingVelocity: r.scaling_velocity ?? 0,
+      underRadar: r.under_radar ?? 0,
+      funnelIntent: r.funnel_intent ?? 0,
+      activeAdCount: r.active_ad_count ?? 0,
+      capturedAt: savedAt,
+    },
+    tags: r.tags ?? [],
+    note: r.note ?? "",
+    stage: (r.stage as Stage) ?? "just_saw",
+    verdict: (r.verdict as SavedVerdict) ?? undefined,
+    confidence: (r.confidence as Confidence) ?? undefined,
   };
 }
 
-/** Immutably add a normalized tag (deduped). */
-export function withTag(gem: SavedGem, raw: string): SavedGem {
-  const tag = normalizeTag(raw);
-  if (!tag || gem.tags.includes(tag)) return gem;
-  return { ...gem, tags: [...gem.tags, tag] };
-}
-
-export function withoutTag(gem: SavedGem, tag: string): SavedGem {
-  const t = normalizeTag(tag);
-  return { ...gem, tags: gem.tags.filter((x) => x !== t) };
-}
-
-/** Build the tag registry (name → uses) from the saved map. */
-export function rebuildTagRegistry(map: Record<string, SavedGem>): TagCount[] {
-  const counts = new Map<string, number>();
-  for (const gem of Object.values(map)) {
-    for (const t of gem.tags) counts.set(t, (counts.get(t) ?? 0) + 1);
-  }
-  return [...counts.entries()]
-    .map(([name, uses]) => ({ name, uses }))
-    .sort((a, b) => b.uses - a.uses || a.name.localeCompare(b.name));
+function toUpsert(gem: SavedGem, userEmail: string): ApiSavedGemIn {
+  const s = gem.scoreSnapshot;
+  return {
+    user_email: userEmail,
+    page_name: gem.pageName || null,
+    app_name: gem.appName,
+    cohort: gem.cohort,
+    gem_score: s.gemScore,
+    scaling_velocity: s.scalingVelocity,
+    under_radar: s.underRadar,
+    funnel_intent: s.funnelIntent,
+    active_ad_count: s.activeAdCount,
+    tags: gem.tags,
+    note: gem.note,
+    stage: gem.stage,
+    verdict: gem.verdict ?? null,
+    confidence: gem.confidence ?? null,
+  };
 }
 
 // ---------------------------------------------------------------------------
-// Storage layer + external store (browser only; guarded for SSR)
+// Store (in-memory cache; persistence = backend in live, localStorage in mock)
 // ---------------------------------------------------------------------------
 
-type SavedMap = Record<string, SavedGem>;
+type SavedMap = Record<number, SavedGem>;
 
 let cache: SavedMap | null = null;
 let cachedList: SavedGem[] = [];
 const listeners = new Set<() => void>();
 let storageHandler: ((e: StorageEvent) => void) | null = null;
+let userEmail: string | null = null;
+let hydratedKey: string | null = null;
 
-function read(): SavedMap {
-  if (cache) return cache;
-  if (typeof window === "undefined") {
-    cache = {};
-  } else {
-    try {
-      const raw = window.localStorage.getItem(KEY);
-      cache = raw ? (JSON.parse(raw) as SavedMap) : {};
-    } catch {
-      cache = {};
-    }
-  }
-  recomputeList();
-  return cache;
-}
-
-function recomputeList() {
+function recompute() {
   cachedList = Object.values(cache ?? {}).sort((a, b) => b.savedAt.localeCompare(a.savedAt));
 }
 
-function commit(next: SavedMap) {
-  cache = next;
-  recomputeList();
-  if (typeof window !== "undefined") {
-    try {
-      window.localStorage.setItem(KEY, JSON.stringify(next));
-      window.localStorage.setItem(TAGS_KEY, JSON.stringify(rebuildTagRegistry(next)));
-    } catch {
-      /* quota / private mode — keep in-memory copy */
-    }
-  }
+function notify() {
   listeners.forEach((l) => l());
 }
 
-function now(): string {
-  return new Date().toISOString();
+function localRead(): SavedMap {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = window.localStorage.getItem(KEY);
+    return raw ? (JSON.parse(raw) as SavedMap) : {};
+  } catch {
+    return {};
+  }
+}
+
+function localWrite(map: SavedMap) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(KEY, JSON.stringify(map));
+    window.localStorage.setItem(TAGS_KEY, JSON.stringify(rebuildTagRegistry(map)));
+  } catch {
+    /* quota / private mode */
+  }
+}
+
+/** Lazily seed the in-memory cache: empty in live (hydrate fills it), from
+ * localStorage in mock. */
+function ensureCache(): SavedMap {
+  if (cache) return cache;
+  cache = LIVE ? {} : localRead();
+  recompute();
+  return cache;
+}
+
+function onSyncError(e: unknown) {
+  console.error("saved: backend sync failed", e);
+  hydratedKey = null; // force a re-hydrate to resync the optimistic state
+  void hydrate();
+}
+
+/** Persist a single change. Live → backend; mock → localStorage snapshot. */
+function persist(map: SavedMap, changed: SavedGem | null, removedId?: number) {
+  if (LIVE) {
+    if (!userEmail) return;
+    if (removedId != null) apiRemove(removedId, userEmail).catch(onSyncError);
+    else if (changed) upsertSavedGem(changed.advertiserId, toUpsert(changed, userEmail)).catch(onSyncError);
+  } else {
+    localWrite(map);
+  }
+}
+
+async function hydrate() {
+  const key = `${DATA_MODE}:${userEmail ?? ""}`;
+  if (hydratedKey === key) return;
+  hydratedKey = key;
+  if (!LIVE) {
+    ensureCache();
+    notify();
+    return;
+  }
+  if (!userEmail) return; // wait until the session user is known
+  try {
+    const rows = await getSavedGems(userEmail);
+    const map: SavedMap = {};
+    for (const r of rows) map[r.advertiser_id] = fromApi(r);
+    cache = map;
+    recompute();
+    notify();
+  } catch (e) {
+    hydratedKey = null; // allow retry on next subscribe
+    console.error("saved: hydrate failed", e);
+  }
+}
+
+/** Set the current user (live mode keys saved gems by their email) and refetch. */
+export function setUser(email: string | null) {
+  if (userEmail === email) return;
+  userEmail = email;
+  hydratedKey = null;
+  cache = LIVE ? {} : localRead();
+  recompute();
+  notify();
+  void hydrate();
 }
 
 function mutate(id: number, fn: (gem: SavedGem) => SavedGem) {
-  const map = read();
+  const map = ensureCache();
   const gem = map[id];
   if (!gem) return;
-  commit({ ...map, [id]: fn(gem) });
+  const updated = fn(gem);
+  cache = { ...map, [id]: updated };
+  recompute();
+  notify();
+  persist(cache, updated);
 }
 
 // --- queries ---
 export function listSaved(): SavedGem[] {
-  read();
+  ensureCache();
   return cachedList;
 }
 export function getSaved(id: number): SavedGem | undefined {
-  return read()[id];
+  return ensureCache()[id];
 }
 export function isSaved(id: number): boolean {
-  return !!read()[id];
+  return !!ensureCache()[id];
 }
 export function allTags(): TagCount[] {
-  return rebuildTagRegistry(read());
+  return rebuildTagRegistry(ensureCache());
 }
 
-// --- mutations ---
+// --- mutations (optimistic; persisted in the background) ---
 export function save(row: ShortlistRow): void {
-  const map = read();
+  const map = ensureCache();
   if (map[row.advertiser_id]) return; // keep existing snapshot/notes
-  commit({ ...map, [row.advertiser_id]: makeSavedGem(row, now()) });
+  const gem = makeSavedGem(row, new Date().toISOString());
+  cache = { ...map, [row.advertiser_id]: gem };
+  recompute();
+  notify();
+  persist(cache, gem);
 }
 export function unsave(id: number): void {
-  const map = read();
+  const map = ensureCache();
   if (!map[id]) return;
   const next = { ...map };
   delete next[id];
-  commit(next);
+  cache = next;
+  recompute();
+  notify();
+  persist(cache, null, id);
 }
 export function toggleSave(row: ShortlistRow): void {
   if (isSaved(row.advertiser_id)) unsave(row.advertiser_id);
@@ -227,12 +250,14 @@ export function setConfidence(id: number, confidence: Confidence | undefined): v
 // --- external store (for useSyncExternalStore) ---
 export function subscribe(listener: () => void): () => void {
   listeners.add(listener);
-  if (!storageHandler && typeof window !== "undefined") {
+  ensureCache();
+  void hydrate();
+  if (!storageHandler && !LIVE && typeof window !== "undefined") {
     storageHandler = (e: StorageEvent) => {
       if (e.key === KEY) {
-        cache = null; // re-read on next access (cross-tab change)
-        read();
-        listeners.forEach((l) => l());
+        cache = localRead();
+        recompute();
+        notify();
       }
     };
     window.addEventListener("storage", storageHandler);
@@ -246,7 +271,7 @@ export function subscribe(listener: () => void): () => void {
   };
 }
 export function getSnapshot(): SavedGem[] {
-  read();
+  ensureCache();
   return cachedList;
 }
 // Must be a stable reference — useSyncExternalStore loops if this changes.
