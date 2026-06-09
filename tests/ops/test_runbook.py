@@ -11,5 +11,9 @@ def test_runbook_covers_recovery_paths():
         assert needle in rb, needle
 
 
-def test_proxy_gateway_references_proxy_env():
-    assert "AGF_PROXIES" in (OPS / "proxy" / "gateway.conf").read_text()
+def test_runbook_documents_in_process_proxies():
+    # Architecture: proxies are in-process (ProxyPool/curl_cffi), NOT a gateway container.
+    rb = (OPS / "RUNBOOK.md").read_text()
+    assert "AGF_PROXIES" in rb
+    assert "ProxyPool" in rb
+    assert "no proxy gateway" in rb.lower()

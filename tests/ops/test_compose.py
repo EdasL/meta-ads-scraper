@@ -5,13 +5,16 @@ from pathlib import Path
 import pytest
 
 COMPOSE = Path(__file__).resolve().parents[2] / "ops" / "docker-compose.yml"
-SERVICES = ("postgres", "minio", "minio-init", "api", "worker", "cron", "proxy")
+# Proxies are in-process (AGF_PROXIES via ProxyPool) — the old `proxy` gateway container was
+# removed; `api-py` is the FastAPI fallback alongside the Go `api`.
+SERVICES = ("postgres", "minio", "minio-init", "api", "api-py", "worker", "cron")
 
 
 def test_compose_has_seven_services():
     text = COMPOSE.read_text()
     for svc in SERVICES:
         assert f"  {svc}:" in text, svc
+    assert "  proxy:" not in text          # no proxy gateway container — proxies are in-process
 
 
 def test_compose_creds_are_env_only():

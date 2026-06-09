@@ -2,6 +2,7 @@ import asyncio
 import pytest
 from agf.extract.facade import Extractor
 from agf.extract.token_heal import SessionTokens
+from agf.extract.errors import ErrorKind, ExtractError
 from agf.parse import AdRecord
 from agf.classify import AppIntent
 from agf.extract.ad_details import AdDetails
@@ -40,6 +41,58 @@ def test_search_delegates_and_returns_records(monkeypatch):
     assert [r.ad_archive_id for r in out] == ["1", "2"]
     assert captured["sort_by_impressions"] is True
     assert captured["max_pages"] == 3
+
+
+def test_search_rotates_proxy_and_retries_on_rate_limit(monkeypatch):
+    # Meta throttles by IP → on RATE_LIMIT the facade must invalidate the pool (forcing a
+    # fresh warm on a new proxy) and retry, not just sleep on the same throttled IP.
+    calls = {"n": 0}
+
+    def flaky_search_ads(session, tokens, **kw):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise ExtractError("Rate limit exceeded (code=1675004)", ErrorKind.RATE_LIMIT)
+        return [_ad("1")], None, False
+
+    monkeypatch.setattr("agf.extract.facade.search_ads", flaky_search_ads)
+    pool = StubPool()
+    ex = Extractor(pool=pool, max_attempts=3, backoff_base=0.0, sleep=lambda s: None)
+    out = asyncio.run(ex.search(query="", countries=["DE"], sort_by_impressions=True,
+                                max_pages=1))
+    assert [r.ad_archive_id for r in out] == ["1"]
+    assert calls["n"] == 2            # retried exactly once
+    assert pool.invalidated is True   # rotated to a fresh proxy/session before the retry
+
+
+def test_search_retries_on_network_timeout(monkeypatch):
+    # a transport-level curl timeout (slow/dead proxy exit) must be retried, not crash the
+    # sweep — but TRANSIENT doesn't force a re-warm (the rotating gateway gives a fresh IP).
+    calls = {"n": 0}
+    timeout_type = type("Timeout", (Exception,), {})
+    timeout_type.__module__ = "curl_cffi.requests.exceptions"
+
+    def flaky_search_ads(session, tokens, **kw):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise timeout_type("Operation timed out after 30001 ms")
+        return [_ad("1")], None, False
+
+    monkeypatch.setattr("agf.extract.facade.search_ads", flaky_search_ads)
+    pool = StubPool()
+    ex = Extractor(pool=pool, max_attempts=3, backoff_base=0.0, sleep=lambda s: None)
+    out = asyncio.run(ex.search(query="x", countries=["US"], max_pages=1))
+    assert [r.ad_archive_id for r in out] == ["1"]
+    assert calls["n"] == 2             # retried after the timeout
+    assert pool.invalidated is False   # transient → no re-warm; gateway rotation handles the IP
+
+
+def test_search_does_not_invalidate_on_success(monkeypatch):
+    monkeypatch.setattr("agf.extract.facade.search_ads",
+                        lambda session, tokens, **kw: ([_ad("1")], None, False))
+    pool = StubPool()
+    ex = Extractor(pool=pool, sleep=lambda s: None)
+    asyncio.run(ex.search(query="x", countries=["US"], max_pages=1))
+    assert pool.invalidated is False
 
 
 def test_ad_details_delegates(monkeypatch):

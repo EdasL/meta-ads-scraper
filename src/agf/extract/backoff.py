@@ -26,9 +26,41 @@ def classify_error(*, status: int | None = None, fb_code: int | None = None) -> 
     return ErrorKind.FATAL
 
 
+def classify_exception(exc: BaseException) -> ErrorKind | None:
+    """Classify a transport-level exception into a retryable ErrorKind, or None if it is
+    not a known network error (so real bugs propagate instead of being silently retried).
+
+    curl_cffi raises Timeout/ConnectionError/etc. on a slow or dead proxy exit — those are
+    TRANSIENT: retry (the rotating gateway hands out a fresh IP on the next request)."""
+    if type(exc).__module__.startswith("curl_cffi"):
+        return ErrorKind.TRANSIENT
+    return None
+
+
+def raise_for_fb_error(parsed) -> None:
+    """Surface a Facebook GraphQL error carried in a 200 response body.
+
+    Meta returns HTTP 200 with an ``errors`` block when it throttles (e.g. code 1675004
+    "Rate limit exceeded") — the data parser would otherwise silently yield zero ads. Raise
+    a classified ExtractError so the caller can back off / rotate. No-op for clean payloads."""
+    if not isinstance(parsed, dict):
+        return
+    errors = parsed.get("errors")
+    if not errors:
+        return
+    first = errors[0] if isinstance(errors, list) and errors else {}
+    code = first.get("code") if isinstance(first, dict) else None
+    message = (first.get("message") if isinstance(first, dict) else None) or "Facebook GraphQL error"
+    raise ExtractError(f"{message} (code={code})", classify_error(fb_code=code))
+
+
 def with_backoff(fn: Callable, *, max_attempts: int = 5, base: float = 0.5,
-                 cap: float = 30.0, sleep: Callable[[float], None] = _time.sleep):
-    """Call fn(); retry retryable ExtractErrors with jittered exponential backoff."""
+                 cap: float = 30.0, sleep: Callable[[float], None] = _time.sleep,
+                 on_retry: Callable[[ExtractError, int], None] | None = None):
+    """Call fn(); retry retryable ExtractErrors with jittered exponential backoff.
+
+    ``on_retry(error, attempt)`` fires before each backoff sleep (not on success or a
+    non-retryable error) — used to rotate the proxy/session before the next attempt."""
     last: ExtractError | None = None
     for attempt in range(max_attempts):
         try:
@@ -39,6 +71,8 @@ def with_backoff(fn: Callable, *, max_attempts: int = 5, base: float = 0.5,
                 raise
             if attempt == max_attempts - 1:
                 break
+            if on_retry is not None:
+                on_retry(e, attempt)
             delay = min(cap, base * (2 ** attempt))
             sleep(delay + random.uniform(0, delay))
     raise last if last else ExtractError("backoff exhausted")
