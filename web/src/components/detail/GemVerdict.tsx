@@ -16,7 +16,11 @@ export function GemVerdict({ gem, trend }: { gem: GemDossier; trend: TrendData }
   const status = statusChip(gem);
   const { push, pull } = pushPull(gem);
   const glyph = trend.dir === "up" ? "↗" : trend.dir === "down" ? "↘" : "→";
-  const trendLabel = trend.pct == null ? "new — watch it" : `${trend.pct >= 0 ? "+" : ""}${trend.pct}% · ${trend.multiple}x`;
+  let trendLabel: string;
+  if (trend.pct == null) trendLabel = "new — watch it";
+  else if (trend.dir === "up") trendLabel = `up ${trend.pct}% · ${trend.multiple}x`;
+  else if (trend.dir === "down") trendLabel = `down ${Math.abs(trend.pct)}% · ${trend.multiple}x`;
+  else trendLabel = `flat · ${trend.multiple}x`;
 
   return (
     <section style={{ border: "1.5px solid var(--ink)", background: "var(--surface-1)", padding: "20px 22px", boxShadow: "var(--shadow-hard)" }}>

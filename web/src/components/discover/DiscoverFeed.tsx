@@ -70,7 +70,7 @@ export function DiscoverFeed() {
         <p className="t-sm" style={{ color: "var(--muted)", marginTop: 6 }}>
           {loading
             ? "grug look…"
-            : `grug find ${rows.length} gem. ${filters.view === "rising" ? "the movers first." : "best score first."}`}
+            : `grug find ${visible.length} gem. ${filters.view === "rising" ? "the movers first." : "best score first."}`}
         </p>
       </header>
 

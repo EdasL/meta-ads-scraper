@@ -126,7 +126,7 @@ type SavedMap = Record<string, SavedGem>;
 let cache: SavedMap | null = null;
 let cachedList: SavedGem[] = [];
 const listeners = new Set<() => void>();
-let wired = false;
+let storageHandler: ((e: StorageEvent) => void) | null = null;
 
 function read(): SavedMap {
   if (cache) return cache;
@@ -227,17 +227,23 @@ export function setConfidence(id: number, confidence: Confidence | undefined): v
 // --- external store (for useSyncExternalStore) ---
 export function subscribe(listener: () => void): () => void {
   listeners.add(listener);
-  if (!wired && typeof window !== "undefined") {
-    wired = true;
-    window.addEventListener("storage", (e) => {
+  if (!storageHandler && typeof window !== "undefined") {
+    storageHandler = (e: StorageEvent) => {
       if (e.key === KEY) {
         cache = null; // re-read on next access (cross-tab change)
         read();
         listeners.forEach((l) => l());
       }
-    });
+    };
+    window.addEventListener("storage", storageHandler);
   }
-  return () => listeners.delete(listener);
+  return () => {
+    listeners.delete(listener);
+    if (listeners.size === 0 && storageHandler && typeof window !== "undefined") {
+      window.removeEventListener("storage", storageHandler);
+      storageHandler = null;
+    }
+  };
 }
 export function getSnapshot(): SavedGem[] {
   read();

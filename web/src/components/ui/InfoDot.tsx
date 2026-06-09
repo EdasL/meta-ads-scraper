@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { IconHelpCircle } from "@tabler/icons-react";
 
 /**
@@ -11,6 +11,7 @@ import { IconHelpCircle } from "@tabler/icons-react";
 export function InfoDot({ text, label = "what this mean" }: { text: string; label?: string }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLSpanElement>(null);
+  const tipId = useId();
 
   useEffect(() => {
     if (!open) return;
@@ -34,6 +35,7 @@ export function InfoDot({ text, label = "what this mean" }: { text: string; labe
         type="button"
         aria-label={label}
         aria-expanded={open}
+        aria-describedby={open ? tipId : undefined}
         onClick={(e) => {
           e.stopPropagation();
           setOpen((o) => !o);
@@ -53,6 +55,7 @@ export function InfoDot({ text, label = "what this mean" }: { text: string; labe
       </button>
       {open && (
         <span
+          id={tipId}
           role="tooltip"
           className="t-xs"
           style={{

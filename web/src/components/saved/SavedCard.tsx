@@ -38,7 +38,7 @@ export function SavedCard({ gem, selected, onToggleSelect }: { gem: SavedGem; se
           </Link>
           <div className="eyebrow" style={{ marginTop: 2 }}>{gem.cohort}</div>
         </div>
-        <button onClick={() => unsave(gem.advertiserId)} aria-label="remove from saved" style={{ background: "transparent", border: "none", cursor: "pointer", color: "var(--muted)", lineHeight: 0 }}>
+        <button type="button" onClick={() => unsave(gem.advertiserId)} aria-label="remove from saved" style={{ background: "transparent", border: "none", cursor: "pointer", color: "var(--muted)", lineHeight: 0 }}>
           <IconX size={16} />
         </button>
       </div>
