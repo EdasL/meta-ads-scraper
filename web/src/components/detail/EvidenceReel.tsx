@@ -47,10 +47,10 @@ function StatusPill({ active }: { active: boolean | undefined }) {
   );
 }
 
+// Natural aspect ratio — reels are 9:16; a fixed landscape crop hides most of the ad.
 const mediaStyle: React.CSSProperties = {
   width: "100%",
-  height: 170,
-  objectFit: "cover",
+  height: "auto",
   display: "block",
   borderTop: "1px solid var(--line)",
   borderBottom: "1px solid var(--line)",
@@ -105,6 +105,11 @@ function AdCard({ c }: { c: GemDossier["creatives"][number] }) {
             onError={() => setBroken(true)}
             style={mediaStyle}
           />
+        ) : c.external_ad_id ? (
+          <a href={adLibraryAdUrl(c.external_ad_id)} target="_blank" rel="noopener noreferrer">
+            {/* eslint-disable-next-line @next/next/no-img-element -- dynamic /api/media proxy thumbnails; next/image is a poor fit for an internal tool */}
+            <img src={c.snapshot_image_url} alt={alt} loading="lazy" onError={() => setBroken(true)} style={mediaStyle} />
+          </a>
         ) : (
           // eslint-disable-next-line @next/next/no-img-element -- dynamic /api/media proxy thumbnails; next/image is a poor fit for an internal tool
           <img src={c.snapshot_image_url} alt={alt} loading="lazy" onError={() => setBroken(true)} style={mediaStyle} />
