@@ -2,43 +2,48 @@
 
 Composes the already-tested pieces behind ONE guarded loop —
     build extractor (warms lazily via SessionPool) →
-    run_discovery (Firehose B + EU→US bridge + 14-day confirm) →
+    breadth-first discovery (daily-gated keyword sweep → store-lookup triage) →
     app-store refresh (daily adtech.app_metrics snapshot + metadata + reviews) →
     [optional] run_scoring →
-    enrich flagged gems via run_worker(make_enrich_handler(deps_factory))
-— then sleeps and repeats. Previously the ops `worker` service ran a print-and
--exit stub; this is the real loop it should run.
+    enrich keepers + flagged gems via run_worker(make_enrich_handler(deps_factory))
+— then sleeps and repeats. The loop stays hourly, but the sweep+triage stage is
+gated to one finished discovery.sweep_runs row per day.
 
 SAFE BY DEFAULT for dry-runs. With AGF_DRY_RUN=1 it swaps an in-process
-FakeExtractor (zero Meta traffic), runs exactly ONE sweep, and enriches the
-just-confirmed advertisers so the whole path executes offline. Every sweep is
-bounded by env caps so a real run can't hammer Meta.
+FakeExtractor (zero Meta traffic), runs exactly ONE sweep (2 keywords, offline
+store lookups, no sweep_runs row), and enriches the just-kept advertisers so
+the whole path executes offline. Every sweep is bounded by env caps so a real
+run can't hammer Meta.
 
 Env:
-  AGF_DATABASE_URL        Postgres DSN (required)
-  AGF_PROXIES             residential proxy pool for the real Extractor
-  AGF_DRY_RUN=1           fake extractor + run once, no network  (also: --dry-run / --once)
-  AGF_EU_COUNTRIES        comma list for Firehose B            (default DE,GB)
-  AGF_EU_MAX_PAGES        pages per EU country sweep            (default 3)
-  AGF_MIN_RUNNING_DAYS    EU collapse floor                    (default 25)
-  AGF_MIN_LONGEVITY_DAYS  scaling-confirm floor                (default 14)
-  AGF_ENRICH_LIMIT        max gems enriched per sweep          (default 10)
-  AGF_ENRICH_TOP_N        ads enriched per gem                 (default 5)
-  AGF_ENRICH_TTL_HOURS    re-enrich a gem at most this often   (default 168 = 7d)
-  AGF_SCORE_AFTER_SWEEP=1 run run_scoring after discovery      (default off; cron owns it)
-  AGF_MIN_GEM_SCORE       enrich gems at/above this score      (default 70)
-  AGF_SWEEP_INTERVAL_SEC  sleep between sweeps                  (default 3600; ignored if once)
+  AGF_DATABASE_URL             Postgres DSN (required)
+  AGF_PROXIES                  residential proxy pool for the real Extractor
+  AGF_DRY_RUN=1                fake extractor + run once, no network  (also: --dry-run / --once)
+  AGF_SWEEP_PAGES              SERP pages per sweep keyword          (default 2)
+  AGF_KW_DELAY                 seconds between sweep keywords        (default 3.0)
+  AGF_DISCOVERY_ENRICH_BUDGET  proxy-request budget for enrich       (default 600 ≈ 42 gems)
+  AGF_ENRICH_TOP_N             ads enriched per gem                  (default 5)
+  AGF_ENRICH_TTL_HOURS         re-enrich a gem at most this often    (default 168 = 7d)
+  AGF_SCORE_AFTER_SWEEP=1      run run_scoring after discovery       (default off; cron owns it)
+  AGF_MIN_GEM_SCORE            enrich gems at/above this score       (default 70)
+  AGF_SWEEP_INTERVAL_SEC       sleep between sweeps                  (default 3600; ignored if once)
 """
 import asyncio
 import os
 import sys
 import time
 from datetime import date, datetime, timezone, timedelta
+from functools import partial
 
 from sqlalchemy import text
 
 from agf.db.engine import get_engine, begin
-from agf.discovery.run_discovery import run_discovery
+from agf.db.candidates import (close_sweep_run, kept_advertiser_ids,
+                               open_sweep_run, sweep_ran_today)
+from agf.discovery.sweep import run_sweep
+from agf.discovery.taxonomy import sweep_entries
+from agf.discovery.triage import run_triage
+from agf.enrich_full.appstore import lookup_google_play, lookup_itunes_batch
 from agf.enrich_full.run_enrich import make_enrich_handler, EnrichDeps
 from agf.scoring.run_scoring import run_scoring, ALERT_THRESHOLD
 from agf.tracker.snapshots import snapshot_advertiser_week
@@ -64,11 +69,6 @@ def _env_bool(name):
     return os.environ.get(name, "").lower() in ("1", "true", "yes", "on")
 
 
-def _env_list(name, default):
-    raw = os.environ.get(name)
-    return tuple(x.strip() for x in raw.split(",") if x.strip()) if raw else default
-
-
 # --- extractor + deps wiring -------------------------------------------------
 def build_extractor(dry_run, now_epoch):
     """Real Extractor (lazily warms a curl_cffi session via SessionPool +
@@ -86,6 +86,15 @@ def dry_run_deps_factory(extractor):
     def factory(conn, advertiser_id):
         return EnrichDeps(extractor=extractor, capture=False, creative_urls={})
     return factory
+
+
+def _demo_lookup(ids):
+    """Offline AppMeta for any id — lets a dry-run exercise the full triage path."""
+    from agf.enrich import AppMeta
+    return {str(i): AppMeta(track_id=str(i), name=f"Demo App {i}", seller="Demo Dev",
+                            genre="Health & Fitness", release_date="2026-05-01",
+                            rating_count=120, avg_rating=4.8, is_game=False)
+            for i in ids}
 
 
 def prefetch_creative_urls(extractor, conn, advertiser_ids, max_pages: int = 10) -> dict:
@@ -125,8 +134,8 @@ def production_deps_factory(extractor, http_client, creative_urls_by_adv):
 
     NOTE: enrich_gem itself still does network (resolve_landing/iTunes/funnel-capture/
     creative downloads) inside run_worker's per-gem write txn — that is the Plan 6 §3.9
-    handler contract; keep AGF_ENRICH_LIMIT modest and avoid a tight idle-in-transaction
-    server timeout."""
+    handler contract; keep AGF_DISCOVERY_ENRICH_BUDGET modest and avoid a tight
+    idle-in-transaction server timeout."""
     from agf.storage.s3 import get_s3, put_bytes
     try:
         import whois as _whois
@@ -151,14 +160,6 @@ def production_deps_factory(extractor, http_client, creative_urls_by_adv):
 
 
 # --- queries -----------------------------------------------------------------
-def _advertiser_ids_for_pages(conn, page_ids):
-    if not page_ids:
-        return []
-    return [r[0] for r in conn.execute(text(
-        "SELECT id FROM public.advertisers WHERE page_id = ANY(:p) ORDER BY id"),
-        {"p": list(page_ids)}).all()]
-
-
 def eligible_gem_ids(conn, min_score):
     """Flagged gems (alert + score≥min) — the human-review/enrich set (§3.7)."""
     return [r[0] for r in conn.execute(text(
@@ -169,29 +170,57 @@ def eligible_gem_ids(conn, min_score):
 
 # --- one sweep ---------------------------------------------------------------
 def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
-             eu_countries=("DE", "GB"), eu_max_pages=3, min_running_days=25,
-             min_longevity_days=14, enrich_limit=10, enrich_top_n=5,
+             sweep_pages=2, kw_delay=3.0, enrich_budget=600, enrich_top_n=5,
              enrich_ttl_hours=168, score_after=False, min_score=ALERT_THRESHOLD) -> dict:
-    """One discovery→(score)→enrich pass. Returns a summary dict (no printing).
-    http_client is the sweep-scoped httpx.Client for the production enrich path (None in
-    a dry-run, which uses the no-network fake deps)."""
-    # 1) discovery — one committed transaction
-    with begin(engine) as conn:
-        disc = asyncio.run(run_discovery(
-            conn, extractor, now_epoch, eu_countries=tuple(eu_countries),
-            eu_max_pages=eu_max_pages, min_running_days=min_running_days,
-            min_longevity_days=min_longevity_days))
+    """One sweep→triage→(score)→enrich pass. Returns a summary dict (no printing).
+    http_client is the sweep-scoped httpx.Client for the production triage/enrich path
+    (None in a dry-run, which uses offline lookups and the no-network fake deps)."""
+    # 1) breadth-first discovery — daily-gated. Sweep commits per keyword; triage is
+    #    one txn. A dry-run always sweeps (offline) and never records a sweep_runs row.
+    sweep_stats, triage_stats = None, None
+    with engine.connect() as conn:
+        due = dry_run or not sweep_ran_today(conn, as_of)
+    if due:
+        run_id = None
+        if not dry_run:
+            with begin(engine) as conn:
+                run_id = open_sweep_run(conn)
+        try:
+            if dry_run:
+                keywords = [e.keyword for e in sweep_entries()[:2]]
+                sweep_stats = asyncio.run(run_sweep(
+                    engine, extractor, keywords=keywords, max_pages=sweep_pages,
+                    kw_delay=0, sleep=lambda s: None))
+                lookup_ios = lookup_android = _demo_lookup
+            else:
+                sweep_stats = asyncio.run(run_sweep(
+                    engine, extractor, max_pages=sweep_pages, kw_delay=kw_delay))
+                lookup_ios = partial(lookup_itunes_batch, http_client, pause=3.0)
+                lookup_android = lookup_google_play
+            if dry_run or http_client is not None:
+                with begin(engine) as conn:
+                    triage_stats = run_triage(conn, lookup_ios=lookup_ios,
+                                              lookup_android=lookup_android)
+            if run_id is not None:
+                with begin(engine) as conn:
+                    close_sweep_run(conn, run_id, sweep=sweep_stats, triage=triage_stats)
+        except Exception as exc:
+            if run_id is not None:
+                with begin(engine) as conn:
+                    close_sweep_run(conn, run_id, sweep=sweep_stats,
+                                    triage=triage_stats, error=repr(exc))
+            raise
 
     # 1.5) velocity tracker — roll THIS week's active-ad counts into the weekly
     #      app_advertiser_metrics series that build_features/GemScore read. Nothing else
     #      calls this in production, so without it the week-over-week signal never builds,
     #      scaling_velocity stays flat, and no advertiser can EVER cross the alert
     #      threshold no matter how long the system runs. Pure DB (counts public.ads), so
-    #      it adds no Meta traffic.
+    #      it adds no Meta traffic. Global rollup: every tracked advertiser must accrue
+    #      the weekly series (the EU confirm-set that used to scope it no longer exists).
     week_start = as_of - timedelta(days=as_of.weekday())
     with begin(engine) as conn:
-        snap_ids = _advertiser_ids_for_pages(conn, disc["confirmed"])
-        snapshot_weeks = snapshot_advertiser_week(conn, week_start, only_ids=snap_ids)
+        snapshot_weeks = snapshot_advertiser_week(conn, week_start, only_ids=None)
 
     # 1.6) resolve metadata for newly-linked apps (name/genre/release/ratings). Cheap
     #      iTunes/gplay lookups (no Meta traffic), so every sweep makes discovered apps
@@ -228,13 +257,17 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
     # 2) scoring — optional; its own committed txn + CONCURRENT matview refresh
     scored = run_scoring(engine, as_of) if score_after else None
 
-    # 3) enrich — one transaction per gem (run_worker, source=engine). A dry-run has
-    #    no scored history yet, so enrich the just-confirmed advertisers to drive the
-    #    path; production enriches flagged gems (alert + score≥min). Creative URLs are
-    #    prefetched here on a READ connection (no write txn open) before run_worker.
+    # 3) enrich — keepers first (they have no ad history yet, so they can't score
+    #    until enriched), then flagged gems due for their TTL refresh; both under a
+    #    proxy-request budget instead of a fixed count. ~14 Meta requests per gem
+    #    (12 history pages + creative prefetch). One transaction per gem (run_worker,
+    #    source=engine); creative URLs are prefetched on a READ connection first.
+    est_requests_per_gem = 14
+    enrich_limit = max(1, enrich_budget // est_requests_per_gem)
     with engine.connect() as conn:
-        cand_ids = (_advertiser_ids_for_pages(conn, disc["confirmed"]) if dry_run
-                    else eligible_gem_ids(conn, min_score))
+        kept = kept_advertiser_ids(conn)
+        cand_ids = kept if dry_run else list(dict.fromkeys(
+            kept + eligible_gem_ids(conn, min_score)))
         if dry_run:
             deps_factory = dry_run_deps_factory(extractor)
         else:
@@ -245,9 +278,9 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
                           make_enrich_handler(deps_factory, top_n=enrich_top_n),
                           source=engine, candidate_ids=cand_ids,
                           due_before=due_before, limit=enrich_limit)
-    return {"discovery": disc, "scored": scored, "snapshot_weeks": snapshot_weeks,
-            "apps_refreshed": apps_refreshed,
-            "enrich_candidates": cand_ids, "enriched": enriched}
+    return {"sweep": sweep_stats, "triage": triage_stats,
+            "snapshot_weeks": snapshot_weeks, "apps_refreshed": apps_refreshed,
+            "scored": scored, "enrich_candidates": cand_ids, "enriched": enriched}
 
 
 def _heartbeat_path() -> str:
@@ -273,9 +306,12 @@ def _healthcheck() -> int:
 
 
 def _summary_line(s: dict) -> str:
-    d = s["discovery"]
-    line = (f"[worker] sweep: candidates={d['candidates']} pages={d['pages']} "
-            f"confirmed={len(d['confirmed'])} weekly_snapshots={s['snapshot_weeks']} "
+    sw, tr = s.get("sweep"), s.get("triage")
+    sweep_part = (f"new={sw['candidates_new']} seen={sw['candidates_seen']} "
+                  f"kw={sw['keywords_swept']}" if sw else "skipped(daily-gate)")
+    kept = tr["kept"] if tr else 0
+    line = (f"[worker] sweep: {sweep_part} kept={kept} "
+            f"weekly_snapshots={s['snapshot_weeks']} "
             f"apps_refreshed={s.get('apps_refreshed', 0)} "
             f"enriched={len(s['enriched'])}/{len(s['enrich_candidates'])}")
     if s["scored"] is not None:
@@ -291,11 +327,9 @@ def main(argv=None) -> None:
     once = dry_run or "--once" in argv
     engine = get_engine()
     cfg = dict(
-        eu_countries=_env_list("AGF_EU_COUNTRIES", ("DE", "GB")),
-        eu_max_pages=_env_int("AGF_EU_MAX_PAGES", 3),
-        min_running_days=_env_int("AGF_MIN_RUNNING_DAYS", 25),
-        min_longevity_days=_env_int("AGF_MIN_LONGEVITY_DAYS", 14),
-        enrich_limit=_env_int("AGF_ENRICH_LIMIT", 10),
+        sweep_pages=_env_int("AGF_SWEEP_PAGES", 2),
+        kw_delay=_env_float("AGF_KW_DELAY", 3.0),
+        enrich_budget=_env_int("AGF_DISCOVERY_ENRICH_BUDGET", 600),
         enrich_top_n=_env_int("AGF_ENRICH_TOP_N", 5),
         enrich_ttl_hours=_env_int("AGF_ENRICH_TTL_HOURS", 168),
         score_after=_env_bool("AGF_SCORE_AFTER_SWEEP"),

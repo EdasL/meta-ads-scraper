@@ -1,7 +1,7 @@
 """The live worker loop, dry-run end-to-end against real Postgres with the in-src
 FakeExtractor (zero Meta traffic). Proves the composition the ops `worker` service
-runs: build extractor → run_discovery → enrich flagged/confirmed advertisers via
-run_worker. Skips cleanly without AGF_TEST_DB_URL; cleans up its FAKE* sentinels."""
+runs: build extractor → sweep → triage → enrich keepers via run_worker. Skips
+cleanly without AGF_TEST_DB_URL; cleans up its FAKE* sentinels."""
 import os
 import subprocess
 import sys
@@ -19,6 +19,13 @@ FAKE_STORE_IDS = ("444000", "555000")
 
 def _clean_fake(engine):
     with begin(engine) as conn:
+        # candidates reference advertisers (kept_advertiser_id FK) — clear them BEFORE
+        # the advertisers delete below or it trips the foreign key.
+        conn.execute(text("DELETE FROM discovery.candidates WHERE page_id = ANY(:p)"),
+                     {"p": list(FAKE_PAGES)})
+        # run_once's triage processes EVERY committed 'new' row; agf_it is a scratch DB,
+        # so clear strays other suites may have left, or kept-counts won't be exactly 2.
+        conn.execute(text("DELETE FROM discovery.candidates WHERE status = 'new'"))
         ids = conn.execute(text("SELECT id FROM public.advertisers WHERE page_id = ANY(:p)"),
                            {"p": list(FAKE_PAGES)}).scalars().all()
         if ids:
@@ -38,39 +45,46 @@ def _clean_fake(engine):
                      {"s": list(FAKE_STORE_IDS)})
 
 
-def test_dry_run_sweep_discovers_confirms_and_enriches(_migrated_engine):
+def test_dry_run_sweep_triages_and_enriches(_migrated_engine):
     eng = _migrated_engine
     _clean_fake(eng)
     try:
         ex = build_extractor(dry_run=True, now_epoch=NOW)   # in-src fake, no network
         summary = run_once(eng, ex, now_epoch=NOW, as_of=date(2026, 6, 4), dry_run=True,
                            score_after=False)
-        # discovery: both seeded EU pages survive the 25d collapse + 14d confirm
-        assert summary["discovery"]["pages"] == 2
-        assert set(summary["discovery"]["confirmed"]) == set(FAKE_PAGES)
-        # enrich: the loop drove the enrich handler over both confirmed advertisers
+        # sweep: both demo keyword ads fold into NEW candidates (small pages, store links)
+        assert summary["sweep"]["candidates_new"] == 2
+        assert summary["sweep"]["drops"]["social"] == 0
+        # triage: the offline lookup keeps both -> promoted advertisers + apps
+        assert summary["triage"]["kept"] == 2 and summary["triage"]["dropped"] == {}
+        # enrich: the loop drove the enrich handler over both kept advertisers
         assert len(summary["enrich_candidates"]) == 2
         assert len(summary["enriched"]) == 2
         assert all(isinstance(v, str) for v in summary["enriched"].values())
-        # each enrich recorded a crawl_log row (so the staleness scheduler won't re-run it)
         with eng.connect() as conn:
             n = conn.execute(text(
                 "SELECT count(*) FROM logging.crawl_log WHERE entity_type='advertiser' "
                 "AND entity_id = ANY(:i)"), {"i": summary["enrich_candidates"]}).scalar()
-        assert n == 2
-        # velocity tracker: the sweep rolled the current week's active-ad counts into the
-        # weekly series build_features reads. Before this, NOTHING called
-        # snapshot_advertiser_week in production, so the week-over-week signal never built
-        # and GemScore velocity could never move — no advertiser could ever alert.
-        assert summary["snapshot_weeks"] >= 2          # global rollup ran (incl. our 2)
+            kept_rows = conn.execute(text(
+                "SELECT count(*) FROM discovery.candidates "
+                "WHERE page_id = ANY(:p) AND status='kept'"), {"p": list(FAKE_PAGES)}).scalar()
+            apps = conn.execute(text(
+                "SELECT count(*) FROM public.apps WHERE store_id = ANY(:s) AND name IS NOT NULL"),
+                {"s": list(FAKE_STORE_IDS)}).scalar()
+        assert n == 2 and kept_rows == 2 and apps == 2
+        # velocity tracker: the GLOBAL weekly rollup ran (only_ids=None). Keepers have
+        # no ads yet, so a clean DB legitimately rolls up 0 rows — assert instead that
+        # no advertiser with active ads is missing this week's metrics row.
+        assert summary["snapshot_weeks"] >= 0
+        wk = date(2026, 6, 4) - timedelta(days=date(2026, 6, 4).weekday())
         with eng.connect() as conn:
-            adv_ids = conn.execute(text(
-                "SELECT id FROM public.advertisers WHERE page_id = ANY(:p)"),
-                {"p": list(FAKE_PAGES)}).scalars().all()
-            weekly = conn.execute(text(
-                "SELECT count(*) FROM adtech.app_advertiser_metrics WHERE advertiser_id = ANY(:i)"),
-                {"i": adv_ids}).scalar()
-        assert weekly == 2                              # one weekly rollup row per confirmed advertiser
+            missing = conn.execute(text(
+                "SELECT count(DISTINCT a.advertiser_id) FROM public.ads a "
+                "WHERE a.is_active AND a.advertiser_id IS NOT NULL AND NOT EXISTS "
+                "(SELECT 1 FROM adtech.app_advertiser_metrics m "
+                " WHERE m.advertiser_id = a.advertiser_id AND m.week_start = :wk)"),
+                {"wk": wk}).scalar()
+        assert missing == 0
     finally:
         _clean_fake(eng)
 
@@ -87,6 +101,6 @@ def test_dry_run_cli_runs_once_and_exits_zero(_migrated_engine):
                              capture_output=True, text=True, env=env, timeout=120)
         assert out.returncode == 0, out.stderr
         assert "[worker] starting — mode=DRY-RUN" in out.stdout
-        assert "confirmed=2" in out.stdout
+        assert "kept=2" in out.stdout
     finally:
         _clean_fake(_migrated_engine)

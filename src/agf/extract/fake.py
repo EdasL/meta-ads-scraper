@@ -47,7 +47,8 @@ class FakeExtractor:
         """A small coherent fixture: two EU advertiser pages whose US ads are old
         enough to pass the 25-day firehose floor and the 14-day scaling confirm, one
         resolving to an iOS app (app candidate) — so a dry-run discovers + confirms
-        both pages and the enrich path has store links to resolve."""
+        both pages and the enrich path has store links to resolve. default_ads serves
+        every keyword query (small page likes so the sweep keeps both candidates)."""
         def ad(archive, pid, name, link, days_old):
             return AdRecord(archive, pid, name, True, now_epoch - days_old * _DAY,
                             None, 3, "INSTALL_MOBILE_APP", "Install", link, "body")
@@ -61,4 +62,15 @@ class FakeExtractor:
             "FAKE2": [ad("fake-us-2", "FAKE2", "Demo Tutor",
                          "https://apps.apple.com/us/app/x/id555000", 28)],
         }
-        return cls(eu_ads=eu, page_ads=page_ads)
+
+        def kw_ad(archive, pid, name, link, days_old, likes):
+            rec = ad(archive, pid, name, link, days_old)
+            rec.page_like_count = likes
+            return rec
+        keyword = [
+            kw_ad("fake-kw-1", "FAKE1", "Demo Sleep",
+                  "https://apps.apple.com/us/app/x/id444000", 12, 900),
+            kw_ad("fake-kw-2", "FAKE2", "Demo Tutor",
+                  "https://apps.apple.com/us/app/x/id555000", 9, 1500),
+        ]
+        return cls(eu_ads=eu, page_ads=page_ads, default_ads=keyword)
