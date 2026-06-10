@@ -78,6 +78,12 @@ func TestShortlist(t *testing.T) {
 	require.InDelta(t, 0.7, top["scaling_velocity"], 1e-6)
 	require.NotNil(t, top["refreshed_at"])
 
+	// Ad-lifecycle columns (migration 114) flow through on feed rows.
+	require.Equal(t, "2026-04-01", top["first_ad_at"], "AD3 is the earliest stored ad")
+	require.EqualValues(t, 2, top["ads_seen"])
+	require.EqualValues(t, 0, top["longrun_ad_count"], "AD1 started 9 days ago")
+	require.EqualValues(t, 1, top["new_ads_4w"])
+
 	// Null fidelity: the second gem has no app and null axes — keys present, null.
 	second := rows[1]
 	for _, k := range []string{"app_id", "app_name", "page_name", "scaling_velocity", "active_ad_count"} {
@@ -85,6 +91,12 @@ func TestShortlist(t *testing.T) {
 		require.True(t, ok, "key %s present", k)
 		require.Nil(t, v, "key %s is null", k)
 	}
+	// …but its lifecycle counts are real zeros (the lateral always returns a
+	// row), with first_ad_at null (its only ad has no start_date).
+	require.Nil(t, second["first_ad_at"])
+	require.EqualValues(t, 1, second["ads_seen"])
+	require.EqualValues(t, 0, second["longrun_ad_count"])
+	require.EqualValues(t, 0, second["new_ads_4w"])
 }
 
 func TestShortlistCohortFilter(t *testing.T) {
@@ -118,6 +130,7 @@ func TestDossier(t *testing.T) {
 		Apps          []map[string]any `json:"apps"`
 		Funnels       []map[string]any `json:"funnels"`
 		Creatives     []map[string]any `json:"creatives"`
+		AdLifecycle   map[string]any   `json:"ad_lifecycle"`
 	}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &d))
 	require.EqualValues(t, advID, d.Gem["advertiser_id"])
@@ -179,6 +192,22 @@ func TestDossier(t *testing.T) {
 	require.Equal(t, "2026-04-15", ended["ad_ended_on"])
 	require.EqualValues(t, 14, ended["ad_days_running"])
 	require.Nil(t, ended["s3_key"])
+
+	// Ad-lifecycle summary over the advertiser's two stored ads.
+	require.NotNil(t, d.AdLifecycle)
+	require.EqualValues(t, 2, d.AdLifecycle["ads_seen"])
+	require.EqualValues(t, 1, d.AdLifecycle["active_now"], "only AD1 is active")
+	require.EqualValues(t, 0, d.AdLifecycle["running_30d_plus"], "AD1 started 9 days ago")
+	require.Nil(t, d.AdLifecycle["median_run_days"], "one ended ad — below the 5-ad floor")
+	require.Equal(t, "2026-04-01", d.AdLifecycle["first_ad_at"])
+	require.EqualValues(t, 1, d.AdLifecycle["launched_4w"], "AD1, 9 days ago")
+	require.EqualValues(t, 0, d.AdLifecycle["ended_4w"], "AD3 ended outside the 28-day window")
+
+	// The matview lifecycle columns flow through on the embedded gem row.
+	require.Equal(t, "2026-04-01", d.Gem["first_ad_at"])
+	require.EqualValues(t, 2, d.Gem["ads_seen"])
+	require.EqualValues(t, 0, d.Gem["longrun_ad_count"])
+	require.EqualValues(t, 1, d.Gem["new_ads_4w"])
 }
 
 // The second advertiser has no app, no ad run metadata, and no Meta signals:
@@ -199,6 +228,18 @@ func TestDossierNullSignals(t *testing.T) {
 	require.Equal(t, false, d["meta_active_ads_capped"])
 	require.NotNil(t, d["ads_last_seen"], "advertisers.last_seen is NOT NULL")
 	require.Equal(t, []any{}, d["apps"])
+
+	// The lifecycle summary still serializes for an advertiser whose only ad
+	// has no run metadata: counts 0, dates null.
+	life, ok := d["ad_lifecycle"].(map[string]any)
+	require.True(t, ok, "ad_lifecycle present")
+	require.EqualValues(t, 1, life["ads_seen"])
+	require.EqualValues(t, 0, life["active_now"], "AD2 has no is_active flag")
+	require.EqualValues(t, 0, life["running_30d_plus"])
+	require.Nil(t, life["median_run_days"])
+	require.Nil(t, life["first_ad_at"], "AD2 has no start_date")
+	require.EqualValues(t, 0, life["launched_4w"])
+	require.EqualValues(t, 0, life["ended_4w"])
 }
 
 func TestDossierMetaSignals(t *testing.T) {
@@ -257,10 +298,45 @@ func TestScaling(t *testing.T) {
 	require.Equal(t, 200, w.Code)
 	var pts []map[string]any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &pts))
-	require.Len(t, pts, 1)
-	require.Equal(t, "2026-05-25", pts[0]["week_start"], "date-only format")
-	require.EqualValues(t, 100000, pts[0]["total_eu_reach"])
-	require.EqualValues(t, 3, pts[0]["active_ad_count"])
+
+	// The series is reconstructed from public.ads intervals, opening at the
+	// week of the first stored ad (AD3 started Wed 2026-04-01 → Monday
+	// 2026-03-30) and running to the current week.
+	require.NotEmpty(t, pts)
+	require.Equal(t, "2026-03-30", pts[0]["week_start"], "week of the first stored ad")
+	require.EqualValues(t, 1, pts[0]["active_ad_count"], "AD3 ran 2026-04-01 → 2026-04-15")
+	require.EqualValues(t, 1, pts[0]["launched_count"])
+	require.EqualValues(t, 0, pts[0]["ended_count"])
+
+	byWeek := map[string]map[string]any{}
+	launchedTotal, endedTotal := 0.0, 0.0
+	for _, p := range pts {
+		byWeek[p["week_start"].(string)] = p
+		launchedTotal += p["launched_count"].(float64)
+		endedTotal += p["ended_count"].(float64)
+	}
+	require.EqualValues(t, 2, launchedTotal, "AD1 + AD3 each launch once")
+	require.EqualValues(t, 1, endedTotal, "only AD3 ended")
+	require.EqualValues(t, 1, byWeek["2026-04-13"]["ended_count"], "AD3 ended 2026-04-15")
+
+	// AD1 is active: its end is treated as now(), so the current week counts it.
+	last := pts[len(pts)-1]
+	require.EqualValues(t, 1, last["active_ad_count"])
+
+	// Contract compatibility: distinct_creative_count is deprecated and served
+	// as 0; total_eu_reach is served as null.
+	require.EqualValues(t, 0, last["distinct_creative_count"])
+	require.Nil(t, last["total_eu_reach"])
+}
+
+func TestScalingNoDatedAds(t *testing.T) {
+	// adv2's only ad has no start_date: the reconstruction has no window to
+	// anchor on and returns an empty series, not an error.
+	r := router()
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/gems/"+strconv.Itoa(adv2ID)+"/scaling", nil))
+	require.Equal(t, 200, w.Code)
+	require.Equal(t, "[]", strings.TrimSpace(w.Body.String()))
 }
 
 func TestReviewQueueAndDecision(t *testing.T) {

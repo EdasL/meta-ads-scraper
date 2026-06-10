@@ -15,10 +15,13 @@ import (
 // (105_emerging_matview_growth.sql): first_count, latest_count, weeks_observed,
 // pct_change. They scan into mvScanRow's flat growth fields and are assembled
 // into ShortlistRow.Growth by toShortlistRows (nil when the whole group is NULL).
+// The trailing ad-lifecycle columns (114_emerging_matview_ad_lifecycle.sql)
+// scan straight into ShortlistRow: first_ad_at, longrun_ad_count, new_ads_4w,
+// ads_seen.
 const mvCols = `advertiser_id, cohort, page_name, app_id, app_name, icon_url, ` +
 	`gem_score, scaling_velocity, under_radar, funnel_intent, active_ad_count, ` +
 	`max_longevity_days, alert, first_count, latest_count, weeks_observed, ` +
-	`pct_change, refreshed_at`
+	`pct_change, refreshed_at, first_ad_at, longrun_ad_count, new_ads_4w, ads_seen`
 
 // mvScanRow is the scan target for a matview row: the public ShortlistRow plus
 // the flat growth columns. The growth columns are scanned here (rather than into

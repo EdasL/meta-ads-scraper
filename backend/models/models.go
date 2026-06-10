@@ -79,6 +79,14 @@ type ShortlistRow struct {
 	MaxLongevityDays *int     `json:"max_longevity_days" gorm:"column:max_longevity_days"`
 	Alert            bool     `json:"alert" gorm:"column:alert"`
 	RefreshedAt      *APITime `json:"refreshed_at" gorm:"column:refreshed_at"`
+	// Ad-lifecycle columns from migration 114's lateral aggregate over
+	// public.ads. The lateral always returns a row, so the counts scan as 0 for
+	// an advertiser with no stored ads; first_ad_at is null when no ad carries
+	// a start_date. Frozen at matview REFRESH time, like refreshed_at.
+	FirstAdAt      *APIDate `json:"first_ad_at" gorm:"column:first_ad_at"`
+	LongrunAdCount *int     `json:"longrun_ad_count" gorm:"column:longrun_ad_count"`
+	NewAds4w       *int     `json:"new_ads_4w" gorm:"column:new_ads_4w"`
+	AdsSeen        *int     `json:"ads_seen" gorm:"column:ads_seen"`
 	// Enriched in code after the base matview scan (not scanned directly):
 	// the explainer, the per-advertiser growth summary, and the hero ad
 	// creative for the card. All nullable → JSON null when absent.
@@ -203,6 +211,7 @@ type GemDossier struct {
 	Creatives              []CreativeInfo `json:"creatives"`
 	Explainer              *ExplainerInfo `json:"explainer"`
 	Growth                 *GrowthInfo    `json:"growth"`
+	AdLifecycle            *AdLifecycle   `json:"ad_lifecycle"`
 }
 
 // AppMetricPoint mirrors an adtech.app_metrics row joined to public.apps for
@@ -218,13 +227,34 @@ type AppMetricPoint struct {
 	Installs     *int64   `json:"installs" gorm:"column:installs"`
 }
 
-// ScalingPoint mirrors an adtech.app_advertiser_metrics row. week_start is NOT
-// NULL, so it is a value (not a pointer).
+// ScalingPoint is one week of the ad-activity series, reconstructed at read
+// time from public.ads start/end intervals (scaling_repo.go). week_start is
+// NOT NULL, so it is a value (not a pointer); launched_count/ended_count come
+// from count() and are likewise values. distinct_creative_count is DEPRECATED:
+// nothing computes it anymore — it is served as 0 for contract compatibility.
+// total_eu_reach is served as null (the reconstruction carries no reach).
 type ScalingPoint struct {
 	WeekStart             APIDate `json:"week_start" gorm:"column:week_start"`
 	ActiveAdCount         *int    `json:"active_ad_count" gorm:"column:active_ad_count"`
 	DistinctCreativeCount *int    `json:"distinct_creative_count" gorm:"column:distinct_creative_count"`
 	TotalEuReach          *int64  `json:"total_eu_reach" gorm:"column:total_eu_reach"`
+	LaunchedCount         int     `json:"launched_count" gorm:"column:launched_count"`
+	EndedCount            int     `json:"ended_count" gorm:"column:ended_count"`
+}
+
+// AdLifecycle is the per-advertiser ad-lifecycle summary on the gem detail
+// payload — one aggregate over public.ads at read time. median_run_days covers
+// ended ads only and is null until at least 5 have ended; first_ad_at is null
+// when no stored ad carries a start_date. The 4w windows are 28 days;
+// running_30d_plus = active ads whose start_date is 30+ days ago.
+type AdLifecycle struct {
+	AdsSeen        int      `json:"ads_seen" gorm:"column:ads_seen"`
+	ActiveNow      int      `json:"active_now" gorm:"column:active_now"`
+	Running30dPlus int      `json:"running_30d_plus" gorm:"column:running_30d_plus"`
+	MedianRunDays  *int     `json:"median_run_days" gorm:"column:median_run_days"`
+	FirstAdAt      *APIDate `json:"first_ad_at" gorm:"column:first_ad_at"`
+	Launched4w     int      `json:"launched_4w" gorm:"column:launched_4w"`
+	Ended4w        int      `json:"ended_4w" gorm:"column:ended_4w"`
 }
 
 // ReviewQueueRow is the subset of the matview shown in the review queue.

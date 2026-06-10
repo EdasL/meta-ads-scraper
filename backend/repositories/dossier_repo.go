@@ -198,6 +198,34 @@ func Dossier(ctx context.Context, g *gorm.DB, advertiserID int) (*models.GemDoss
 			return err
 		}
 
+		// Ad-lifecycle summary — one aggregate over the advertiser's stored ads.
+		// Zero ads still yields one row (counts 0, dates null) because an
+		// aggregate without GROUP BY always returns a row. median_run_days
+		// covers ended ads only and is null until at least 5 have ended
+		// (percentile_cont ignores rows whose run length is null);
+		// running_30d_plus = active ads started 30+ days ago; the 4w windows
+		// are 28 days.
+		life := make([]models.AdLifecycle, 0, 1)
+		if err := tx.Raw(
+			`SELECT count(*) AS ads_seen,
+			        count(*) FILTER (WHERE a.is_active) AS active_now,
+			        count(*) FILTER (WHERE a.is_active
+			          AND a.start_date <= now() - interval '30 days') AS running_30d_plus,
+			        CASE WHEN count(*) FILTER (WHERE NOT a.is_active) >= 5
+			             THEN round(percentile_cont(0.5) WITHIN GROUP (
+			                    ORDER BY (a.end_date::date - a.start_date::date))
+			                  FILTER (WHERE NOT a.is_active))::int
+			        END AS median_run_days,
+			        min(a.start_date)::date AS first_ad_at,
+			        count(*) FILTER (WHERE a.start_date >= now() - interval '28 days') AS launched_4w,
+			        count(*) FILTER (WHERE NOT a.is_active
+			          AND a.end_date >= now() - interval '28 days') AS ended_4w
+			 FROM public.ads a WHERE a.advertiser_id = ?`,
+			advertiserID,
+		).Scan(&life).Error; err != nil {
+			return err
+		}
+
 		// Single-row explainer read (adtech.advertiser_explainers PK). Stays nil
 		// when no row exists yet (generated offline by cmd/explainers).
 		exps := make([]models.ExplainerInfo, 0, 1)
@@ -219,6 +247,10 @@ func Dossier(ctx context.Context, g *gorm.DB, advertiserID int) (*models.GemDoss
 		if len(exps) > 0 {
 			ex := exps[0]
 			d.Explainer = &ex
+		}
+		if len(life) > 0 {
+			lf := life[0]
+			d.AdLifecycle = &lf
 		}
 		if domain.Valid {
 			d.Domain = &domain.String
