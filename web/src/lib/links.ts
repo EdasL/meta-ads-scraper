@@ -20,6 +20,11 @@ export function adLibraryAdUrl(externalAdId: string): string {
   return `https://www.facebook.com/ads/library/?id=${externalAdId}`;
 }
 
+/** A clickable href for a raw external URL that may arrive without a scheme. */
+export function externalHref(url: string): string {
+  return /^https?:\/\//i.test(url) ? url : `https://${url}`;
+}
+
 /**
  * Build the link set from the dossier. Order is stable (profile, website, app
  * store, ads library); links whose data is missing are simply omitted.

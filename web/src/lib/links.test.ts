@@ -6,7 +6,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildGemLinks, bareDomain } from "./links.ts";
+import { buildGemLinks, bareDomain, externalHref } from "./links.ts";
 
 /** Minimal dossier stub — buildGemLinks only reads company + apps. */
 function gem(overrides) {
@@ -23,6 +23,12 @@ test("bareDomain strips scheme + trailing slashes", () => {
   assert.equal(bareDomain("sleepwave.app"), "sleepwave.app");
   assert.equal(bareDomain(null), "");
   assert.equal(bareDomain(undefined), "");
+});
+
+test("externalHref keeps a scheme, adds https when missing", () => {
+  assert.equal(externalHref("https://sleepwave.app/start"), "https://sleepwave.app/start");
+  assert.equal(externalHref("http://x.com"), "http://x.com");
+  assert.equal(externalHref("sleepwave.app/start"), "https://sleepwave.app/start");
 });
 
 test("buildGemLinks: empty when no page_id / domain / app", () => {

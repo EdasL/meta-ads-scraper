@@ -4,7 +4,7 @@ import { useState } from "react";
 import { SketchLineChart, type ChartPoint, type ChartTooltipItem } from "@/components/sketch";
 import { trendFromScaling } from "@/lib/why";
 import { adRunLine, creativeMetaLine, monthDayLabel } from "@/lib/format";
-import { adLibraryAdUrl, bareDomain } from "@/lib/links";
+import { adLibraryAdUrl, bareDomain, externalHref } from "@/lib/links";
 import type { Creative, GemDossier } from "@/types/contracts";
 
 /**
@@ -157,9 +157,20 @@ function AdCard({ c }: { c: Creative }) {
             borderTop: "1px solid var(--line)",
           }}
         >
-          <span className="font-mono" style={{ fontSize: "0.62rem", color: "var(--muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {ctaDomain}
-          </span>
+          {ctaDomain && c.link_url ? (
+            <a
+              href={externalHref(c.link_url)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-mono"
+              style={{ fontSize: "0.62rem", color: "var(--muted)", textDecoration: "underline", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+            >
+              {ctaDomain}
+            </a>
+          ) : (
+            // Empty spacer keeps the CTA pill right-aligned when the ad has no link.
+            <span aria-hidden />
+          )}
           {c.cta_text && (
             <span className="font-mono" style={{ fontSize: "0.62rem", padding: "3px 8px", border: "1px solid var(--ink)", whiteSpace: "nowrap" }}>
               {sentenceCase(c.cta_text)}

@@ -34,6 +34,16 @@ export function GemFacts({ gem }: { gem: GemDossier }) {
       {host}
     </a>
   ) : undefined;
+  const igValue = c.ig_username ? (
+    <a
+      href={`https://www.instagram.com/${c.ig_username}`}
+      target="_blank"
+      rel="noopener noreferrer"
+      style={{ color: "var(--ink-soft)", textDecoration: "underline" }}
+    >
+      @{c.ig_username}
+    </a>
+  ) : undefined;
   return (
     <section>
       <h2 className="t-md w-strong" style={{ margin: "0 0 12px" }}>Details</h2>
@@ -41,7 +51,7 @@ export function GemFacts({ gem }: { gem: GemDossier }) {
         <Fact label="Website" value={siteValue} />
         <Fact label="Site age" value={c.domain_age_years ? `${c.domain_age_years} years` : undefined} />
         <Fact label="Category" value={c.page_category} />
-        <Fact label="Instagram" value={c.ig_username ? `@${c.ig_username}` : undefined} />
+        <Fact label="Instagram" value={igValue} />
         <Fact label="Instagram followers" value={c.ig_followers?.toLocaleString()} />
         <Fact label="Price" value={gem.pricing} />
         <Fact label="Ads checked" value={gem.ads_last_seen ? timeAgo(gem.ads_last_seen, nowMs) : undefined} />
