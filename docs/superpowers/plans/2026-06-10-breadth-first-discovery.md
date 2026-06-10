@@ -1383,6 +1383,23 @@ git commit -m "feat(ui): app icons on discover/saved list items (matview icon_ur
 
 ---
 
+### Task 12: UI data-grounding cleanup (user directive 2026-06-10, supersedes the grug rule)
+
+**Directive (user words):** "drop the grug copy, drop all the other ui elements that are
+hardcoded, based on nothing (like steady, raising or something) they're showing duplicate
+info just show everything based on the ads"
+
+- [ ] Remove the GrugExplainer component, its usages, and ALL grug-voiced strings from
+  the web UI. Update `CLAUDE.md` (grug section → plain voice everywhere) and delete
+  `.cursor/rules/grug-copy.mdc`.
+- [ ] Audit every element on GemCard / SavedCard / detail page: KEEP what is directly
+  from DB/ad data (ad counts, longevity, growth %, dates, creatives, icons, scores);
+  REMOVE labels that are hardcoded or re-derive/duplicate an adjacent number (e.g.
+  trend words like "steady"/"rising" next to the growth percent they restate).
+- [ ] Re-voice the Gemini explainer prompt (`backend/cmd/explainers`) to plain
+  professional copy for future runs; the grug-voiced UI section is gone either way.
+- [ ] Verify: `npx tsc --noEmit`, `npm run lint`, node --test adapters; commit explicit paths.
+
 ## Post-implementation checklist (not tasks, gates)
 
 - [ ] Live smoke (Task 7) ran against real Meta + stores and printed `SMOKE OK` — required by the repo's live-e2e lesson before claiming done.
