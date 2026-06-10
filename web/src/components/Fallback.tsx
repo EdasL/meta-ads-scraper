@@ -1,12 +1,11 @@
 "use client";
 
 /**
- * Grug error tile shown when a LIVE-mode fetch fails (API down / unreachable /
- * 500). Mock mode never throws, so this only guards the NEXT_PUBLIC_DATA_MODE=live
- * path — without it the data screens hang forever on their loading spinner.
+ * Error tile shown when a live fetch fails (API down / unreachable / 500).
+ * Without it the data screens would hang forever on their loading spinner.
  */
 export function Fallback({
-  message = "server not answer. maybe sleeping.",
+  message = "Server isn't responding. It may be down.",
   onRetry,
 }: {
   message?: string;
@@ -24,7 +23,7 @@ export function Fallback({
       }}
     >
       <div className="display-x" style={{ fontSize: "1.9rem", textTransform: "uppercase" }}>
-        grug hit wall
+        hit a wall
       </div>
       <p className="font-mono" style={{ fontSize: "0.74rem", color: "var(--muted)", marginTop: 10 }}>
         {message}
@@ -44,7 +43,7 @@ export function Fallback({
             textTransform: "uppercase",
           }}
         >
-          try again
+          Try again
         </button>
       )}
     </div>

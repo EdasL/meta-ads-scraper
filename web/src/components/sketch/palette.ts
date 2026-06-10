@@ -13,6 +13,11 @@ export const BG = "#0d0d0f"; // canvas
 /** Kept for API compat; monochrome so it maps to ink. */
 export const STRING_RED = "#ededed";
 
+/** Semantic trend accents (mirror globals.css --up / --down). Used by SVG
+ * charts that can't read CSS vars at draw time. */
+export const UP = "#4ade80";
+export const DOWN = "#f87171";
+
 export function seedFrom(key: string): number {
   let h = 0;
   for (let i = 0; i < key.length; i++) {

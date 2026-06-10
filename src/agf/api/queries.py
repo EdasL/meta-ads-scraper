@@ -5,7 +5,8 @@ from sqlalchemy import text
 
 _MV_COLS = ("advertiser_id, cohort, page_name, app_id, app_name, gem_score, "
             "scaling_velocity, under_radar, funnel_intent, active_ad_count, "
-            "max_longevity_days, alert, refreshed_at")
+            "max_longevity_days, alert, first_count, latest_count, weeks_observed, "
+            "pct_change, refreshed_at")
 
 
 def shortlist(conn, *, cohort=None, min_score=0.0, limit=50, offset=0):
@@ -30,7 +31,7 @@ def gem_dossier(conn, advertiser_id):
         {"a": advertiser_id}).scalar()
     apps = conn.execute(text(
         "SELECT DISTINCT ap.store, ap.store_id, ap.name, ap.developer, ap.genre, "
-        "       ap.release_date, ap.rating, ap.rating_count, ap.is_emerging "
+        "       ap.release_date, ap.rating, ap.rating_count, ap.is_emerging, ap.description "
         "FROM public.apps ap JOIN public.ads a ON a.app_id = ap.id "
         "WHERE a.advertiser_id = :a"), {"a": advertiser_id}).mappings().all()
     funnels = conn.execute(text(

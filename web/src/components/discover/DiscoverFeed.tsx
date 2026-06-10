@@ -69,8 +69,8 @@ export function DiscoverFeed() {
         </h1>
         <p className="t-sm" style={{ color: "var(--muted)", marginTop: 6 }}>
           {loading
-            ? "grug look…"
-            : `grug find ${visible.length} gem. ${filters.view === "rising" ? "the movers first." : "best score first."}`}
+            ? "Loading…"
+            : `${visible.length} ${visible.length === 1 ? "gem" : "gems"} found. ${filters.view === "rising" ? "Movers first." : "Best score first."}`}
         </p>
       </header>
 
@@ -83,18 +83,18 @@ export function DiscoverFeed() {
       )}
 
       {error ? (
-        <Fallback message="grug can not reach board. server sleeping?" onRetry={retry} />
+        <Fallback message="Can't reach the board. Is the server up?" onRetry={retry} />
       ) : loading ? (
-        <div className="t-lg w-strong caps" style={{ padding: 48, color: "var(--muted)" }}>grug get board…</div>
+        <div className="t-lg w-strong caps" style={{ padding: 48, color: "var(--muted)" }}>Loading board…</div>
       ) : rows.length === 0 ? (
         <EmptyState
-          title="no gem yet"
-          hint="grug still digging meta ads. come back soon — gem show up here."
-          ctaLabel="look again"
+          title="No gems yet"
+          hint="Still scanning Meta ads. Check back soon — gems will show up here."
+          ctaLabel="Look again"
           onCta={retry}
         />
       ) : visible.length === 0 ? (
-        <EmptyState title="nothing match" hint="filter too tight. loosen it." ctaLabel="put back" onCta={() => setFilters(DEFAULT_FILTERS)} />
+        <EmptyState title="Nothing matches" hint="Filters are too tight. Loosen them." ctaLabel="Reset" onCta={() => setFilters(DEFAULT_FILTERS)} />
       ) : (
         <div
           style={{

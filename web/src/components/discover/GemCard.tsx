@@ -1,20 +1,101 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
-import type { ShortlistRow } from "@/types/contracts";
-import { signalChips, statusChip, velocityTrend, whyLine } from "@/lib/why";
-import { ScoreBadge, SignalChips, StatusBadge, SaveToggle, Trend } from "@/components/ui";
+import type { HeroCreative, ShortlistRow } from "@/types/contracts";
+import { growthLine } from "@/lib/why";
+import { markExpandedWhy } from "@/lib/onboarding";
+import { daysAgoLabel, timeAgo } from "@/lib/format";
+import { ScoreBadge, SaveToggle, Trend } from "@/components/ui";
+import { GrugExplainer } from "@/components/GrugExplainer";
 
 /**
- * One gem in the Discover feed. Score is the hero; a status chip + qualitative
- * trend say "is it moving?"; one grug line says "why?"; the three signal chips
- * say "how good on each axis?"; and watch saves it in one tap. The whole card
- * links to the dossier (native keyboard focus); the save button opts out of nav.
+ * One gem in the Discover feed — hero-led. The real ad creative leads (with the
+ * EvidenceReel body_text fallback when there's no image), the headline is the
+ * ad's title/body, a colored growth line quantifies "why", and the score is
+ * demoted to a corner badge. "grug explain?" expands in place. The whole card
+ * links to the dossier; the explainer toggle + save button opt out of nav.
  */
+
+/** Body-text tile fallback (mirrors EvidenceReel.CreativeTile) when no image. */
+function FallbackTile({ hero }: { hero: HeroCreative | null }) {
+  const glyph = hero?.type === "video" ? "▶" : "▣";
+  const text = hero?.body_text ?? hero?.title;
+  return (
+    <div
+      style={{
+        width: "100%",
+        height: "100%",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        textAlign: "center",
+        padding: 14,
+        background: "var(--surface-3)",
+      }}
+    >
+      <div className="t-2xl w-heavy" aria-hidden style={{ color: "var(--faint)" }}>{glyph}</div>
+      {text && (
+        <div className="font-mono" style={{ fontSize: "var(--fs-xs)", color: "var(--ink-soft)", marginTop: 8, display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
+          {text}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CardHero({ hero, score }: { hero: HeroCreative | null; score: number }) {
+  const [broken, setBroken] = useState(false);
+  const hasMedia = !!hero?.snapshot_image_url && !broken;
+  const isVideo = hero?.type === "video";
+  return (
+    <div
+      style={{
+        position: "relative",
+        width: "100%",
+        aspectRatio: "16 / 10",
+        border: "1.5px solid var(--ink)",
+        background: "var(--bg)",
+        overflow: "hidden",
+      }}
+    >
+      {hasMedia ? (
+        isVideo ? (
+          <video
+            src={hero!.snapshot_image_url}
+            muted
+            playsInline
+            preload="metadata"
+            onError={() => setBroken(true)}
+            style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+          />
+        ) : (
+          // eslint-disable-next-line @next/next/no-img-element -- dynamic /api/media proxy thumbnails; next/image is a poor fit for an internal tool
+          <img
+            src={hero!.snapshot_image_url}
+            alt={hero!.title ?? hero!.body_text ?? "ad creative"}
+            loading="lazy"
+            onError={() => setBroken(true)}
+            style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+          />
+        )
+      ) : (
+        <FallbackTile hero={hero} />
+      )}
+      <div style={{ position: "absolute", top: 6, right: 6 }}>
+        <ScoreBadge score={score} variant="corner" />
+      </div>
+    </div>
+  );
+}
+
 export function GemCard({ row }: { row: ShortlistRow }) {
-  const status = statusChip(row);
-  const vt = velocityTrend(row.scaling_velocity);
-  const title = row.app_name ?? row.page_name;
+  // Captured once at mount (lazy init keeps Date.now() out of render purity).
+  const [nowMs] = useState(() => Date.now());
+  const g = growthLine(row.growth, row);
+  const headline = row.hero_creative?.title ?? row.hero_creative?.body_text ?? (row.app_name ?? row.page_name);
+  const footerName = row.app_name ?? row.page_name;
 
   return (
     <Link
@@ -31,29 +112,44 @@ export function GemCard({ row }: { row: ShortlistRow }) {
         padding: 16,
       }}
     >
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
-        <ScoreBadge score={row.gem_score} />
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 }}>
-          <StatusBadge status={status} />
-          <Trend glyph={vt.glyph} label={vt.word} />
-        </div>
+      <CardHero hero={row.hero_creative} score={row.gem_score} />
+
+      <div
+        className="t-md w-strong"
+        style={{
+          margin: 0,
+          display: "-webkit-box",
+          WebkitLineClamp: 2,
+          WebkitBoxOrient: "vertical",
+          overflow: "hidden",
+          wordBreak: "break-word",
+        }}
+      >
+        {headline}
       </div>
 
       <div>
-        <div className="t-lg w-heavy caps" style={{ wordBreak: "break-word" }}>{title}</div>
-        <div className="eyebrow" style={{ marginTop: 2 }}>
-          {row.cohort}
-          {row.app_id === null && " · web"}
-        </div>
+        <div className="eyebrow" style={{ marginBottom: 4 }}>ad growth</div>
+        <Trend glyph={g.glyph} label={g.text} tone={g.tone} />
       </div>
 
-      <p className="t-sm" style={{ color: "var(--ink-soft)", margin: 0 }}>{whyLine(row)}</p>
+      <div
+        className="font-mono nums"
+        style={{ display: "flex", flexWrap: "wrap", gap: "2px 10px", fontSize: "var(--fs-xs)", color: "var(--muted)" }}
+      >
+        <span>launched ~{daysAgoLabel(row.max_longevity_days)}</span>
+        <span aria-hidden>·</span>
+        <span>updated {timeAgo(row.refreshed_at, nowMs)}</span>
+      </div>
 
-      <SignalChips chips={signalChips(row)} compact />
+      <div style={{ borderTop: "1px solid var(--line)", paddingTop: 10 }}>
+        <GrugExplainer row={row} onOpen={markExpandedWhy} />
+      </div>
 
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "auto", paddingTop: 4 }}>
-        <span className="font-mono nums" style={{ fontSize: "var(--fs-xs)", color: "var(--muted)" }}>
-          {row.active_ad_count} ad live · {row.max_longevity_days}d up
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginTop: "auto", paddingTop: 4 }}>
+        <span className="font-mono" style={{ fontSize: "var(--fs-xs)", color: "var(--muted)", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {footerName} · {row.cohort}
+          {row.app_id === null && " · web"}
         </span>
         <SaveToggle row={row} size="sm" />
       </div>

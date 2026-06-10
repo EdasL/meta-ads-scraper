@@ -26,6 +26,7 @@ def _sv_components(fv, members):
     # incumbent's raw run-length can't dominate a fast-growing gem.
     return {
         "wow": pctile(fv.wow_log_growth, _values(members, "wow_log_growth")),
+        "ramp": pctile(fv.window_growth, _values(members, "window_growth")),
         "accel": pctile(fv.accel, _values(members, "accel")),
         "ewma": pctile(fv.ewma_velocity, _values(members, "ewma_velocity")),
         "longevity": pctile(fv.longevity_share, _values(members, "longevity_share")),
@@ -113,9 +114,12 @@ def refresh_emerging_matview(engine) -> None:
 
 
 def run_scoring(engine, as_of) -> int:
-    """Convenience orchestrator: score in one committed txn, then refresh."""
+    """Convenience orchestrator: score + recompute growth in one committed txn, then
+    refresh. Growth must land before the refresh so the matview's LEFT JOIN picks it up."""
     from agf.db.engine import begin
+    from agf.tracker.growth import compute_advertiser_growth
     with begin(engine) as conn:
         n = score_all(conn, as_of)
+        compute_advertiser_growth(conn)
     refresh_emerging_matview(engine)
     return n

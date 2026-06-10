@@ -8,7 +8,9 @@ imputed to `floor` in gem_score so a data gap does not kill an otherwise-strong
 gem — but a *present, genuinely low* axis (famous brand -> UR≈0) still gates it."""
 
 # axis component weights (sum to 1 within each axis)
-SV_WEIGHTS = {"wow": 0.35, "accel": 0.25, "ewma": 0.20, "longevity": 0.20}
+# `ramp` (overall multi-week growth) is the dominant scaling signal: it credits a sustained
+# 30->80 / 0->40 climb even after it plateaus, where `wow` (last week only) would read flat.
+SV_WEIGHTS = {"wow": 0.20, "ramp": 0.35, "accel": 0.15, "ewma": 0.15, "longevity": 0.15}
 UR_WEIGHTS = {"rating": 0.40, "followers": 0.20, "reach": 0.20, "newness": 0.20}
 FI_WEIGHTS = {"fingerprint": 0.50, "cta": 0.30, "monetize": 0.20}
 
@@ -39,12 +41,15 @@ def funnel_intent(components: dict):
     return weighted_axis(components, FI_WEIGHTS)
 
 
-def gem_score(sv, ur, fi, floor: float = 0.05) -> float:
+def gem_score(sv, ur, fi, floor: float = 0.5) -> float:
     """Multiplicative AND-gate: 100 · clamp01(SV)^.5 · clamp01(UR)^.35 · clamp01(FI)^.15.
 
-    None axis (no data at all) -> imputed to `floor` so a sparse gem isn't killed.
-    A present axis is clamped to [0,1] as-is: a famous brand whose UR computes to
-    ~0 still collapses the product to ~0 (the 'still unknown' hard gate)."""
+    A None axis means NO DATA (e.g. a quiz funnel has no app rating / followers / EU reach,
+    so under-radar is uncomputable). It is imputed to the cohort-NEUTRAL `floor` (0.5) so a
+    data gap neither rewards nor punishes — the score is driven by the axes we DO have. A
+    *present* low axis is clamped as-is: a famous brand whose UR genuinely computes to ~0
+    still collapses the product to ~0 (the 'still unknown' hard gate). The earlier 0.05 floor
+    wrongly punished data-less funnels (0.05^.35≈0.35) — exactly the emerging gems we want."""
     a = floor if sv is None else clamp01(sv)
     b = floor if ur is None else clamp01(ur)
     c = floor if fi is None else clamp01(fi)

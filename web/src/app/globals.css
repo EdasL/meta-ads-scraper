@@ -49,6 +49,30 @@
   --radius-xs: 2px;
   --radius-sm: 4px;
   --shadow-hard: 5px 5px 0 var(--ink); /* brutalist offset shadow (identity) */
+
+  /* --- semantic accents (functional only; ink borders + --shadow-hard stay) ---
+   * Hexes chosen for ≥4.5:1 contrast on --surface-2 (#1c1c20). Used sparingly:
+   * trend direction, score band, signal coding, status momentum. */
+  --up: #4ade80;      /* growth / positive trend */
+  --down: #f87171;    /* decline / negative trend */
+  --up-dim: #22a35a;  /* dimmer up (large fills) */
+  /* score bands (mirror lib/why.ts scoreBand) */
+  --band-weak: var(--muted);
+  --band-maybe: #fbbf24;
+  --band-strong: #4ade80;
+  --band-rare: #c084fc;
+  /* signals (per-axis hue) */
+  --sig-scaling: #38bdf8;
+  --sig-radar: #c084fc;
+  --sig-funnel: #4ade80;
+  /* status momentum */
+  --status-spark: #fbbf24;
+  --status-hot: #f87171;
+  --status-steady: var(--muted);
+  --status-cool: var(--faint);
+  /* tints (≈12% alpha chip backgrounds) */
+  --up-bg: rgba(74, 222, 128, 0.12);
+  --down-bg: rgba(248, 113, 113, 0.12);
 }
 
 @theme inline {
@@ -63,6 +87,24 @@
   --color-ink-soft: var(--ink-soft);
   --color-muted: var(--muted);
   --color-line: var(--line);
+
+  /* semantic accents (mirror :root) */
+  --color-up: var(--up);
+  --color-down: var(--down);
+  --color-up-dim: var(--up-dim);
+  --color-band-weak: var(--band-weak);
+  --color-band-maybe: var(--band-maybe);
+  --color-band-strong: var(--band-strong);
+  --color-band-rare: var(--band-rare);
+  --color-sig-scaling: var(--sig-scaling);
+  --color-sig-radar: var(--sig-radar);
+  --color-sig-funnel: var(--sig-funnel);
+  --color-status-spark: var(--status-spark);
+  --color-status-hot: var(--status-hot);
+  --color-status-steady: var(--status-steady);
+  --color-status-cool: var(--status-cool);
+  --color-up-bg: var(--up-bg);
+  --color-down-bg: var(--down-bg);
 
   --font-sans: var(--font-sans);
   --font-mono: var(--font-mono);

@@ -1,16 +1,14 @@
 /**
- * saved.ts — the "my gems" store. In LIVE mode the source of truth is the Go
- * backend (frontend.saved_gems): the store hydrates from GET /saved-gems and
- * every mutation is persisted via POST /saved-gems (optimistic UI + background
- * write). In MOCK mode it falls back to localStorage so the app runs offline
- * for dev — the same mock/live split every other endpoint uses.
+ * saved.ts — the "my gems" store. The source of truth is the Go backend
+ * (frontend.saved_gems): the store hydrates from GET /saved-gems and every
+ * mutation is persisted via POST /saved-gems (optimistic UI + background write).
  *
  * Pure types + helpers live in ./saved-core (unit-tested, no network); this
  * module adds the stateful, backend-backed store and re-exports the core.
  */
 import type { ShortlistRow } from "@/types/contracts";
 import type { ApiSavedGem, ApiSavedGemIn } from "@/types/api";
-import { DATA_MODE, getSavedGems, removeSavedGem as apiRemove, upsertSavedGem } from "./api";
+import { getSavedGems, removeSavedGem as apiRemove, upsertSavedGem } from "./api";
 import {
   makeSavedGem,
   rebuildTagRegistry,
@@ -24,10 +22,6 @@ import {
 } from "./saved-core";
 
 export * from "./saved-core";
-
-const KEY = "fielddesk.saved";
-const TAGS_KEY = "fielddesk.tags";
-const LIVE = DATA_MODE === "live";
 
 // ---------------------------------------------------------------------------
 // API <-> store mapping
@@ -78,7 +72,7 @@ function toUpsert(gem: SavedGem, userEmail: string): ApiSavedGemIn {
 }
 
 // ---------------------------------------------------------------------------
-// Store (in-memory cache; persistence = backend in live, localStorage in mock)
+// Store (in-memory cache; persistence = backend)
 // ---------------------------------------------------------------------------
 
 type SavedMap = Record<number, SavedGem>;
@@ -86,7 +80,6 @@ type SavedMap = Record<number, SavedGem>;
 let cache: SavedMap | null = null;
 let cachedList: SavedGem[] = [];
 const listeners = new Set<() => void>();
-let storageHandler: ((e: StorageEvent) => void) | null = null;
 let userEmail: string | null = null;
 let hydratedKey: string | null = null;
 
@@ -98,31 +91,10 @@ function notify() {
   listeners.forEach((l) => l());
 }
 
-function localRead(): SavedMap {
-  if (typeof window === "undefined") return {};
-  try {
-    const raw = window.localStorage.getItem(KEY);
-    return raw ? (JSON.parse(raw) as SavedMap) : {};
-  } catch {
-    return {};
-  }
-}
-
-function localWrite(map: SavedMap) {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(KEY, JSON.stringify(map));
-    window.localStorage.setItem(TAGS_KEY, JSON.stringify(rebuildTagRegistry(map)));
-  } catch {
-    /* quota / private mode */
-  }
-}
-
-/** Lazily seed the in-memory cache: empty in live (hydrate fills it), from
- * localStorage in mock. */
+/** Lazily seed the in-memory cache (empty; hydrate() fills it from the backend). */
 function ensureCache(): SavedMap {
   if (cache) return cache;
-  cache = LIVE ? {} : localRead();
+  cache = {};
   recompute();
   return cache;
 }
@@ -133,26 +105,17 @@ function onSyncError(e: unknown) {
   void hydrate();
 }
 
-/** Persist a single change. Live → backend; mock → localStorage snapshot. */
-function persist(map: SavedMap, changed: SavedGem | null, removedId?: number) {
-  if (LIVE) {
-    if (!userEmail) return;
-    if (removedId != null) apiRemove(removedId, userEmail).catch(onSyncError);
-    else if (changed) upsertSavedGem(changed.advertiserId, toUpsert(changed, userEmail)).catch(onSyncError);
-  } else {
-    localWrite(map);
-  }
+/** Persist a single change to the backend. */
+function persist(changed: SavedGem | null, removedId?: number) {
+  if (!userEmail) return;
+  if (removedId != null) apiRemove(removedId, userEmail).catch(onSyncError);
+  else if (changed) upsertSavedGem(changed.advertiserId, toUpsert(changed, userEmail)).catch(onSyncError);
 }
 
 async function hydrate() {
-  const key = `${DATA_MODE}:${userEmail ?? ""}`;
+  const key = userEmail ?? "";
   if (hydratedKey === key) return;
   hydratedKey = key;
-  if (!LIVE) {
-    ensureCache();
-    notify();
-    return;
-  }
   if (!userEmail) return; // wait until the session user is known
   try {
     const rows = await getSavedGems(userEmail);
@@ -167,12 +130,12 @@ async function hydrate() {
   }
 }
 
-/** Set the current user (live mode keys saved gems by their email) and refetch. */
+/** Set the current user (saved gems are keyed by email) and refetch. */
 export function setUser(email: string | null) {
   if (userEmail === email) return;
   userEmail = email;
   hydratedKey = null;
-  cache = LIVE ? {} : localRead();
+  cache = {};
   recompute();
   notify();
   void hydrate();
@@ -186,7 +149,7 @@ function mutate(id: number, fn: (gem: SavedGem) => SavedGem) {
   cache = { ...map, [id]: updated };
   recompute();
   notify();
-  persist(cache, updated);
+  persist(updated);
 }
 
 // --- queries ---
@@ -212,7 +175,7 @@ export function save(row: ShortlistRow): void {
   cache = { ...map, [row.advertiser_id]: gem };
   recompute();
   notify();
-  persist(cache, gem);
+  persist(gem);
 }
 export function unsave(id: number): void {
   const map = ensureCache();
@@ -222,7 +185,7 @@ export function unsave(id: number): void {
   cache = next;
   recompute();
   notify();
-  persist(cache, null, id);
+  persist(null, id);
 }
 export function toggleSave(row: ShortlistRow): void {
   if (isSaved(row.advertiser_id)) unsave(row.advertiser_id);
@@ -252,22 +215,8 @@ export function subscribe(listener: () => void): () => void {
   listeners.add(listener);
   ensureCache();
   void hydrate();
-  if (!storageHandler && !LIVE && typeof window !== "undefined") {
-    storageHandler = (e: StorageEvent) => {
-      if (e.key === KEY) {
-        cache = localRead();
-        recompute();
-        notify();
-      }
-    };
-    window.addEventListener("storage", storageHandler);
-  }
   return () => {
     listeners.delete(listener);
-    if (listeners.size === 0 && storageHandler && typeof window !== "undefined") {
-      window.removeEventListener("storage", storageHandler);
-      storageHandler = null;
-    }
   };
 }
 export function getSnapshot(): SavedGem[] {

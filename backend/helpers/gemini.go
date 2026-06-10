@@ -1,0 +1,218 @@
+// Package helpers holds small, dependency-light service helpers. gemini.go wraps
+// the google.golang.org/genai client for structured-JSON generation, mirroring
+// the proven pattern in femrun/api/helpers/gemini.go (same package version,
+// model, retry discipline). The only product-specific piece is GenerateExplainer.
+package helpers
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"log"
+	"os"
+	"strings"
+	"time"
+
+	"google.golang.org/genai"
+)
+
+// GeminiHelper wraps a genai client bound to a single model.
+type GeminiHelper struct {
+	client *genai.Client
+	model  string
+}
+
+// NewGeminiHelper builds a helper from GEMINI_API_KEY. It returns nil when the
+// key is unset (callers nil-check and skip generation) — the same fail-soft
+// contract femrun uses, so a missing key disables AI features instead of
+// crashing the process.
+func NewGeminiHelper() *GeminiHelper {
+	apiKey := os.Getenv("GEMINI_API_KEY")
+	if apiKey == "" {
+		log.Println("GEMINI_API_KEY not set, AI explainer generation disabled")
+		return nil
+	}
+
+	client, err := genai.NewClient(context.Background(), &genai.ClientConfig{
+		APIKey:  apiKey,
+		Backend: genai.BackendGeminiAPI,
+	})
+	if err != nil {
+		log.Printf("Failed to create Gemini client: %v", err)
+		return nil
+	}
+
+	model := os.Getenv("GEMINI_MODEL")
+	if model == "" {
+		model = "gemini-2.5-flash" // gemini-2.0-flash was retired; override via GEMINI_MODEL
+	}
+	return &GeminiHelper{
+		client: client,
+		model:  model,
+	}
+}
+
+// ExplainerCreative is one scraped ad creative fed to the model as source
+// material. Title and BodyText come straight from public.creatives.
+type ExplainerCreative struct {
+	Title    string
+	BodyText string
+}
+
+// ExplainerInput is the grounding material for one advertiser's explainer. The
+// LLM is told to use ONLY these fields — app data + the real scraped ad copy —
+// so the output stays factual.
+type ExplainerInput struct {
+	AppName        string
+	Genre          string
+	AppDescription string
+	Creatives      []ExplainerCreative
+	CTA            string
+	LandingURL     string
+}
+
+// Explainer is the structured grug-voice output. The JSON tags match both the
+// genai ResponseSchema property names and the adtech.advertiser_explainers
+// columns, so the same shape round-trips model → struct → DB.
+type Explainer struct {
+	WhatItDoes    string `json:"what_it_does"`
+	ProblemSolved string `json:"problem_solved"`
+	WhyWorking    string `json:"why_working"`
+}
+
+const explainerSystemInstruction = "you are grug. tiny words. short lowercase sentences. " +
+	"use ONLY the ad copy and app data given. never invent features. if unsure, say less."
+
+// GenerateExplainer asks Gemini for a three-field grug explainer grounded in the
+// supplied ad copy + app data. It uses structured JSON (ResponseSchema) and the
+// same 3-attempt exponential backoff as femrun. Returns an error (callers skip)
+// when the helper is nil or every attempt fails.
+func (h *GeminiHelper) GenerateExplainer(ctx context.Context, in ExplainerInput) (Explainer, error) {
+	if h == nil {
+		return Explainer{}, fmt.Errorf("gemini helper not initialized")
+	}
+
+	schema := &genai.Schema{
+		Type: genai.TypeObject,
+		Properties: map[string]*genai.Schema{
+			"what_it_does": {
+				Type:        genai.TypeString,
+				Description: "in tiny words, what the app does. one or two short sentences.",
+			},
+			"problem_solved": {
+				Type:        genai.TypeString,
+				Description: "what problem it solves for the person. one short sentence.",
+			},
+			"why_working": {
+				Type:        genai.TypeString,
+				Description: "why the ads seem to be working, based only on the ad copy. one short sentence.",
+			},
+		},
+		Required:         []string{"what_it_does", "problem_solved", "why_working"},
+		PropertyOrdering: []string{"what_it_does", "problem_solved", "why_working"},
+	}
+
+	config := &genai.GenerateContentConfig{
+		SystemInstruction: &genai.Content{
+			Parts: []*genai.Part{
+				{Text: explainerSystemInstruction},
+			},
+		},
+		ResponseMIMEType: "application/json",
+		ResponseSchema:   schema,
+		MaxOutputTokens:  1024,
+	}
+
+	content := []*genai.Content{
+		{
+			Parts: []*genai.Part{
+				{Text: buildExplainerPrompt(in)},
+			},
+		},
+	}
+
+	var result *genai.GenerateContentResponse
+	var err error
+	maxRetries := 3
+
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		result, err = h.client.Models.GenerateContent(ctx, h.model, content, config)
+		if err == nil {
+			break
+		}
+		waitTime := time.Duration(1<<attempt) * time.Second
+		log.Printf("Gemini API error (attempt %d/%d): %v, retrying in %v", attempt+1, maxRetries, err, waitTime)
+		time.Sleep(waitTime)
+	}
+
+	if err != nil {
+		return Explainer{}, fmt.Errorf("gemini API error after %d retries: %w", maxRetries, err)
+	}
+
+	if len(result.Candidates) == 0 || result.Candidates[0].Content == nil || len(result.Candidates[0].Content.Parts) == 0 {
+		return Explainer{}, fmt.Errorf("no content generated by Gemini")
+	}
+
+	generatedText := strings.TrimSpace(result.Candidates[0].Content.Parts[0].Text)
+	if generatedText == "" {
+		return Explainer{}, fmt.Errorf("empty response from Gemini")
+	}
+
+	var out Explainer
+	if err := json.Unmarshal([]byte(generatedText), &out); err != nil {
+		return Explainer{}, fmt.Errorf("gemini explainer JSON unmarshal: %w (raw=%q)", err, generatedText)
+	}
+	return out, nil
+}
+
+// buildExplainerPrompt renders the grounding material as a compact, labelled
+// prompt. It caps the creative list at 10 and skips empty fields so the model
+// is never tempted to fill a blank label with invention.
+func buildExplainerPrompt(in ExplainerInput) string {
+	var b strings.Builder
+	b.WriteString("here is the app and its real ads. tell grug about it.\n\n")
+
+	if s := strings.TrimSpace(in.AppName); s != "" {
+		fmt.Fprintf(&b, "app name: %s\n", s)
+	}
+	if s := strings.TrimSpace(in.Genre); s != "" {
+		fmt.Fprintf(&b, "genre: %s\n", s)
+	}
+	if s := strings.TrimSpace(in.AppDescription); s != "" {
+		fmt.Fprintf(&b, "app store description: %s\n", s)
+	}
+	if s := strings.TrimSpace(in.CTA); s != "" {
+		fmt.Fprintf(&b, "call to action: %s\n", s)
+	}
+	if s := strings.TrimSpace(in.LandingURL); s != "" {
+		fmt.Fprintf(&b, "landing page: %s\n", s)
+	}
+
+	const maxCreatives = 10
+	creatives := in.Creatives
+	if len(creatives) > maxCreatives {
+		creatives = creatives[:maxCreatives]
+	}
+	wrote := false
+	for _, c := range creatives {
+		title := strings.TrimSpace(c.Title)
+		body := strings.TrimSpace(c.BodyText)
+		if title == "" && body == "" {
+			continue
+		}
+		if !wrote {
+			b.WriteString("\nad copy:\n")
+			wrote = true
+		}
+		switch {
+		case title != "" && body != "":
+			fmt.Fprintf(&b, "- %s — %s\n", title, body)
+		case title != "":
+			fmt.Fprintf(&b, "- %s\n", title)
+		default:
+			fmt.Fprintf(&b, "- %s\n", body)
+		}
+	}
+
+	return b.String()
+}

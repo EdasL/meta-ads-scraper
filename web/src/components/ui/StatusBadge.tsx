@@ -3,14 +3,19 @@
 import type { StatusChip } from "@/lib/why";
 
 /**
- * One-word momentum chip. "new spark" / "hot now" are emphasised (inverted);
- * "steady" is plain outline; "cooling" is muted. Functional, never colored.
+ * One-word momentum chip, color-coded by status. "New" / "Hot" carry a tinted
+ * fill; "Steady" / "Cooling" are quiet outlines. Plain display labels (keys are
+ * kept internal). Color borrows the semantic status hues.
  */
-const INVERTED: StatusChip[] = ["new spark", "hot now"];
+const STATUS: Record<StatusChip, { label: string; color: string; fill: boolean }> = {
+  "new spark": { label: "New", color: "var(--status-spark)", fill: true },
+  "hot now": { label: "Hot", color: "var(--status-hot)", fill: true },
+  steady: { label: "Steady", color: "var(--status-steady)", fill: false },
+  cooling: { label: "Cooling", color: "var(--status-cool)", fill: false },
+};
 
 export function StatusBadge({ status }: { status: StatusChip }) {
-  const inverted = INVERTED.includes(status);
-  const muted = status === "cooling";
+  const { label, color, fill } = STATUS[status];
   return (
     <span
       className="font-mono caps"
@@ -19,13 +24,13 @@ export function StatusBadge({ status }: { status: StatusChip }) {
         padding: "3px 8px",
         fontSize: "var(--fs-xs)",
         letterSpacing: "0.1em",
-        border: `1px solid ${muted ? "var(--muted)" : "var(--ink)"}`,
-        background: inverted ? "var(--ink)" : "transparent",
-        color: inverted ? "var(--bg)" : muted ? "var(--muted)" : "var(--ink)",
+        border: `1px solid ${color}`,
+        background: fill ? color : "transparent",
+        color: fill ? "var(--bg)" : color,
         whiteSpace: "nowrap",
       }}
     >
-      {status}
+      {label}
     </span>
   );
 }

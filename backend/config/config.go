@@ -11,14 +11,15 @@ import (
 
 // Config holds the resolved runtime settings.
 type Config struct {
-	DatabaseURL string
-	CorsOrigins []string
-	Port        string
-	S3Endpoint  string
-	S3Bucket    string
-	S3Region    string
-	S3AccessKey string
-	S3SecretKey string
+	DatabaseURL  string
+	CorsOrigins  []string
+	Port         string
+	S3Endpoint   string
+	S3Bucket     string
+	S3Region     string
+	S3AccessKey  string
+	S3SecretKey  string
+	GeminiAPIKey string
 }
 
 const defaultOrigins = "http://localhost:3000,http://127.0.0.1:3000"
@@ -34,14 +35,15 @@ func Load() *Config {
 		log.Fatal("AGF_DATABASE_URL is required")
 	}
 	return &Config{
-		DatabaseURL: dbURL,
-		CorsOrigins: splitOrigins(getenv("AGF_CORS_ORIGINS", defaultOrigins)),
-		Port:        getenv("PORT", "8000"),
-		S3Endpoint:  os.Getenv("S3_ENDPOINT"),
-		S3Bucket:    getenv("S3_BUCKET", "agf"),
-		S3Region:    getenv("S3_REGION", "us-east-1"),
-		S3AccessKey: os.Getenv("MINIO_ACCESS_KEY"),
-		S3SecretKey: os.Getenv("MINIO_SECRET_KEY"),
+		DatabaseURL:  dbURL,
+		CorsOrigins:  splitOrigins(getenv("AGF_CORS_ORIGINS", defaultOrigins)),
+		Port:         getenv("PORT", "8000"),
+		S3Endpoint:   os.Getenv("S3_ENDPOINT"),
+		S3Bucket:     getenv("S3_BUCKET", "agf"),
+		S3Region:     getenv("S3_REGION", "us-east-1"),
+		S3AccessKey:  os.Getenv("MINIO_ACCESS_KEY"),
+		S3SecretKey:  os.Getenv("MINIO_SECRET_KEY"),
+		GeminiAPIKey: os.Getenv("GEMINI_API_KEY"),
 	}
 }
 

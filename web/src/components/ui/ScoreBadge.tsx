@@ -1,15 +1,47 @@
 "use client";
 
-import { scoreBand } from "@/lib/why";
+import { scoreBand, type ScoreBand } from "@/lib/why";
 
 /**
- * GemScore as the hero number. `card` = inline number + band word; `detail` =
- * bordered box with /100 + band. The band word ("rare gem" etc.) replaces raw
- * cutoffs so the user reads meaning, not a threshold.
+ * GemScore badge. `card` = inline number + band word; `detail` = bordered box
+ * with /100 + band; `corner` = small overlay chip for the hero-led card (score
+ * demoted from hero to a corner badge). The band word + a band hue convey
+ * meaning without exposing raw cutoffs.
  */
-export function ScoreBadge({ score, variant = "card" }: { score: number; variant?: "card" | "detail" }) {
+const BAND_COLOR: Record<ScoreBand, string> = {
+  weak: "var(--band-weak)",
+  maybe: "var(--band-maybe)",
+  strong: "var(--band-strong)",
+  "rare gem": "var(--band-rare)",
+};
+
+export function ScoreBadge({ score, variant = "card" }: { score: number; variant?: "card" | "detail" | "corner" }) {
   const band = scoreBand(score);
+  const hue = BAND_COLOR[band];
   const n = Math.round(score);
+
+  if (variant === "corner") {
+    return (
+      <div
+        title={`gemscore ${n} / 100 · ${band}`}
+        style={{
+          display: "inline-flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          minWidth: 40,
+          padding: "4px 7px",
+          border: `1.5px solid ${hue}`,
+          background: "rgba(13, 13, 15, 0.82)",
+          backdropFilter: "blur(2px)",
+          lineHeight: 1,
+        }}
+      >
+        <span className="t-md w-heavy nums" style={{ color: hue }}>{n}</span>
+        <span className="font-mono" style={{ fontSize: "0.55rem", letterSpacing: "0.08em", color: "var(--muted)", marginTop: 2 }}>/100</span>
+      </div>
+    );
+  }
 
   if (variant === "detail") {
     return (
@@ -25,7 +57,7 @@ export function ScoreBadge({ score, variant = "card" }: { score: number; variant
           minWidth: 92,
         }}
       >
-        <span className="t-2xl w-heavy nums" style={{ lineHeight: 1 }}>{n}</span>
+        <span className="t-2xl w-heavy nums" style={{ lineHeight: 1, color: hue }}>{n}</span>
         <span className="eyebrow" style={{ marginTop: 5 }}>/ 100 · {band}</span>
       </div>
     );
@@ -33,7 +65,7 @@ export function ScoreBadge({ score, variant = "card" }: { score: number; variant
 
   return (
     <div style={{ display: "flex", flexDirection: "column", lineHeight: 1 }}>
-      <span className="t-xl w-heavy nums">{n}</span>
+      <span className="t-xl w-heavy nums" style={{ color: hue }}>{n}</span>
       <span className="eyebrow" style={{ marginTop: 2 }}>{band}</span>
     </div>
   );

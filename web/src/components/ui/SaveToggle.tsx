@@ -21,7 +21,7 @@ export function SaveToggle({
     <button
       type="button"
       aria-pressed={saved}
-      aria-label={saved ? "stop watching" : "watch this gem"}
+      aria-label={saved ? "Remove from saved" : "Save this gem"}
       onClick={(e) => {
         e.stopPropagation();
         e.preventDefault();
@@ -43,7 +43,7 @@ export function SaveToggle({
       }}
     >
       {saved ? <IconStarFilled size={14} /> : <IconStar size={14} stroke={1.75} />}
-      {saved ? "saved" : "watch"}
+      {saved ? "Saved" : "Save"}
     </button>
   );
 }
