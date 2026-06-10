@@ -280,6 +280,7 @@ type SavedGemRow struct {
 	AdvertiserID    int        `json:"advertiser_id" gorm:"column:advertiser_id"`
 	PageName        *string    `json:"page_name" gorm:"column:page_name"`
 	AppName         *string    `json:"app_name" gorm:"column:app_name"`
+	IconURL         *string    `json:"icon_url" gorm:"column:icon_url"`
 	Cohort          string     `json:"cohort" gorm:"column:cohort"`
 	GemScore        float64    `json:"gem_score" gorm:"column:gem_score"`
 	ScalingVelocity *float64   `json:"scaling_velocity" gorm:"column:scaling_velocity"`
@@ -301,6 +302,7 @@ type SavedGemIn struct {
 	UserEmail       string     `json:"user_email" binding:"required"`
 	PageName        *string    `json:"page_name"`
 	AppName         *string    `json:"app_name"`
+	IconURL         *string    `json:"icon_url"`
 	Cohort          string     `json:"cohort"`
 	GemScore        float64    `json:"gem_score"`
 	ScalingVelocity *float64   `json:"scaling_velocity"`

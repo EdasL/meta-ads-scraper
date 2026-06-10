@@ -37,8 +37,8 @@ export interface SavedGem {
   advertiserId: number;
   pageName: string;
   appName: string | null;
-  /** Store icon captured at save time. Not persisted server-side yet, so it is
-   * absent after a backend rehydrate — the UI then shows the initials tile. */
+  /** Store icon, denormalized at save time (persisted in frontend.saved_gems);
+   * absent → the UI shows the initials tile. */
   iconUrl?: string;
   cohort: string;
   savedAt: string; // ISO

@@ -20,6 +20,7 @@ const row = (over = {}) => ({
   page_name: "SleepWave Labs",
   app_id: 90211,
   app_name: "SleepWave",
+  icon_url: "https://cdn.example.com/sleepwave.png",
   gem_score: 88,
   scaling_velocity: 0.91,
   under_radar: 0.86,
@@ -52,10 +53,16 @@ test("makeSavedGem defaults stage/tags/note and carries identity", () => {
   const g = makeSavedGem(row(), "2026-06-09T10:00:00Z");
   assert.equal(g.advertiserId, 1001);
   assert.equal(g.appName, "SleepWave");
+  assert.equal(g.iconUrl, "https://cdn.example.com/sleepwave.png");
   assert.equal(g.stage, "just_saw");
   assert.deepEqual(g.tags, []);
   assert.equal(g.note, "");
   assert.equal(g.scoreSnapshot.gemScore, 88);
+});
+
+test("makeSavedGem leaves iconUrl undefined when the row has no icon", () => {
+  const g = makeSavedGem(row({ icon_url: undefined }), "2026-06-09T10:00:00Z");
+  assert.equal(g.iconUrl, undefined);
 });
 
 test("withTag normalizes + dedupes; withoutTag removes; both immutable", () => {

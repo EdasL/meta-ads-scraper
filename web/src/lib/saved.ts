@@ -33,6 +33,7 @@ function fromApi(r: ApiSavedGem): SavedGem {
     advertiserId: r.advertiser_id,
     pageName: r.page_name ?? "",
     appName: r.app_name,
+    iconUrl: r.icon_url ?? undefined,
     cohort: r.cohort,
     savedAt,
     scoreSnapshot: {
@@ -57,6 +58,7 @@ function toUpsert(gem: SavedGem, userEmail: string): ApiSavedGemIn {
     user_email: userEmail,
     page_name: gem.pageName || null,
     app_name: gem.appName,
+    icon_url: gem.iconUrl ?? null,
     cohort: gem.cohort,
     gem_score: s.gemScore,
     scaling_velocity: s.scalingVelocity,

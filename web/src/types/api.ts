@@ -167,6 +167,7 @@ export interface ApiSavedGem {
   advertiser_id: number;
   page_name: string | null;
   app_name: string | null;
+  icon_url: string | null;
   cohort: string;
   gem_score: number;
   scaling_velocity: number | null;
@@ -188,6 +189,7 @@ export interface ApiSavedGemIn {
   user_email: string;
   page_name: string | null;
   app_name: string | null;
+  icon_url: string | null;
   cohort: string;
   gem_score: number;
   scaling_velocity: number | null;

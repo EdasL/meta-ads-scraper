@@ -13,7 +13,7 @@ func ListSavedGems(ctx context.Context, g *gorm.DB, userEmail string) ([]models.
 	rows := make([]models.SavedGemRow, 0)
 	err := db.WithReadTx(ctx, g, func(tx *gorm.DB) error {
 		return tx.Raw(
-			`SELECT user_email, advertiser_id, page_name, app_name, cohort,
+			`SELECT user_email, advertiser_id, page_name, app_name, icon_url, cohort,
 			        gem_score, scaling_velocity, under_radar, funnel_intent,
 			        active_ad_count, tags, note, stage, verdict, confidence,
 			        saved_at, updated_at
@@ -40,11 +40,11 @@ func UpsertSavedGem(ctx context.Context, g *gorm.DB, in models.SavedGemIn, adver
 	return db.WithWriteTx(ctx, g, func(tx *gorm.DB) error {
 		return tx.Exec(
 			`INSERT INTO frontend.saved_gems
-			   (user_email, advertiser_id, page_name, app_name, cohort,
+			   (user_email, advertiser_id, page_name, app_name, icon_url, cohort,
 			    gem_score, scaling_velocity, under_radar, funnel_intent,
 			    active_ad_count, tags, note, stage, verdict, confidence,
 			    saved_at, updated_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
 			         clock_timestamp(), clock_timestamp())
 			 ON CONFLICT (user_email, advertiser_id) DO UPDATE SET
 			   tags       = EXCLUDED.tags,
@@ -53,7 +53,7 @@ func UpsertSavedGem(ctx context.Context, g *gorm.DB, in models.SavedGemIn, adver
 			   verdict    = EXCLUDED.verdict,
 			   confidence = EXCLUDED.confidence,
 			   updated_at = clock_timestamp()`,
-			in.UserEmail, advertiserID, in.PageName, in.AppName, in.Cohort,
+			in.UserEmail, advertiserID, in.PageName, in.AppName, in.IconURL, in.Cohort,
 			in.GemScore, in.ScalingVelocity, in.UnderRadar, in.FunnelIntent,
 			in.ActiveAdCount, in.Tags, in.Note, stage, in.Verdict, in.Confidence,
 		).Error
