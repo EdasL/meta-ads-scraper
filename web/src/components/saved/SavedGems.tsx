@@ -101,7 +101,7 @@ export function SavedGems() {
       </div>
 
       {view === "list" && (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 16 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(230px, 1fr))", gap: 12 }}>
           {filtered.map((g) => (
             <SavedCard key={g.advertiserId} gem={g} selected={selected.includes(g.advertiserId)} onToggleSelect={() => toggleSelect(g.advertiserId)} />
           ))}
