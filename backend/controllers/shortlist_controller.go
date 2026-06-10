@@ -41,7 +41,7 @@ func (c *ShortlistController) List(ctx *gin.Context) {
 	defer cancel()
 	rows, err := repositories.Shortlist(rctx, db.DB(), cohort, minScore, limit, offset)
 	if err != nil {
-		helpers.Detail(ctx, http.StatusInternalServerError, "grug board broke.")
+		helpers.Detail(ctx, http.StatusInternalServerError, "something went wrong.")
 		return
 	}
 	ctx.JSON(http.StatusOK, rows)

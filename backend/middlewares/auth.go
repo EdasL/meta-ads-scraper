@@ -29,7 +29,7 @@ func RequireToken() gin.HandlerFunc {
 		}
 		got := strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
 		if got == "" || subtle.ConstantTimeCompare([]byte(got), []byte(want)) != 1 {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"detail": "that not right. try again."})
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"detail": "invalid token. try again."})
 			return
 		}
 		c.Next()

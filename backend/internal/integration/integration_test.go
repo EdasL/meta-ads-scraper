@@ -232,7 +232,7 @@ func TestDossierNotFound(t *testing.T) {
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/gems/999999", nil))
 	require.Equal(t, 404, w.Code)
-	require.Contains(t, w.Body.String(), "loosen filter")
+	require.Contains(t, w.Body.String(), "gem not found")
 }
 
 func TestScaling(t *testing.T) {

@@ -37,7 +37,7 @@ func (c *ReviewController) Queue(ctx *gin.Context) {
 	defer cancel()
 	rows, err := repositories.ReviewQueue(rctx, db.DB(), minScore, limit, offset)
 	if err != nil {
-		helpers.Detail(ctx, http.StatusInternalServerError, "grug board broke.")
+		helpers.Detail(ctx, http.StatusInternalServerError, "something went wrong.")
 		return
 	}
 	ctx.JSON(http.StatusOK, rows)

@@ -26,11 +26,11 @@ func (c *GemsController) Get(ctx *gin.Context) {
 	defer cancel()
 	d, err := repositories.Dossier(rctx, db.DB(), id)
 	if err != nil {
-		helpers.Detail(ctx, http.StatusInternalServerError, "grug board broke.")
+		helpers.Detail(ctx, http.StatusInternalServerError, "something went wrong.")
 		return
 	}
 	if d == nil {
-		helpers.Detail(ctx, http.StatusNotFound, "gem not found. loosen filter.")
+		helpers.Detail(ctx, http.StatusNotFound, "gem not found.")
 		return
 	}
 	ctx.JSON(http.StatusOK, d)
@@ -46,7 +46,7 @@ func (c *GemsController) Scaling(ctx *gin.Context) {
 	defer cancel()
 	pts, err := repositories.Scaling(rctx, db.DB(), id)
 	if err != nil {
-		helpers.Detail(ctx, http.StatusInternalServerError, "grug board broke.")
+		helpers.Detail(ctx, http.StatusInternalServerError, "something went wrong.")
 		return
 	}
 	ctx.JSON(http.StatusOK, pts)
@@ -64,7 +64,7 @@ func (c *GemsController) AppMetrics(ctx *gin.Context) {
 	defer cancel()
 	pts, err := repositories.AppMetrics(rctx, db.DB(), id)
 	if err != nil {
-		helpers.Detail(ctx, http.StatusInternalServerError, "grug board broke.")
+		helpers.Detail(ctx, http.StatusInternalServerError, "something went wrong.")
 		return
 	}
 	ctx.JSON(http.StatusOK, pts)

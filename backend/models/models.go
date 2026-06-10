@@ -80,14 +80,14 @@ type ShortlistRow struct {
 	Alert            bool     `json:"alert" gorm:"column:alert"`
 	RefreshedAt      *APITime `json:"refreshed_at" gorm:"column:refreshed_at"`
 	// Enriched in code after the base matview scan (not scanned directly):
-	// the grug explainer, the per-advertiser growth summary, and the hero ad
+	// the explainer, the per-advertiser growth summary, and the hero ad
 	// creative for the card. All nullable → JSON null when absent.
 	Explainer    *ExplainerInfo `json:"explainer" gorm:"-"`
 	Growth       *GrowthInfo    `json:"growth" gorm:"-"`
 	HeroCreative *CreativeInfo  `json:"hero_creative" gorm:"-"`
 }
 
-// ExplainerInfo is the grug-voice explainer for a gem (adtech.advertiser_explainers).
+// ExplainerInfo is the generated explainer for a gem (adtech.advertiser_explainers).
 type ExplainerInfo struct {
 	WhatItDoes    string `json:"what_it_does" gorm:"column:what_it_does"`
 	ProblemSolved string `json:"problem_solved" gorm:"column:problem_solved"`

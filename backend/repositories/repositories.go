@@ -59,7 +59,7 @@ func toShortlistRows(scanned []mvScanRow) []models.ShortlistRow {
 	return rows
 }
 
-// attachEnrichment layers the grug explainer and hero ad creative onto a page of
+// attachEnrichment layers the explainer and hero ad creative onto a page of
 // shortlist rows with ONE batched read each (advertiser_id IN (ids)). Both are
 // nil when absent — explainers are generated offline by cmd/explainers and many
 // advertisers lack image creatives. It mutates rows in place. tx must be the

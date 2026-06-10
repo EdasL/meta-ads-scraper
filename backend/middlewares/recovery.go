@@ -10,6 +10,6 @@ import (
 // empty 500, keeping the error contract consistent with every other handler.
 func Recovery() gin.HandlerFunc {
 	return gin.CustomRecovery(func(c *gin.Context, _ any) {
-		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"detail": "grug fall down. try again."})
+		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"detail": "something went wrong. try again."})
 	})
 }

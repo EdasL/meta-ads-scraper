@@ -25,7 +25,7 @@ func TestRecovery_RendersJSON(t *testing.T) {
 	if ct := w.Header().Get("Content-Type"); ct[:16] != "application/json" {
 		t.Fatalf("content-type = %q, want application/json", ct)
 	}
-	if got := w.Body.String(); got != `{"detail":"grug fall down. try again."}` {
+	if got := w.Body.String(); got != `{"detail":"something went wrong. try again."}` {
 		t.Fatalf("body = %s", got)
 	}
 }

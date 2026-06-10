@@ -12,7 +12,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// GatherExplainerInput reads the grounding material for one advertiser's grug
+// GatherExplainerInput reads the grounding material for one advertiser's
 // explainer inside a READ ONLY transaction: the app name/genre/store
 // description (the most recent app the advertiser ran ads for), up to 10
 // scraped creative title+body pairs (active ads preferred), the ad CTA, and the

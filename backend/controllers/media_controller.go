@@ -27,7 +27,7 @@ func (c *MediaController) Get(ctx *gin.Context) {
 	// gin's catch-all param includes the leading slash.
 	key := strings.TrimPrefix(ctx.Param("key"), "/")
 	if !helpers.ValidMediaKey(key) {
-		helpers.Detail(ctx, http.StatusForbidden, "nope. not that.")
+		helpers.Detail(ctx, http.StatusForbidden, "forbidden.")
 		return
 	}
 	out, err := c.s3.GetObject(ctx, &s3.GetObjectInput{
@@ -35,7 +35,7 @@ func (c *MediaController) Get(ctx *gin.Context) {
 		Key:    aws.String(key),
 	})
 	if err != nil {
-		helpers.Detail(ctx, http.StatusNotFound, "grug not find that.")
+		helpers.Detail(ctx, http.StatusNotFound, "not found.")
 		return
 	}
 	defer out.Body.Close()
