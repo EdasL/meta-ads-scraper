@@ -153,17 +153,32 @@ func TestDossier(t *testing.T) {
 
 	require.Len(t, d.Funnels, 1)
 	require.Equal(t, "funnels/ad1.png", d.Funnels[0]["screenshot_s3_key"])
-	require.Len(t, d.Creatives, 1)
+	require.Len(t, d.Creatives, 2, "one card per ad — AD1's text backstop folds into its card")
+
+	// Active ad first; its best creative is the s3-backed image, not the backstop.
 	require.Equal(t, "creatives/ad1.jpg", d.Creatives[0]["s3_key"])
 	require.Equal(t, "image", d.Creatives[0]["type"])
+	require.Equal(t, "AD1", d.Creatives[0]["external_ad_id"])
+	require.Equal(t, "Install now", d.Creatives[0]["cta_text"])
+	require.Equal(t, "https://apps.example/a", d.Creatives[0]["link_url"])
 
 	// Per-ad run metadata: the seeded ad started 9 days ago and is active.
 	require.NotNil(t, d.Creatives[0]["ad_started_on"])
+	require.Nil(t, d.Creatives[0]["ad_ended_on"], "active ad — no end date")
 	require.Equal(t, true, d.Creatives[0]["ad_active"])
 	require.EqualValues(t, 9, d.Creatives[0]["ad_days_running"])
 	require.Equal(t, []any{"facebook", "instagram"}, d.Creatives[0]["publisher_platforms"])
 	require.EqualValues(t, 75000, d.Creatives[0]["eu_total_reach"],
 		"latest non-NULL ad_metrics snapshot wins")
+
+	// Ended ad second: full run dates, days frozen at end − start.
+	ended := d.Creatives[1]
+	require.Equal(t, "AD3", ended["external_ad_id"])
+	require.Equal(t, false, ended["ad_active"])
+	require.Equal(t, "2026-04-01", ended["ad_started_on"])
+	require.Equal(t, "2026-04-15", ended["ad_ended_on"])
+	require.EqualValues(t, 14, ended["ad_days_running"])
+	require.Nil(t, ended["s3_key"])
 }
 
 // The second advertiser has no app, no ad run metadata, and no Meta signals:
@@ -393,8 +408,10 @@ func seed(g *gorm.DB) {
 
 	var adID int
 	must(g.Raw(`INSERT INTO public.ads
-		(external_ad_id, advertiser_id, app_id, is_active, start_date, publisher_platforms, last_seen)
-		VALUES ('AD1',?,?, true, now() - interval '9 days', ARRAY['facebook','instagram'], now())
+		(external_ad_id, advertiser_id, app_id, is_active, start_date, publisher_platforms, last_seen,
+		 cta_text, cta_type, link_url)
+		VALUES ('AD1',?,?, true, now() - interval '9 days', ARRAY['facebook','instagram'], now(),
+		 'Install now','INSTALL_MOBILE_APP','https://apps.example/a')
 		RETURNING id`, advID, appID).Scan(&adID).Error)
 
 	// Per-ad reach snapshots: the latest non-NULL value (75000) is the one served.
@@ -404,6 +421,18 @@ func seed(g *gorm.DB) {
 
 	must(g.Exec(`INSERT INTO public.creatives (ad_id, type, s3_key, body_text, title)
 		VALUES (?, 'image','creatives/ad1.jpg','buy now','Great Ad')`, adID).Error)
+	// keeper-history text backstop on the SAME ad — the dossier must fold both
+	// rows into one AD1 card carrying the s3-backed image (per-ad consolidation).
+	must(g.Exec(`INSERT INTO public.creatives (ad_id, type, body_text)
+		VALUES (?, 'text', 'buy now')`, adID).Error)
+	// An ended ad with a fixed run: sorts after the active ad, days freeze at 14.
+	var ad3ID int
+	must(g.Raw(`INSERT INTO public.ads
+		(external_ad_id, advertiser_id, app_id, is_active, start_date, end_date)
+		VALUES ('AD3', ?, ?, false, '2026-04-01', '2026-04-15') RETURNING id`,
+		advID, appID).Scan(&ad3ID).Error)
+	must(g.Exec(`INSERT INTO public.creatives (ad_id, type, body_text)
+		VALUES (?, 'text', 'old promo')`, ad3ID).Error)
 	must(g.Exec(`INSERT INTO public.funnels (ad_id, landing_url, final_url_after_redirect, screenshot_s3_key)
 		VALUES (?, 'https://land','https://final','funnels/ad1.png')`, adID).Error)
 

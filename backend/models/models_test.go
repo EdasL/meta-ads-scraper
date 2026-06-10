@@ -87,7 +87,8 @@ func TestCreativeInfo_NewFieldsSerializeCleanly(t *testing.T) {
 	if err := json.Unmarshal(b, &m); err != nil {
 		t.Fatal(err)
 	}
-	for _, k := range []string{"ad_started_on", "ad_active", "ad_days_running", "eu_total_reach"} {
+	for _, k := range []string{"ad_started_on", "ad_ended_on", "ad_active", "ad_days_running",
+		"external_ad_id", "cta_text", "link_url", "eu_total_reach"} {
 		if v, ok := m[k]; !ok || string(v) != "null" {
 			t.Errorf("key %q = %s, want null", k, v)
 		}

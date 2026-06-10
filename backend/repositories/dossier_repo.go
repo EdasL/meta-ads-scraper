@@ -128,32 +128,54 @@ func Dossier(ctx context.Context, g *gorm.DB, advertiserID int) (*models.GemDoss
 			return err
 		}
 
-		// Per-ad run metadata rides along with each creative:
+		// One card per AD (DISTINCT ON a.id) carrying its best creative — stored
+		// media (s3_key) first, then video over image over the text backstop — so
+		// an ad with both a media row and a text row renders once, with media.
+		// body_text/title fall back to any sibling creative row's text (a media
+		// row often has none; the keeper-history backstop carries the ad copy).
 		//   - ad_days_running: active ads count up to today; ended ads freeze at
 		//     end_date − start_date; NULL when start_date is unknown.
 		//   - publisher_platforms (text[]) is cast to JSON text so it scans
 		//     through models.StringList without driver array plumbing.
 		//   - eu_total_reach: latest non-NULL snapshot for the ad (US ads have
 		//     none → null).
+		// Active ads sort first, then newest start date — the order the reel shows.
 		creatives := make([]models.CreativeInfo, 0)
 		if err := tx.Raw(
-			`SELECT c.type, c.s3_key, c.body_text, c.title,
-			        a.start_date::date AS ad_started_on,
-			        a.is_active AS ad_active,
-			        CASE
-			          WHEN a.start_date IS NULL THEN NULL
-			          WHEN COALESCE(a.is_active, false) THEN CURRENT_DATE - a.start_date::date
-			          WHEN a.end_date IS NOT NULL THEN a.end_date::date - a.start_date::date
-			        END AS ad_days_running,
-			        to_json(a.publisher_platforms)::text AS publisher_platforms,
-			        m.eu_total_reach
-			 FROM public.creatives c JOIN public.ads a ON a.id = c.ad_id
-			 LEFT JOIN LATERAL (
-			   SELECT am.eu_total_reach FROM adtech.ad_metrics am
-			   WHERE am.ad_id = a.id AND am.eu_total_reach IS NOT NULL
-			   ORDER BY am.snapshot_date DESC LIMIT 1
-			 ) m ON true
-			 WHERE a.advertiser_id = ?`,
+			`SELECT * FROM (
+			   SELECT DISTINCT ON (a.id)
+			          c.type, c.s3_key,
+			          COALESCE(c.body_text, bt.body_text) AS body_text,
+			          COALESCE(c.title, bt.title) AS title,
+			          a.external_ad_id, a.cta_text, a.link_url,
+			          a.start_date::date AS ad_started_on,
+			          a.end_date::date AS ad_ended_on,
+			          a.is_active AS ad_active,
+			          CASE
+			            WHEN a.start_date IS NULL THEN NULL
+			            WHEN COALESCE(a.is_active, false) THEN CURRENT_DATE - a.start_date::date
+			            WHEN a.end_date IS NOT NULL THEN a.end_date::date - a.start_date::date
+			          END AS ad_days_running,
+			          to_json(a.publisher_platforms)::text AS publisher_platforms,
+			          m.eu_total_reach
+			   FROM public.creatives c JOIN public.ads a ON a.id = c.ad_id
+			   LEFT JOIN LATERAL (
+			     SELECT am.eu_total_reach FROM adtech.ad_metrics am
+			     WHERE am.ad_id = a.id AND am.eu_total_reach IS NOT NULL
+			     ORDER BY am.snapshot_date DESC LIMIT 1
+			   ) m ON true
+			   LEFT JOIN LATERAL (
+			     SELECT cb.body_text, cb.title FROM public.creatives cb
+			     WHERE cb.ad_id = a.id AND (cb.body_text IS NOT NULL OR cb.title IS NOT NULL)
+			     ORDER BY cb.id LIMIT 1
+			   ) bt ON true
+			   WHERE a.advertiser_id = ?
+			   ORDER BY a.id,
+			            (c.s3_key IS NOT NULL) DESC,
+			            CASE c.type WHEN 'video' THEN 0 WHEN 'image' THEN 1 ELSE 2 END,
+			            c.id
+			 ) per_ad
+			 ORDER BY COALESCE(ad_active, false) DESC, ad_started_on DESC NULLS LAST`,
 			advertiserID,
 		).Scan(&creatives).Error; err != nil {
 			return err

@@ -146,11 +146,15 @@ type FunnelInfo struct {
 	ScreenshotS3Key       *string `json:"screenshot_s3_key" gorm:"column:screenshot_s3_key"`
 }
 
-// CreativeInfo mirrors a public.creatives row joined through public.ads, plus
-// per-ad run metadata from the owning ads row:
-//   - ad_started_on / ad_active come straight from ads.start_date / ads.is_active.
+// CreativeInfo is one ad card: the ad's best creative (stored media first,
+// then media-typed, then the text backstop) plus per-ad run metadata from the
+// owning ads row:
+//   - ad_started_on / ad_ended_on / ad_active come straight from
+//     ads.start_date / ads.end_date / ads.is_active.
 //   - ad_days_running is computed in SQL (active: today − start_date; ended:
 //     end_date − start_date; NULL when start_date is missing).
+//   - external_ad_id is the Meta Ad Library ID (links the card to the ad's
+//     own library page), cta_text/link_url the ad's call to action.
 //   - publisher_platforms is ads.publisher_platforms (a Postgres text[]) cast to
 //     JSON in the query so it scans via StringList; NULL renders [].
 //   - eu_total_reach is the latest non-NULL adtech.ad_metrics.eu_total_reach for
@@ -160,7 +164,11 @@ type CreativeInfo struct {
 	S3Key              *string    `json:"s3_key" gorm:"column:s3_key"`
 	BodyText           *string    `json:"body_text" gorm:"column:body_text"`
 	Title              *string    `json:"title" gorm:"column:title"`
+	ExternalAdID       *string    `json:"external_ad_id" gorm:"column:external_ad_id"`
+	CtaText            *string    `json:"cta_text" gorm:"column:cta_text"`
+	LinkURL            *string    `json:"link_url" gorm:"column:link_url"`
 	AdStartedOn        *APIDate   `json:"ad_started_on" gorm:"column:ad_started_on"`
+	AdEndedOn          *APIDate   `json:"ad_ended_on" gorm:"column:ad_ended_on"`
 	AdActive           *bool      `json:"ad_active" gorm:"column:ad_active"`
 	AdDaysRunning      *int       `json:"ad_days_running" gorm:"column:ad_days_running"`
 	PublisherPlatforms StringList `json:"publisher_platforms" gorm:"column:publisher_platforms"`
