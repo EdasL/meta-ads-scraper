@@ -9,6 +9,7 @@ import {
   scoreBand,
   statusChip,
   velocityTrend,
+  signedPercent,
   growthLine,
   dominantSignal,
   whyLine,
@@ -73,6 +74,32 @@ test("growthLine prefers real growth numbers", () => {
   assert.equal(g.glyph, "↗");
   assert.equal(g.tone, "up");
   assert.match(g.text, /\+267% · 3→11 ads in 4wk/);
+});
+
+test("signedPercent: whole percent with sign, raw API floats never leak", () => {
+  assert.equal(signedPercent(166.6999969482422), "+167%");
+  assert.equal(signedPercent(267), "+267%");
+  assert.equal(signedPercent(-12.4), "-12%");
+  assert.equal(signedPercent(0.2), "0%");
+  assert.equal(signedPercent(0), "0%");
+  assert.equal(signedPercent(NaN), "—");
+});
+
+test("growthLine rounds raw API float pct_change to a whole percent", () => {
+  const g = growthLine(
+    { first_count: 30, latest_count: 80, weeks: 16, pct_change: 166.6999969482422 },
+    { scaling_velocity: 0.9 },
+  );
+  assert.equal(g.text, "+167% · 30→80 ads in 16wk");
+  assert.equal(g.tone, "up");
+  // tiny float that rounds to zero → flat, not a misleading "+0%" with ↗
+  const flat = growthLine(
+    { first_count: 10, latest_count: 10, weeks: 4, pct_change: 0.3 },
+    { scaling_velocity: 0.9 },
+  );
+  assert.equal(flat.text, "0% · 10→10 ads in 4wk");
+  assert.equal(flat.tone, "flat");
+  assert.equal(flat.glyph, "→");
 });
 
 test("growthLine: null pct_change (grew from zero) shows honest counts, no %", () => {

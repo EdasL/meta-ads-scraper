@@ -49,30 +49,30 @@ test("buildGemLinks: domain normalized to https website", () => {
 });
 
 test("buildGemLinks: ios store_id already prefixed with id is used as-is", () => {
-  const links = buildGemLinks(gem({ apps: [{ store: "ios", store_id: "id1693820" }] }));
+  const links = buildGemLinks(gem({ apps: [{ store: "ios", store_id: "id1693820", name: "SleepWave" }] }));
   assert.equal(links.length, 1);
   assert.equal(links[0].label, "app store");
   assert.equal(links[0].href, "https://apps.apple.com/app/id1693820");
 });
 
 test("buildGemLinks: bare ios store_id gets an id prefix", () => {
-  const links = buildGemLinks(gem({ apps: [{ store: "ios", store_id: "90211" }] }));
+  const links = buildGemLinks(gem({ apps: [{ store: "ios", store_id: "90211", name: "SleepWave" }] }));
   assert.equal(links[0].href, "https://apps.apple.com/app/id90211");
 });
 
 test("buildGemLinks: android store_id → play store details url", () => {
-  const links = buildGemLinks(gem({ apps: [{ store: "android", store_id: "com.sleepwave.app" }] }));
+  const links = buildGemLinks(gem({ apps: [{ store: "android", store_id: "com.sleepwave.app", name: "SleepWave" }] }));
   assert.equal(links[0].label, "play store");
   assert.equal(links[0].href, "https://play.google.com/store/apps/details?id=com.sleepwave.app");
 });
 
-test("buildGemLinks: full set in stable order, first app only", () => {
+test("buildGemLinks: full set in stable order, first verified app only", () => {
   const links = buildGemLinks(
     gem({
       company: { page_id: "12345", domain: "sleepwave.app" },
       apps: [
-        { store: "ios", store_id: "id90211" },
-        { store: "android", store_id: "com.ignored" },
+        { store: "ios", store_id: "id90211", name: "SleepWave" },
+        { store: "android", store_id: "com.ignored", name: "SleepWave Droid" },
       ],
     }),
   );
@@ -80,4 +80,21 @@ test("buildGemLinks: full set in stable order, first app only", () => {
     links.map((l) => l.label),
     ["profile", "website", "app store", "ads library"],
   );
+});
+
+test("buildGemLinks: unverified (delisted) store listings produce no store link", () => {
+  // name unresolved => the store page 404s; the chip must be omitted entirely.
+  const links = buildGemLinks(gem({ apps: [{ store: "android", store_id: "com.growly.imagera" }] }));
+  assert.deepEqual(links.map((l) => l.label), []);
+});
+
+test("buildGemLinks: skips unverified apps[0] in favor of a verified later listing", () => {
+  const links = buildGemLinks(
+    gem({ apps: [
+      { store: "android", store_id: "com.growly.imagera" },
+      { store: "android", store_id: "com.growly.lunaspeak", name: "LunaSpeak" },
+    ] }),
+  );
+  assert.equal(links[0].label, "play store");
+  assert.equal(links[0].href, "https://play.google.com/store/apps/details?id=com.growly.lunaspeak");
 });

@@ -23,7 +23,9 @@ export function buildGemLinks(gem: GemDossier): LinkChip[] {
   const links: LinkChip[] = [];
   const pageId = gem.company.page_id;
   const domain = bareDomain(gem.company.domain);
-  const app = gem.apps[0];
+  // Prefer a store-verified listing (lookup resolved a name). An unresolved
+  // store_id is usually a delisted app — linking it would 404.
+  const app = gem.apps.find((a) => a.name) ?? null;
 
   // Profile → the Facebook page itself.
   if (pageId) {
@@ -35,7 +37,7 @@ export function buildGemLinks(gem: GemDossier): LinkChip[] {
     links.push({ label: "website", href: `https://${domain}` });
   }
 
-  // App Store / Play Store → from the first joined app listing.
+  // App Store / Play Store → from the first store-verified app listing.
   if (app) {
     if (app.store === "ios") {
       // store_id may already be "id1693820"; otherwise prefix "id".

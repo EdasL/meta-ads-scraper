@@ -45,6 +45,14 @@ export function statusChip(row: Pick<ShortlistRow, "scaling_velocity" | "max_lon
 
 export type TrendTone = "up" | "down" | "flat";
 
+/** Whole-number percent with an explicit sign: 166.6999 → "+167%", -3.2 →
+ * "-3%", 0.2 → "0%". Raw API floats are never rendered. */
+export function signedPercent(pct: number): string {
+  if (!Number.isFinite(pct)) return "—";
+  const r = Math.round(pct);
+  return `${r > 0 ? "+" : ""}${r}%`;
+}
+
 /** Qualitative velocity trend for the feed card (no fake %). */
 export function velocityTrend(scalingVelocity: number): { glyph: "↗" | "→" | "↘"; word: string; tone: TrendTone } {
   if (scalingVelocity >= 0.85) return { glyph: "↗", word: "Surging", tone: "up" };
@@ -68,10 +76,11 @@ export function growthLine(
     const { first_count, latest_count, weeks, pct_change } = growth;
     const counts = `${first_count}→${latest_count} ads in ${weeks}wk`;
     if (pct_change != null) {
-      const tone: TrendTone = pct_change > 0 ? "up" : pct_change < 0 ? "down" : "flat";
+      // Round before deriving tone so the glyph always matches the shown %.
+      const rounded = Math.round(pct_change);
+      const tone: TrendTone = rounded > 0 ? "up" : rounded < 0 ? "down" : "flat";
       const glyph = tone === "up" ? "↗" : tone === "down" ? "↘" : "→";
-      const sign = pct_change > 0 ? "+" : "";
-      return { glyph, text: `${sign}${pct_change}% · ${counts}`, tone };
+      return { glyph, text: `${signedPercent(pct_change)} · ${counts}`, tone };
     }
     // pct_change null (e.g. grew from zero) but we still have honest counts.
     const tone: TrendTone = latest_count > first_count ? "up" : latest_count < first_count ? "down" : "flat";
