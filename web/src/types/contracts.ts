@@ -54,6 +54,12 @@ export interface ShortlistRow {
   explainer: Explainer | null; // LLM explainer (null until generated)
   growth: Growth | null; // quantified ad-count growth (null when sparse)
   hero_creative: HeroCreative | null; // real ad creative for the card hero
+  // Ad-lifecycle card fields (matview migration 114). Optional so rows from
+  // older API builds still render; adapters default the counts to 0.
+  first_ad_at?: string; // ISO date of the advertiser's first stored ad
+  longrun_ad_count?: number; // active ads running 30+ days
+  new_ads_4w?: number; // ads launched in the last 28 days
+  ads_seen?: number; // all stored ads for the advertiser, including ended
 }
 
 export type CreativeType = "image" | "video" | "text";
@@ -93,8 +99,28 @@ export interface FunnelStep {
 export interface ScalingPoint {
   week_start: string; // ISO date
   active_ad_count: number;
+  /** @deprecated Unused by the chart; the read-time series serves 0. Kept for contract compatibility. */
   distinct_creative_count: number;
   eu_total_reach?: number;
+  /** Ads that started this week. Optional (older API builds); adapters default to 0. */
+  launched_count?: number;
+  /** Ended ads whose last day fell in this week. Optional; adapters default to 0. */
+  ended_count?: number;
+}
+
+/**
+ * Lifecycle summary over all stored ads for the advertiser (gem detail only).
+ * Every number is a count of real ads; `median_run_days` is null until at
+ * least 5 ads have ended.
+ */
+export interface AdLifecycle {
+  ads_seen: number; // all stored ads, including ended
+  active_now: number;
+  running_30d_plus: number; // active ads that started 30+ days ago
+  median_run_days: number | null; // median ended-ad run length; null when ended < 5
+  first_ad_at: string | null; // ISO date of the first stored ad
+  launched_4w: number; // ads launched in the last 28 days
+  ended_4w: number; // ads ended in the last 28 days
 }
 
 export interface CompanyInfo {
@@ -154,6 +180,8 @@ export interface GemDossier extends ShortlistRow {
   creatives: Creative[];
   funnel: FunnelStep[];
   scaling: ScalingPoint[];
+  /** Ad-lifecycle summary; null on older API builds (the UI omits its clauses). */
+  ad_lifecycle?: AdLifecycle | null;
   company: CompanyInfo;
   apps: AppInfo[];
   /** Daily app-store snapshots (merged from /gems/{id}/app-metrics). */
@@ -186,7 +214,37 @@ export interface ReviewDecision {
   note?: string;
 }
 
+/** Server-side sort keys for the gems feed (validated by the API). */
+export type ShortlistSort = "gemscore" | "fastest" | "newest";
+
+/** Query params for GET /api/shortlist — every filter runs in the backend. */
 export interface ShortlistQuery {
   cohort?: string;
+  /** App category (the store genre, e.g. "Health & Fitness"). */
+  category?: string;
+  /** Case-insensitive substring of the app or page name. */
+  q?: string;
   min_score?: number;
+  /** Hide gems whose observed weekly ad count fell. */
+  rising?: boolean;
+  /** Real funnel only (funnel_intent >= 0.5). */
+  has_funnel?: boolean;
+  /** Ads running at least this many days. */
+  min_ad_age?: number;
+  sort?: ShortlistSort;
+  limit?: number;
+  offset?: number;
+}
+
+/** One feed category (the store genre) with its visible-gem count —
+ * GET /api/shortlist/categories. Wire shape and UI shape coincide. */
+export interface CategoryCount {
+  category: string;
+  count: number;
+}
+
+/** One page of the feed plus the all-pages total (X-Total-Count header). */
+export interface ShortlistPage {
+  rows: ShortlistRow[];
+  total: number;
 }

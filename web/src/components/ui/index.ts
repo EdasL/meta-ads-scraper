@@ -9,3 +9,5 @@ export { InfoDot } from "./InfoDot";
 export { TagInput } from "./TagInput";
 export { NoteEditor } from "./NoteEditor";
 export { ActivationChecklist } from "./ActivationChecklist";
+export { Dropdown } from "./Dropdown";
+export { Pagination } from "./Pagination";

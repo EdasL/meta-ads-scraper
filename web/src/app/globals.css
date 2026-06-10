@@ -217,3 +217,67 @@ body {
   scrollbar-width: thin;
   scrollbar-color: var(--surface-4) transparent;
 }
+
+/* ---------------------------------------------------------------------------
+ * Motion — feed feedback. Cards re-enter with a staggered fade-rise whenever
+ * the filter set changes (the grid is re-keyed per result set); while the next
+ * page is in flight the stale grid dims under a thin scanning bar. Everything
+ * here is stilled under prefers-reduced-motion.
+ * ------------------------------------------------------------------------- */
+@keyframes gem-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes pop-in {
+  from { opacity: 0; transform: translateY(-3px); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes feed-scan {
+  from { transform: translateX(-100%); }
+  to   { transform: translateX(333%); }
+}
+@keyframes shimmer {
+  from { background-position: 180% 0; }
+  to   { background-position: -80% 0; }
+}
+
+.gem-enter { animation: gem-in 0.26s ease backwards; }
+.dd-panel  { animation: pop-in 0.12s ease backwards; }
+
+/* Stale results while the next page loads: visibly "old" but still readable. */
+.feed-stale {
+  opacity: 0.45;
+  filter: saturate(0.5);
+  pointer-events: none;
+}
+.feed-grid { transition: opacity 0.15s ease, filter 0.15s ease; }
+
+/* 2px in-flight indicator under the filter bar. */
+.feed-scanbar { position: relative; height: 2px; background: var(--line); overflow: hidden; }
+.feed-scanbar::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  width: 30%;
+  background: var(--ink);
+  animation: feed-scan 0.9s ease-in-out infinite;
+}
+
+/* First-load placeholder blocks. */
+.skel {
+  background: linear-gradient(100deg, var(--surface-3) 36%, var(--paper) 50%, var(--surface-3) 64%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gem-enter,
+  .dd-panel,
+  .feed-scanbar::after,
+  .skel {
+    animation: none;
+  }
+  .feed-grid {
+    transition: none;
+  }
+}

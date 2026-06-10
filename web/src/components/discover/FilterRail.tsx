@@ -1,19 +1,26 @@
 "use client";
 
-import { useState } from "react";
-import { IconAdjustmentsHorizontal } from "@tabler/icons-react";
+import { useEffect, useState } from "react";
+import { IconAdjustmentsHorizontal, IconSearch, IconX } from "@tabler/icons-react";
+import { Dropdown } from "@/components/ui";
+import type { CategoryCount, ShortlistSort } from "@/types/contracts";
 
 /**
  * Short, opinionated filter bar (spec §5.1). Default view = "rising"; advanced
  * axes hidden behind "more filter". ≤6 axes — never an enterprise filter wall.
+ * Every axis is applied server-side (GET /api/shortlist); this component only
+ * edits the filter set.
  */
 export type View = "rising" | "all";
-export type Sort = "gemscore" | "fastest" | "newest";
+export type Sort = ShortlistSort;
 
 export interface Filters {
   view: View;
   sort: Sort;
-  cohort: string;
+  /** App category — a real store genre from /api/shortlist/categories. */
+  category: string;
+  /** Search of app and page names. */
+  q: string;
   minScore: number;
   hasFunnel: boolean;
   minAdAge: number;
@@ -22,7 +29,8 @@ export interface Filters {
 export const DEFAULT_FILTERS: Filters = {
   view: "rising",
   sort: "gemscore",
-  cohort: "",
+  category: "",
+  q: "",
   minScore: 0,
   hasFunnel: false,
   minAdAge: 0,
@@ -74,33 +82,126 @@ function Segmented({ view, onChange }: { view: View; onChange: (v: View) => void
   );
 }
 
+/**
+ * Debounced name search. Local text state keeps typing instant; the committed
+ * value only changes after a 300ms pause (each commit is a backend query).
+ */
+function SearchBox({ value, onCommit }: { value: string; onCommit: (q: string) => void }) {
+  const [text, setText] = useState(value);
+
+  // Follow outside changes (reset, back/forward nav) — the sanctioned
+  // adjust-state-during-render pattern, not an effect.
+  const [prevValue, setPrevValue] = useState(value);
+  if (prevValue !== value) {
+    setPrevValue(value);
+    setText(value);
+  }
+
+  useEffect(() => {
+    if (text.trim() === value) return;
+    const id = setTimeout(() => onCommit(text.trim()), 300);
+    return () => clearTimeout(id);
+  }, [text, value, onCommit]);
+
+  return (
+    <span style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
+      <IconSearch
+        size={13}
+        stroke={1.75}
+        aria-hidden
+        style={{ position: "absolute", left: 8, color: "var(--muted)", pointerEvents: "none" }}
+      />
+      <input
+        type="text"
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") onCommit(text.trim());
+          if (e.key === "Escape" && text) {
+            setText("");
+            onCommit("");
+          }
+        }}
+        placeholder="Search apps"
+        aria-label="Search apps and pages"
+        style={{ ...control, width: 200, paddingLeft: 26, paddingRight: text ? 26 : 8 }}
+      />
+      {text && (
+        <button
+          type="button"
+          aria-label="Clear search"
+          onClick={() => {
+            setText("");
+            onCommit("");
+          }}
+          style={{
+            position: "absolute",
+            right: 4,
+            display: "inline-flex",
+            background: "transparent",
+            border: "none",
+            padding: 2,
+            cursor: "pointer",
+            color: "var(--muted)",
+          }}
+        >
+          <IconX size={13} stroke={1.75} />
+        </button>
+      )}
+    </span>
+  );
+}
+
 export function FilterRail({
   filters,
-  cohorts,
+  categories,
   onChange,
   onReset,
 }: {
   filters: Filters;
-  cohorts: string[];
+  categories: CategoryCount[];
   onChange: (f: Filters) => void;
   onReset: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const set = (patch: Partial<Filters>) => onChange({ ...filters, ...patch });
-  const advancedActive = !!filters.cohort || filters.minScore > 0 || filters.hasFunnel || filters.minAdAge > 0;
+  const advancedActive = filters.minScore > 0 || filters.hasFunnel || filters.minAdAge > 0;
+  const anyActive = advancedActive || !!filters.category || !!filters.q;
+
+  const categoryOptions = [
+    { value: "", label: "All categories" },
+    ...categories.map((c) => ({ value: c.category, label: c.category, hint: String(c.count) })),
+  ];
+  // A category from the URL that the (still-loading or shrunken) list doesn't
+  // carry yet must stay selectable — otherwise the dropdown would lie.
+  if (filters.category && !categories.some((c) => c.category === filters.category)) {
+    categoryOptions.push({ value: filters.category, label: filters.category });
+  }
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12 }}>
         <Segmented view={filters.view} onChange={(v) => set({ view: v })} />
 
+        <SearchBox value={filters.q} onCommit={(q) => set({ q })} />
+
+        <Dropdown
+          ariaLabel="Category"
+          value={filters.category}
+          options={categoryOptions}
+          onChange={(category) => set({ category })}
+          minWidth={170}
+        />
+
         <label className="eyebrow" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
           Sort
-          <select value={filters.sort} onChange={(e) => set({ sort: e.target.value as Sort })} style={control}>
-            {(Object.keys(SORT_LABEL) as Sort[]).map((s) => (
-              <option key={s} value={s}>{SORT_LABEL[s]}</option>
-            ))}
-          </select>
+          <Dropdown
+            ariaLabel="Sort"
+            value={filters.sort}
+            options={(Object.keys(SORT_LABEL) as Sort[]).map((s) => ({ value: s, label: SORT_LABEL[s] }))}
+            onChange={(sort) => set({ sort: sort as Sort })}
+            minWidth={130}
+          />
         </label>
 
         <button
@@ -124,7 +225,7 @@ export function FilterRail({
           More filters
         </button>
 
-        {advancedActive && (
+        {anyActive && (
           <button
             type="button"
             onClick={onReset}
@@ -148,16 +249,6 @@ export function FilterRail({
             background: "var(--surface-1)",
           }}
         >
-          <label className="eyebrow" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-            Kind
-            <select value={filters.cohort} onChange={(e) => set({ cohort: e.target.value })} style={control}>
-              <option value="">All</option>
-              {cohorts.map((c) => (
-                <option key={c} value={c}>{c}</option>
-              ))}
-            </select>
-          </label>
-
           <label className="eyebrow" style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
             Score ≥ <span className="nums" style={{ color: "var(--ink)", minWidth: 20 }}>{filters.minScore}</span>
             <input
@@ -173,11 +264,13 @@ export function FilterRail({
 
           <label className="eyebrow" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
             Ads running ≥
-            <select value={filters.minAdAge} onChange={(e) => set({ minAdAge: Number(e.target.value) })} style={control}>
-              {[0, 14, 21, 30].map((d) => (
-                <option key={d} value={d}>{d === 0 ? "Any" : `${d} days`}</option>
-              ))}
-            </select>
+            <Dropdown
+              ariaLabel="Ads running at least"
+              value={String(filters.minAdAge)}
+              options={[0, 14, 21, 30].map((d) => ({ value: String(d), label: d === 0 ? "Any" : `${d} days` }))}
+              onChange={(v) => set({ minAdAge: Number(v) })}
+              minWidth={110}
+            />
           </label>
 
           <label className="eyebrow" style={{ display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer" }}>

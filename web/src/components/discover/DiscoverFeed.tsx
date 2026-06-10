@@ -1,66 +1,187 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { getShortlist } from "@/lib/api";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { getCategories, getShortlist } from "@/lib/api";
 import { Fallback } from "@/components/Fallback";
-import { ActivationChecklist, EmptyState } from "@/components/ui";
-import type { ShortlistRow } from "@/types/contracts";
+import { ActivationChecklist, EmptyState, Pagination } from "@/components/ui";
+import { PAGE_SIZE, clampPage } from "@/lib/pagination";
+import { shortlistParams } from "@/lib/query";
+import type { CategoryCount, ShortlistQuery, ShortlistRow } from "@/types/contracts";
 import { GemCard } from "./GemCard";
-import { DEFAULT_FILTERS, FilterRail, type Filters, type Sort } from "./FilterRail";
+import { DEFAULT_FILTERS, FilterRail, type Filters } from "./FilterRail";
 
-const SORTERS: Record<Sort, (a: ShortlistRow, b: ShortlistRow) => number> = {
-  gemscore: (a, b) => b.gem_score - a.gem_score,
-  fastest: (a, b) => b.scaling_velocity - a.scaling_velocity,
-  newest: (a, b) => a.max_longevity_days - b.max_longevity_days,
+const GRID: React.CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "repeat(auto-fill, minmax(230px, 1fr))",
+  gap: 12,
+  alignItems: "stretch",
 };
 
-function applyFilters(rows: ShortlistRow[], f: Filters): ShortlistRow[] {
-  let list = rows.slice();
-  // "rising" hides gems whose observed weekly ad count fell. Grounded in the
-  // real growth series; rows without one are kept (can't call them falling).
-  if (f.view === "rising") list = list.filter((r) => !(r.growth && r.growth.latest_count < r.growth.first_count));
-  if (f.cohort) list = list.filter((r) => r.cohort === f.cohort);
-  if (f.minScore > 0) list = list.filter((r) => r.gem_score >= f.minScore);
-  if (f.hasFunnel) list = list.filter((r) => r.funnel_intent >= 0.5);
-  if (f.minAdAge > 0) list = list.filter((r) => r.max_longevity_days >= f.minAdAge);
-  return list.sort(SORTERS[f.sort]);
+/** The whole filter set + page lives in the URL (shareable, back-button-able);
+ * defaults are omitted so the bare /discover stays clean. */
+function readUrl(sp: URLSearchParams): { filters: Filters; page: number } {
+  const num = (key: string) => {
+    const n = Number(sp.get(key));
+    return Number.isFinite(n) && n > 0 ? Math.trunc(n) : 0;
+  };
+  const sort = sp.get("sort");
+  const age = num("age");
+  return {
+    filters: {
+      view: sp.get("view") === "all" ? "all" : "rising",
+      sort: sort === "fastest" || sort === "newest" ? sort : "gemscore",
+      category: sp.get("category") ?? "",
+      q: sp.get("q") ?? "",
+      minScore: Math.min(95, num("score")),
+      hasFunnel: sp.get("funnel") === "1",
+      minAdAge: [14, 21, 30].includes(age) ? age : 0,
+    },
+    page: Math.max(1, num("page")),
+  };
+}
+
+function writeUrl(f: Filters, page: number): string {
+  const sp = new URLSearchParams();
+  if (f.view !== "rising") sp.set("view", f.view);
+  if (f.q) sp.set("q", f.q);
+  if (f.category) sp.set("category", f.category);
+  if (f.sort !== "gemscore") sp.set("sort", f.sort);
+  if (f.minScore > 0) sp.set("score", String(f.minScore));
+  if (f.minAdAge > 0) sp.set("age", String(f.minAdAge));
+  if (f.hasFunnel) sp.set("funnel", "1");
+  if (page > 1) sp.set("page", String(page));
+  return sp.toString();
+}
+
+function SkeletonGrid() {
+  return (
+    <div style={GRID} role="status" aria-label="Loading gems">
+      {Array.from({ length: 8 }, (_, i) => (
+        <div key={i} style={{ border: "1px solid var(--line)", background: "var(--paper)" }}>
+          <div className="skel" style={{ aspectRatio: "16 / 10" }} />
+          <div style={{ padding: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+            <div className="skel" style={{ height: 14, width: "70%" }} />
+            <div className="skel" style={{ height: 10, width: "45%" }} />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** One resolved /shortlist page, tagged with the query string that fetched it
+ * — comparing the tag against the live query string derives the load phases
+ * (no phase state machine to keep in sync). */
+interface FeedResult {
+  rows: ShortlistRow[];
+  total: number;
+  key: string;
 }
 
 export function DiscoverFeed() {
-  const [rows, setRows] = useState<ShortlistRow[]>([]);
-  const [loading, setLoading] = useState(true);
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const { filters, page } = useMemo(() => readUrl(searchParams), [searchParams]);
+
+  const [result, setResult] = useState<FeedResult | null>(null);
   const [error, setError] = useState(false);
+  const [categories, setCategories] = useState<CategoryCount[]>([]);
   const [reload, setReload] = useState(0);
-  const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
+
+  const query: ShortlistQuery = useMemo(
+    () => ({
+      category: filters.category || undefined,
+      q: filters.q || undefined,
+      min_score: filters.minScore || undefined,
+      rising: filters.view === "rising",
+      has_funnel: filters.hasFunnel || undefined,
+      min_ad_age: filters.minAdAge || undefined,
+      sort: filters.sort,
+      limit: PAGE_SIZE,
+      offset: (page - 1) * PAGE_SIZE,
+    }),
+    [filters, page],
+  );
+  const queryKey = useMemo(() => shortlistParams(query).toString(), [query]);
 
   useEffect(() => {
-    let alive = true;
-    getShortlist()
-      .then((r) => {
-        if (!alive) return;
-        setRows(r);
+    const ctrl = new AbortController();
+    getShortlist(query, ctrl.signal)
+      .then(({ rows, total }) => {
+        setResult({ rows, total, key: shortlistParams(query).toString() });
         setError(false);
-        setLoading(false);
       })
       .catch(() => {
-        if (alive) {
-          setError(true);
-          setLoading(false);
-        }
+        if (!ctrl.signal.aborted) setError(true);
       });
+    return () => ctrl.abort();
+  }, [query, reload]);
+
+  // The dropdown's option list is independent of the active filters: global
+  // feed categories with counts. A failure here only costs the options.
+  useEffect(() => {
+    let alive = true;
+    getCategories()
+      .then((c) => {
+        if (alive) setCategories(c);
+      })
+      .catch(() => {});
     return () => {
       alive = false;
     };
-  }, [reload]);
+  }, []);
 
-  const cohorts = useMemo(() => Array.from(new Set(rows.map((r) => r.cohort))), [rows]);
-  const visible = useMemo(() => applyFilters(rows, filters), [rows, filters]);
+  const navigate = useCallback(
+    (f: Filters, p: number) => {
+      const qs = writeUrl(f, p);
+      router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+    },
+    [router, pathname],
+  );
+
+  // Any filter edit restarts at page 1; an explicit page change scrolls back up.
+  const setFilters = useCallback((f: Filters) => navigate(f, 1), [navigate]);
+  const setPage = useCallback(
+    (p: number) => {
+      navigate(filters, p);
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    },
+    [navigate, filters],
+  );
+
+  // Phases, derived: nothing yet → skeletons; a result for an older query →
+  // stale grid dims while the new one is in flight; fresh result → ready.
+  const fresh = result !== null && result.key === queryKey;
+  const first = !error && result === null;
+  const refreshing = !error && result !== null && !fresh;
+  const rows = result?.rows ?? [];
+  const total = result?.total ?? 0;
+
+  // When a narrowed result set strands the page past the end, walk back to the
+  // last page that exists.
+  useEffect(() => {
+    if (error || result === null || result.key !== queryKey) return;
+    const last = clampPage(page, result.total);
+    if (page > last) navigate(filters, last);
+  }, [error, result, queryKey, page, filters, navigate]);
 
   const retry = () => {
     setError(false);
-    setLoading(true);
+    setResult(null);
     setReload((n) => n + 1);
   };
+
+  const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const hasActiveFilters =
+    filters.view !== DEFAULT_FILTERS.view ||
+    filters.sort !== DEFAULT_FILTERS.sort ||
+    !!filters.category ||
+    !!filters.q ||
+    filters.minScore > 0 ||
+    filters.hasFunnel ||
+    filters.minAdAge > 0;
 
   return (
     <main style={{ maxWidth: 1200, margin: "0 auto", padding: "24px 22px 80px" }}>
@@ -68,47 +189,63 @@ export function DiscoverFeed() {
         <h1 className="t-2xl w-heavy" style={{ margin: 0 }}>
           {filters.view === "rising" ? "Gems rising now" : "All gems"}
         </h1>
-        <p className="t-sm" style={{ color: "var(--muted)", marginTop: 6 }}>
-          {loading
-            ? "Loading…"
-            : `${visible.length} ${visible.length === 1 ? "gem" : "gems"} found.${filters.view === "rising" ? " Falling ad counts hidden." : ""}`}
+        <p className="t-sm" aria-live="polite" style={{ color: "var(--muted)", marginTop: 6 }}>
+          {error
+            ? "The feed didn't load."
+            : first
+              ? "Loading…"
+              : `${total} ${total === 1 ? "gem" : "gems"} found.${filters.view === "rising" ? " Falling ad counts hidden." : ""}`}
         </p>
       </header>
 
-      {!error && !loading && rows.length > 0 && <ActivationChecklist />}
+      {fresh && rows.length > 0 && <ActivationChecklist />}
 
-      {!error && !loading && (
+      {!error && (
         <div style={{ marginBottom: 22 }}>
-          <FilterRail filters={filters} cohorts={cohorts} onChange={setFilters} onReset={() => setFilters(DEFAULT_FILTERS)} />
+          <FilterRail
+            filters={filters}
+            categories={categories}
+            onChange={setFilters}
+            onReset={() => setFilters(DEFAULT_FILTERS)}
+          />
+          {/* In-flight indicator; keeps its 2px so the grid never jumps. */}
+          <div className="feed-scanbar" aria-hidden style={{ marginTop: 12, visibility: refreshing ? "visible" : "hidden" }} />
         </div>
       )}
 
       {error ? (
         <Fallback message="The feed didn't load. Check that the server is running, then try again." onRetry={retry} />
-      ) : loading ? (
-        <div className="t-lg w-strong" style={{ padding: 48, color: "var(--muted)" }}>Loading…</div>
-      ) : rows.length === 0 ? (
-        <EmptyState
-          title="No gems yet"
-          hint="Still scanning Meta ads. Check back soon — gems will show up here."
-          ctaLabel="Look again"
-          onCta={retry}
-        />
-      ) : visible.length === 0 ? (
-        <EmptyState title="Nothing matches" hint="Filters are too tight. Loosen them." ctaLabel="Reset" onCta={() => setFilters(DEFAULT_FILTERS)} />
+      ) : first ? (
+        <SkeletonGrid />
+      ) : fresh && total === 0 ? (
+        hasActiveFilters ? (
+          <EmptyState title="Nothing matches" hint="Filters are too tight. Loosen them." ctaLabel="Reset" onCta={() => setFilters(DEFAULT_FILTERS)} />
+        ) : (
+          <EmptyState
+            title="No gems yet"
+            hint="Still scanning Meta ads. Check back soon — gems will show up here."
+            ctaLabel="Look again"
+            onCta={retry}
+          />
+        )
       ) : (
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fill, minmax(230px, 1fr))",
-            gap: 12,
-            alignItems: "stretch",
-          }}
-        >
-          {visible.map((row) => (
-            <GemCard key={row.advertiser_id} row={row} />
-          ))}
-        </div>
+        <>
+          <div key={result?.key} className={`feed-grid${refreshing ? " feed-stale" : ""}`} style={GRID}>
+            {rows.map((row, i) => (
+              <div key={row.advertiser_id} className="gem-enter" style={{ display: "grid", animationDelay: `${Math.min(i, 11) * 24}ms` }}>
+                <GemCard row={row} />
+              </div>
+            ))}
+          </div>
+          <Pagination
+            page={page}
+            pageCount={pageCount}
+            total={total}
+            rangeStart={(page - 1) * PAGE_SIZE + 1}
+            rangeEnd={(page - 1) * PAGE_SIZE + rows.length}
+            onPage={setPage}
+          />
+        </>
       )}
     </main>
   );

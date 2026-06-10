@@ -1,11 +1,13 @@
 import type {
+  CategoryCount,
   GemDossier,
   ReviewDecision,
   ReviewQueueRow,
   ScalingPoint,
+  ShortlistPage,
   ShortlistQuery,
-  ShortlistRow,
 } from "@/types/contracts";
+import { shortlistParams } from "./query";
 import type {
   ApiAppMetricPoint,
   ApiGemDossier,
@@ -51,13 +53,27 @@ async function liveOrNull<T>(path: string): Promise<T | null> {
   return (await res.json()) as T;
 }
 
-export async function getShortlist(query: ShortlistQuery = {}): Promise<ShortlistRow[]> {
-  const params = new URLSearchParams();
-  params.set("limit", "1000"); // server default is 50; the feed shows the full pool
-  if (query.cohort) params.set("cohort", query.cohort);
-  if (query.min_score != null) params.set("min_score", String(query.min_score));
-  const rows = await live<ApiShortlistRow[]>(`/shortlist?${params}`);
-  return rows.map((r) => adaptShortlistRow(r, mediaUrl));
+export async function getShortlist(
+  query: ShortlistQuery = {},
+  signal?: AbortSignal,
+): Promise<ShortlistPage> {
+  // Raw fetch (not `live`) because the all-pages total rides the
+  // X-Total-Count response header; the body stays the bare row array.
+  // Callers page with limit/offset — the old fetch-the-full-pool limit=1000
+  // workaround is gone.
+  const res = await fetch(`${API_BASE}/shortlist?${shortlistParams(query)}`, {
+    headers: { "Content-Type": "application/json" },
+    signal,
+  });
+  if (!res.ok) throw new Error(`API ${res.status}: ${res.statusText}`);
+  const rows = ((await res.json()) as ApiShortlistRow[]).map((r) => adaptShortlistRow(r, mediaUrl));
+  const header = Number(res.headers.get("X-Total-Count"));
+  return { rows, total: Number.isFinite(header) && header >= rows.length ? header : rows.length };
+}
+
+/** The feed's real categories (store genres) with visible-gem counts. */
+export async function getCategories(): Promise<CategoryCount[]> {
+  return live<CategoryCount[]>(`/shortlist/categories`);
 }
 
 export async function getGem(advertiserId: number): Promise<GemDossier | null> {
