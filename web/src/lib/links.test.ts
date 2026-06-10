@@ -32,9 +32,9 @@ test("buildGemLinks: empty when no page_id / domain / app", () => {
 test("buildGemLinks: page_id yields profile + ads library", () => {
   const links = buildGemLinks(gem({ company: { page_id: "12345", domain: undefined } }));
   assert.equal(links.length, 2);
-  assert.equal(links[0].label, "profile");
+  assert.equal(links[0].label, "Facebook page");
   assert.equal(links[0].href, "https://www.facebook.com/12345");
-  assert.equal(links[1].label, "ads library");
+  assert.equal(links[1].label, "Meta Ad Library");
   assert.equal(
     links[1].href,
     "https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=US&view_all_page_id=12345",
@@ -44,14 +44,14 @@ test("buildGemLinks: page_id yields profile + ads library", () => {
 test("buildGemLinks: domain normalized to https website", () => {
   const links = buildGemLinks(gem({ company: { page_id: undefined, domain: "https://sleepwave.app/" } }));
   assert.equal(links.length, 1);
-  assert.equal(links[0].label, "website");
+  assert.equal(links[0].label, "Website");
   assert.equal(links[0].href, "https://sleepwave.app");
 });
 
 test("buildGemLinks: ios store_id already prefixed with id is used as-is", () => {
   const links = buildGemLinks(gem({ apps: [{ store: "ios", store_id: "id1693820", name: "SleepWave" }] }));
   assert.equal(links.length, 1);
-  assert.equal(links[0].label, "app store");
+  assert.equal(links[0].label, "App Store");
   assert.equal(links[0].href, "https://apps.apple.com/app/id1693820");
 });
 
@@ -62,7 +62,7 @@ test("buildGemLinks: bare ios store_id gets an id prefix", () => {
 
 test("buildGemLinks: android store_id → play store details url", () => {
   const links = buildGemLinks(gem({ apps: [{ store: "android", store_id: "com.sleepwave.app", name: "SleepWave" }] }));
-  assert.equal(links[0].label, "play store");
+  assert.equal(links[0].label, "Play Store");
   assert.equal(links[0].href, "https://play.google.com/store/apps/details?id=com.sleepwave.app");
 });
 
@@ -78,7 +78,7 @@ test("buildGemLinks: full set in stable order, first verified app only", () => {
   );
   assert.deepEqual(
     links.map((l) => l.label),
-    ["profile", "website", "app store", "ads library"],
+    ["Facebook page", "Website", "App Store", "Meta Ad Library"],
   );
 });
 
@@ -95,6 +95,6 @@ test("buildGemLinks: skips unverified apps[0] in favor of a verified later listi
       { store: "android", store_id: "com.growly.lunaspeak", name: "LunaSpeak" },
     ] }),
   );
-  assert.equal(links[0].label, "play store");
+  assert.equal(links[0].label, "Play Store");
   assert.equal(links[0].href, "https://play.google.com/store/apps/details?id=com.growly.lunaspeak");
 });

@@ -35,7 +35,7 @@ export function GemNotes({ row }: { row: ShortlistRow }) {
   return (
     <section style={{ display: "flex", flexDirection: "column", gap: 14 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
-        <h2 className="eyebrow" style={{ margin: 0, color: "var(--ink)" }}>your gem</h2>
+        <h2 className="t-md w-strong" style={{ margin: 0 }}>Your notes</h2>
         <SaveToggle row={row} size="sm" />
       </div>
 
@@ -50,7 +50,7 @@ export function GemNotes({ row }: { row: ShortlistRow }) {
 
       <div style={{ display: "flex", gap: 18, flexWrap: "wrap" }}>
         <label className="eyebrow" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-          stage
+          Stage
           <select value={saved.stage} onChange={(e) => setStage(saved.advertiserId, e.target.value as Stage)} style={selectStyle}>
             {STAGES.map((s) => (
               <option key={s.id} value={s.id}>{s.label}</option>
@@ -58,7 +58,7 @@ export function GemNotes({ row }: { row: ShortlistRow }) {
           </select>
         </label>
         <label className="eyebrow" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-          verdict
+          Verdict
           <select
             value={saved.verdict ?? ""}
             onChange={(e) => setVerdict(saved.advertiserId, (e.target.value || undefined) as SavedVerdict | undefined)}

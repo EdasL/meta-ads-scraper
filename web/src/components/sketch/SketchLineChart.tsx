@@ -6,8 +6,8 @@ export type ChartPoint = {
   label: string;
   value: number;
   /** Optional hover detail: a title line plus supporting lines (e.g. the
-   * exact ads launched in that week). */
-  tooltip?: { title: string; lines: string[] };
+   * exact ads launched in that week). `linesLabel` introduces the lines. */
+  tooltip?: { title: string; lines: string[]; linesLabel?: string };
 };
 
 const INK = "var(--ink)";
@@ -154,6 +154,9 @@ export function SketchLineChart({
           <div className="t-xs nums" style={{ color: "var(--ink-soft)", marginTop: 2 }}>{valueLabel(tip.value)}</div>
           {shownLines.length > 0 && (
             <ul style={{ margin: "6px 0 0", padding: 0, listStyle: "none" }}>
+              {tip.tooltip?.linesLabel && (
+                <li className="t-xs w-strong" style={{ color: "var(--ink-soft)" }}>{tip.tooltip.linesLabel}</li>
+              )}
               {shownLines.map((line, i) => (
                 <li
                   key={i}

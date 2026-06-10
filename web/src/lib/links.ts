@@ -34,12 +34,12 @@ export function buildGemLinks(gem: GemDossier): LinkChip[] {
 
   // Profile → the Facebook page itself.
   if (pageId) {
-    links.push({ label: "profile", href: `https://www.facebook.com/${pageId}` });
+    links.push({ label: "Facebook page", href: `https://www.facebook.com/${pageId}` });
   }
 
   // Website → normalized https URL.
   if (domain) {
-    links.push({ label: "website", href: `https://${domain}` });
+    links.push({ label: "Website", href: `https://${domain}` });
   }
 
   // App Store / Play Store → from the first store-verified app listing.
@@ -47,10 +47,10 @@ export function buildGemLinks(gem: GemDossier): LinkChip[] {
     if (app.store === "ios") {
       // store_id may already be "id1693820"; otherwise prefix "id".
       const id = /^id/i.test(app.store_id) ? app.store_id : `id${app.store_id}`;
-      links.push({ label: "app store", href: `https://apps.apple.com/app/${id}` });
+      links.push({ label: "App Store", href: `https://apps.apple.com/app/${id}` });
     } else {
       links.push({
-        label: "play store",
+        label: "Play Store",
         href: `https://play.google.com/store/apps/details?id=${app.store_id}`,
       });
     }
@@ -59,7 +59,7 @@ export function buildGemLinks(gem: GemDossier): LinkChip[] {
   // Ads Library → every active ad this page runs.
   if (pageId) {
     links.push({
-      label: "ads library",
+      label: "Meta Ad Library",
       href: `https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=US&view_all_page_id=${pageId}`,
     });
   }

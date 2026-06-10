@@ -1,17 +1,17 @@
 "use client";
 
 import { useState } from "react";
-import { IconExternalLink } from "@tabler/icons-react";
-import { buildGemLinks } from "@/lib/links";
 import { compactCount, isoDateLabel, monthDayLabel, timeAgo } from "@/lib/format";
 import { SketchLineChart, type ChartPoint } from "@/components/sketch";
 import type { AppInfo, AppMetricPoint, AppReview, GemDossier } from "@/types/contracts";
 
 /**
- * "THE APP" — the in-UI store preview for the gem's app, plus the app-side
- * growth chart. Everything is conditional on what the store actually returned;
+ * "Store listing" — the deep-dive on the gem's app listing: description,
+ * screenshots, the app-side growth chart, and recent reviews. The identity
+ * row (icon, name, rating, store link) lives in GemHeader at the top of the
+ * page. Everything here is conditional on what the store actually returned;
  * Apple publishes no download counts, so the iOS trend is the rating-count
- * delta, labeled as a proxy. Plain professional voice throughout.
+ * delta, labeled as a proxy.
  */
 
 /** Five-glyph star rating (filled = rounded), with the numeric value beside it. */
@@ -26,14 +26,14 @@ function Stars({ rating }: { rating: number }) {
 }
 
 /**
- * Three-way store-presence chips for the detail header: iOS APP / ANDROID APP,
- * or WEB ONLY when the gem has no linked store listing.
+ * Three-way store-presence chips for the detail header: iOS app / Android app,
+ * or Web only when the gem has no linked store listing.
  */
 export function StorePresenceChips({ apps }: { apps: AppInfo[] }) {
   const labels: string[] = [];
-  if (apps.some((a) => a.store === "ios")) labels.push("iOS APP");
-  if (apps.some((a) => a.store === "android")) labels.push("ANDROID APP");
-  if (labels.length === 0) labels.push("WEB ONLY");
+  if (apps.some((a) => a.store === "ios")) labels.push("iOS app");
+  if (apps.some((a) => a.store === "android")) labels.push("Android app");
+  if (labels.length === 0) labels.push("Web only");
   return (
     <span style={{ display: "inline-flex", gap: 6 }}>
       {labels.map((l) => (
@@ -42,8 +42,6 @@ export function StorePresenceChips({ apps }: { apps: AppInfo[] }) {
           className="font-mono"
           style={{
             fontSize: "var(--fs-xs)",
-            letterSpacing: "0.08em",
-            textTransform: "none",
             padding: "1px 8px",
             border: "1px solid var(--ink)",
             color: "var(--ink-soft)",
@@ -73,24 +71,6 @@ function Shot({ src, index }: { src: string; index: number }) {
   );
 }
 
-/** App icon; hides itself if the image fails to load. */
-function AppIcon({ src, name }: { src: string; name: string }) {
-  const [broken, setBroken] = useState(false);
-  if (broken) return null;
-  return (
-    // eslint-disable-next-line @next/next/no-img-element -- external store CDN images; next/image is a poor fit for an internal tool
-    <img
-      src={src}
-      alt={`${name} icon`}
-      width={56}
-      height={56}
-      loading="lazy"
-      onError={() => setBroken(true)}
-      style={{ border: "1.5px solid var(--ink)", display: "block", objectFit: "cover", flex: "0 0 auto" }}
-    />
-  );
-}
-
 /** Store description, clamped to ~4 lines with a plain expand toggle. */
 function Description({ text }: { text: string }) {
   const [open, setOpen] = useState(false);
@@ -114,7 +94,7 @@ function Description({ text }: { text: string }) {
           type="button"
           onClick={() => setOpen((o) => !o)}
           aria-expanded={open}
-          className="font-mono caps"
+          className="font-mono"
           style={{
             marginTop: 6,
             padding: 0,
@@ -123,7 +103,7 @@ function Description({ text }: { text: string }) {
             cursor: "pointer",
             color: "var(--muted)",
             fontSize: "var(--fs-xs)",
-            letterSpacing: "0.08em",
+            textDecoration: "underline",
           }}
         >
           {open ? "Show less" : "Show more"}
@@ -177,7 +157,7 @@ function ReviewItem({ r, nowMs }: { r: AppReview; nowMs: number }) {
 function pickSeries(
   app: AppInfo,
   points: AppMetricPoint[],
-): { label: string; unit: string; usable: AppMetricPoint[]; useInstalls: boolean } | null {
+): { label: string; note?: string; unit: string; usable: AppMetricPoint[]; useInstalls: boolean } | null {
   // Group same-store points by app_id and keep the densest series, so a gem
   // with several linked apps doesn't get interleaved snapshots.
   const byApp = new Map<number, AppMetricPoint[]>();
@@ -194,7 +174,10 @@ function pickSeries(
   const usable = mine.filter((p) => (useInstalls ? p.installs != null : p.rating_count != null));
   if (usable.length === 0) return null;
   return {
-    label: useInstalls ? "installs over time" : "ratings over time (download proxy)",
+    label: useInstalls ? "Installs over time" : "Ratings over time",
+    note: useInstalls
+      ? undefined
+      : "Apple publishes no download counts — the rating count is the closest public proxy.",
     unit: useInstalls ? "installs" : "ratings",
     usable,
     useInstalls,
@@ -205,12 +188,11 @@ function pickSeries(
 function AppGrowthChart({ app, points }: { app: AppInfo; points: AppMetricPoint[] }) {
   const series = pickSeries(app, points);
   if (!series) return null;
-  const { label, unit, usable, useInstalls } = series;
+  const { label, note, unit, usable, useInstalls } = series;
 
-  // Thin the x-axis labels so a month of daily snapshots stays readable.
-  const every = Math.max(1, Math.ceil(usable.length / 6));
-  const chart: ChartPoint[] = usable.map((p, i) => ({
-    label: i % every === 0 || i === usable.length - 1 ? monthDayLabel(p.snapshot_date) : "",
+  // The chart thins its own x labels; give every point its real date.
+  const chart: ChartPoint[] = usable.map((p) => ({
+    label: monthDayLabel(p.snapshot_date),
     value: (useInstalls ? p.installs : p.rating_count) ?? 0,
   }));
 
@@ -223,8 +205,12 @@ function AppGrowthChart({ app, points }: { app: AppInfo; points: AppMetricPoint[
 
   return (
     <div>
-      <div className="eyebrow" style={{ color: "var(--ink)", marginBottom: 8 }}>{label}</div>
-      <SketchLineChart points={chart} height={150} highlightLast />
+      <div className="t-sm w-strong" style={{ marginBottom: 2 }}>{label}</div>
+      {note && <p className="t-xs" style={{ color: "var(--muted)", margin: "0 0 8px" }}>{note}</p>}
+      {/* One snapshot can't draw a trend — the caption alone says it plainly. */}
+      {usable.length >= 2 && (
+        <SketchLineChart points={chart} height={150} highlightLast valueLabel={(v) => `${compactCount(v)} ${unit}`} />
+      )}
       <p className="font-mono nums" style={{ fontSize: "var(--fs-xs)", color: "var(--muted)", marginTop: 8 }}>
         {caption}
       </p>
@@ -234,8 +220,8 @@ function AppGrowthChart({ app, points }: { app: AppInfo; points: AppMetricPoint[
 
 // The same product is often linked on both stores with uneven scrape coverage
 // (e.g. Apple returns no screenshots while Play has the full set) — preview the
-// entry with the most to show.
-function richestApp(apps: AppInfo[]): AppInfo | undefined {
+// entry with the most to show. Shared with GemHeader, which shows its identity.
+export function richestApp(apps: AppInfo[]): AppInfo | undefined {
   const score = (a: AppInfo) =>
     (a.screenshots?.length ? 4 : 0) +
     (a.reviews?.length ? 2 : 0) +
@@ -250,85 +236,28 @@ export function AppStorePreview({ gem }: { gem: GemDossier }) {
   const app = richestApp(gem.apps);
   if (!app) return null;
 
-  const name = app.name ?? gem.app_name ?? gem.page_name;
-  const storeLink = buildGemLinks(gem).find(
-    (l) => l.label === "app store" || l.label === "play store",
-  );
   const metaParts = [
     app.genre,
-    app.price_label,
-    app.release_date ? `released ${isoDateLabel(app.release_date)}` : undefined,
+    app.release_date ? `Released ${isoDateLabel(app.release_date)}` : undefined,
   ].filter(Boolean);
   const reviews = (app.reviews ?? []).slice(0, 3);
 
   return (
     <section>
-      <h2 className="eyebrow" style={{ margin: "0 0 12px", color: "var(--ink)" }}>the app</h2>
+      <h2 className="t-md w-strong" style={{ margin: "0 0 12px" }}>Store listing</h2>
       <div
         style={{
-          border: "1.5px solid var(--ink)",
+          border: "1px solid var(--line)",
           background: "var(--paper)",
-          boxShadow: "var(--shadow-hard)",
           padding: "18px 20px",
           display: "flex",
           flexDirection: "column",
           gap: 18,
         }}
       >
-        {/* identity: icon + name + developer + rating */}
-        <div style={{ display: "flex", gap: 14, alignItems: "flex-start", flexWrap: "wrap" }}>
-          {app.icon_url && <AppIcon src={app.icon_url} name={name} />}
-          <div style={{ flex: "1 1 200px", minWidth: 0 }}>
-            <div className="t-lg w-heavy" style={{ wordBreak: "break-word" }}>{name}</div>
-            {app.developer && (
-              <div className="t-sm" style={{ color: "var(--muted)", marginTop: 2 }}>{app.developer}</div>
-            )}
-            {app.rating != null && (
-              <div className="font-mono nums t-sm" style={{ marginTop: 6, color: "var(--ink-soft)" }}>
-                <Stars rating={app.rating} /> {app.rating.toFixed(1)}
-                {app.rating_count != null && ` (${app.rating_count.toLocaleString("en-US")})`}
-              </div>
-            )}
-          </div>
-          {storeLink && (
-            <a
-              href={storeLink.href}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="font-mono caps"
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 7,
-                padding: "9px 14px",
-                border: "1.5px solid var(--ink)",
-                background: "var(--paper)",
-                color: "var(--ink)",
-                textDecoration: "none",
-                fontSize: "var(--fs-xs)",
-                letterSpacing: "0.08em",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {storeLink.label}
-              <IconExternalLink size={14} stroke={2} />
-            </a>
-          )}
-        </div>
-
-        {/* genre · price · release date, plus installs when the store has them */}
-        {(metaParts.length > 0 || app.installs != null) && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-            {metaParts.length > 0 && (
-              <div className="font-mono nums" style={{ fontSize: "var(--fs-xs)", color: "var(--muted)" }}>
-                {metaParts.join(" · ")}
-              </div>
-            )}
-            {app.installs != null && (
-              <div className="font-mono nums t-sm" style={{ color: "var(--ink-soft)" }}>
-                ≈{compactCount(app.installs)} installs · Play
-              </div>
-            )}
+        {metaParts.length > 0 && (
+          <div className="font-mono nums" style={{ fontSize: "var(--fs-xs)", color: "var(--muted)" }}>
+            {metaParts.join(" · ")}
           </div>
         )}
 
@@ -345,7 +274,7 @@ export function AppStorePreview({ gem }: { gem: GemDossier }) {
         <AppGrowthChart app={app} points={gem.app_metrics} />
 
         <div>
-          <div className="eyebrow" style={{ color: "var(--ink)", marginBottom: 8 }}>recent reviews</div>
+          <div className="t-sm w-strong" style={{ marginBottom: 8 }}>Recent reviews</div>
           {reviews.length === 0 ? (
             <p className="t-sm" style={{ margin: 0, color: "var(--muted)" }}>
               No written reviews yet — common for new apps.

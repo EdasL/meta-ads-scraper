@@ -5,14 +5,12 @@ import Link from "next/link";
 import { IconArrowLeft } from "@tabler/icons-react";
 import { getGem } from "@/lib/api";
 import { markVisitedGem } from "@/lib/onboarding";
-import { trendFromScaling } from "@/lib/why";
 import { Fallback } from "@/components/Fallback";
 import { ButtonLink } from "@/components/ui";
 import type { GemDossier } from "@/types/contracts";
-import { GemVerdict } from "./GemVerdict";
-import { GemLinks } from "./GemLinks";
-import { EvidenceReel } from "./EvidenceReel";
-import { AppStorePreview, StorePresenceChips } from "./AppStorePreview";
+import { GemHeader } from "./GemHeader";
+import { AdGrowth, AdsSection } from "./EvidenceReel";
+import { AppStorePreview } from "./AppStorePreview";
 import { GemFacts } from "./GemFacts";
 import { GemNotes } from "./GemNotes";
 
@@ -23,10 +21,13 @@ const backLink: React.CSSProperties = {
   color: "var(--muted)",
   textDecoration: "none",
   fontSize: "var(--fs-xs)",
-  letterSpacing: "0.08em",
-  textTransform: "uppercase",
 };
 
+/**
+ * The dossier page, top to bottom: header (identity + score + store facts +
+ * links), the ad-growth curve beside notes/details, the collected ads, then
+ * the store-listing deep dive.
+ */
 export function GemDetail({ advertiserId }: { advertiserId: number }) {
   const [gem, setGem] = useState<GemDossier | null>(null);
   const [loading, setLoading] = useState(true);
@@ -34,7 +35,7 @@ export function GemDetail({ advertiserId }: { advertiserId: number }) {
   const [reload, setReload] = useState(0);
 
   useEffect(() => {
-    markVisitedGem(); // activation: "find a gem"
+    markVisitedGem(); // activation: "Open a gem"
   }, []);
 
   useEffect(() => {
@@ -58,54 +59,46 @@ export function GemDetail({ advertiserId }: { advertiserId: number }) {
   }, [advertiserId, reload]);
 
   if (error) {
-    return <Fallback message={`Can't open file #${advertiserId}. Is the server up?`} onRetry={() => { setError(false); setLoading(true); setReload((n) => n + 1); }} />;
+    return <Fallback message={`Gem #${advertiserId} didn't load. Check that the server is running, then try again.`} onRetry={() => { setError(false); setLoading(true); setReload((n) => n + 1); }} />;
   }
   if (loading) {
-    return <div className="t-lg w-strong caps" style={{ padding: 48, color: "var(--muted)" }}>Loading file…</div>;
+    return <div className="t-lg w-strong" style={{ padding: 48, color: "var(--muted)" }}>Loading…</div>;
   }
   if (!gem) {
     return (
       <main style={{ maxWidth: 480, margin: "56px auto", textAlign: "center", display: "flex", flexDirection: "column", alignItems: "center", gap: 16, padding: "0 22px" }}>
-        <p className="t-lg w-strong">No file for #{advertiserId}.</p>
-        <ButtonLink href="/discover">Back to board</ButtonLink>
+        <p className="t-lg w-strong">No gem with id #{advertiserId}.</p>
+        <ButtonLink href="/discover">Back to Discover</ButtonLink>
       </main>
     );
   }
 
-  const trend = trendFromScaling(gem.scaling);
-
   return (
-    <main style={{ maxWidth: 1100, margin: "0 auto", padding: "18px 22px 80px" }}>
+    <main style={{ maxWidth: 1140, margin: "0 auto", padding: "18px 22px 80px" }}>
       <Link href="/discover" className="font-mono" style={backLink}>
-        <IconArrowLeft size={14} stroke={2} /> Back to board
+        <IconArrowLeft size={14} stroke={2} /> Back to Discover
       </Link>
 
-      <header style={{ margin: "16px 0 20px" }}>
-        <h1 className="t-3xl w-heavy caps" style={{ margin: 0, wordBreak: "break-word" }}>{gem.app_name ?? gem.page_name}</h1>
-        <div className="eyebrow" style={{ marginTop: 6, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-          <span>
-            {gem.cohort}
-            {gem.tagline ? ` · ${gem.tagline}` : ""}
-          </span>
-          <StorePresenceChips apps={gem.apps} />
-        </div>
-      </header>
-
-      <GemVerdict gem={gem} trend={trend} />
-
-      <div style={{ marginTop: 24 }}>
-        <GemLinks gem={gem} />
+      <div style={{ marginTop: 14 }}>
+        <GemHeader gem={gem} />
       </div>
 
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 32, marginTop: 30, alignItems: "flex-start" }}>
-        <div style={{ flex: "1.6 1 360px", minWidth: 0, display: "flex", flexDirection: "column", gap: 30 }}>
-          <EvidenceReel gem={gem} />
-          <AppStorePreview gem={gem} />
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 32, marginTop: 32, alignItems: "flex-start" }}>
+        <div style={{ flex: "1.7 1 420px", minWidth: 0 }}>
+          <AdGrowth gem={gem} />
         </div>
-        <aside style={{ flex: "1 1 260px", display: "flex", flexDirection: "column", gap: 28 }}>
+        <aside style={{ flex: "1 1 280px", display: "flex", flexDirection: "column", gap: 28 }}>
           <GemNotes row={gem} />
           <GemFacts gem={gem} />
         </aside>
+      </div>
+
+      <div style={{ marginTop: 36 }}>
+        <AdsSection gem={gem} />
+      </div>
+
+      <div style={{ marginTop: 36 }}>
+        <AppStorePreview gem={gem} />
       </div>
     </main>
   );
