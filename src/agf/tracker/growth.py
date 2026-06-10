@@ -6,22 +6,28 @@ in the same txn as score_all, before the matview refresh)."""
 from sqlalchemy import text
 from agf.db import repo
 
+# Smallest non-zero base a percent may be computed from. Below this the percent is
+# hypersensitive to the base (2→25 renders as +1150%) and reads as fake, so pct_change
+# is NULL instead. first/latest counts are unaffected.
+MIN_PCT_BASE = 5
+
 
 def compute_advertiser_growth(conn, only_ids=None) -> int:
     """Roll the weekly active-ad-count series into a growth summary per advertiser.
 
     pct_change rules (computed in SQL): 1 week observed → NULL; never advertised
-    (no non-zero week) → NULL; else round(100*(latest-base)/base, 1) where `base` is the
-    first NON-ZERO week's count. Anchoring on the first non-zero week (not the literal
-    earliest week) lets a "from zero" ramp (0→N — the strongest emerging signal) report a
-    real % instead of NULL-by-divide-by-zero. first_count still records the literal earliest
+    (no non-zero week) → NULL; non-zero base < MIN_PCT_BASE → NULL; else
+    round(100*(latest-base)/base, 1) where `base` is the first NON-ZERO week's count.
+    Anchoring on the first non-zero week (not the literal earliest week) lets a
+    "from zero" ramp report a real % instead of NULL-by-divide-by-zero — but only once
+    the base clears MIN_PCT_BASE. first_count still records the literal earliest
     week for the "started at" display.
 
     Production passes only_ids=None → recomputes EVERY advertiser with a weekly series.
     only_ids (an advertiser-id allowlist) restricts the recompute to those advertisers —
     used by tests/harnesses so a shared DB's other rows are never recomputed. Returns
     rows upserted."""
-    params: dict = {}
+    params: dict = {"min_pct_base": MIN_PCT_BASE}
     adv_filter = ""
     if only_ids is not None:
         adv_filter = " WHERE advertiser_id = ANY(:ids)"
@@ -41,6 +47,7 @@ def compute_advertiser_growth(conn, only_ids=None) -> int:
                CASE
                    WHEN weeks_observed <= 1 THEN NULL
                    WHEN first_nonzero IS NULL THEN NULL          -- never advertised
+                   WHEN first_nonzero < :min_pct_base THEN NULL  -- base too small for a meaningful %
                    ELSE round((100.0 * (latest_count - first_nonzero)
                                / first_nonzero)::numeric, 1)
                END AS pct_change
