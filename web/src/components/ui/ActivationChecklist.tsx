@@ -38,13 +38,13 @@ export function ActivationChecklist() {
         flexWrap: "wrap",
       }}
     >
-      <span className="eyebrow" style={{ color: "var(--ink)" }}>first time? do these:</span>
+      <span className="t-xs w-strong" style={{ color: "var(--ink)" }}>Getting started</span>
       <div style={{ display: "flex", gap: 16, flexWrap: "wrap", flex: 1 }}>
         {steps.map((s) => (
           <span
             key={s.id}
-            className="font-mono"
-            style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: "var(--fs-xs)", color: s.done ? "var(--muted)" : "var(--ink)" }}
+            className="t-xs"
+            style={{ display: "inline-flex", alignItems: "center", gap: 6, color: s.done ? "var(--muted)" : "var(--ink)" }}
           >
             <span
               aria-hidden
@@ -52,7 +52,7 @@ export function ActivationChecklist() {
             >
               {s.done && <IconCheck size={11} stroke={3} />}
             </span>
-            <span style={{ textDecoration: s.done ? "line-through" : "none" }}>{s.label}</span>
+            {s.label}
           </span>
         ))}
       </div>

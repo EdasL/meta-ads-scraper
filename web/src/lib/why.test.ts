@@ -12,7 +12,7 @@ test("growthLine prefers real growth numbers", () => {
   assert.equal(g.glyph, "↗");
   assert.equal(g.tone, "up");
   assert.equal(g.kind, "growth");
-  assert.match(g.text, /\+267% · 3→11 ads in 4wk/);
+  assert.match(g.text, /\+267% · 3→11 ads in 4 weeks/);
 });
 
 test("signedPercent: whole percent with sign, raw API floats never leak", () => {
@@ -29,14 +29,14 @@ test("growthLine rounds raw API float pct_change to a whole percent", () => {
     { first_count: 30, latest_count: 80, weeks: 16, pct_change: 166.6999969482422 },
     { active_ad_count: 40 },
   );
-  assert.equal(g.text, "+167% · 30→80 ads in 16wk");
+  assert.equal(g.text, "+167% · 30→80 ads in 16 weeks");
   assert.equal(g.tone, "up");
   // tiny float that rounds to zero → flat, not a misleading "+0%" with ↗
   const flat = growthLine(
     { first_count: 10, latest_count: 10, weeks: 4, pct_change: 0.3 },
     { active_ad_count: 40 },
   );
-  assert.equal(flat.text, "0% · 10→10 ads in 4wk");
+  assert.equal(flat.text, "0% · 10→10 ads in 4 weeks");
   assert.equal(flat.tone, "flat");
   assert.equal(flat.glyph, "→");
 });
@@ -45,7 +45,7 @@ test("growthLine: null pct_change (grew from zero) shows honest counts, no %", (
   const g = growthLine({ first_count: 0, latest_count: 8, weeks: 3, pct_change: null }, { active_ad_count: 8 });
   assert.equal(g.tone, "up");
   assert.equal(g.kind, "growth");
-  assert.match(g.text, /0→8 ads in 3wk/);
+  assert.match(g.text, /0→8 ads in 3 weeks/);
   assert.ok(!g.text.includes("%"));
 });
 

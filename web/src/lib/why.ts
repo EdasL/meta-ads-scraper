@@ -32,7 +32,7 @@ export function growthLine(
 ): { glyph: "↗" | "→" | "↘" | null; text: string; tone: TrendTone; kind: "growth" | "count" } {
   if (growth && growth.weeks >= 2) {
     const { first_count, latest_count, weeks, pct_change } = growth;
-    const counts = `${first_count}→${latest_count} ads in ${weeks}wk`;
+    const counts = `${first_count}→${latest_count} ads in ${weeks} ${weeks === 1 ? "week" : "weeks"}`;
     if (pct_change != null) {
       // Round before deriving tone so the glyph always matches the shown %.
       const rounded = Math.round(pct_change);

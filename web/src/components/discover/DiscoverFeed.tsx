@@ -65,8 +65,8 @@ export function DiscoverFeed() {
   return (
     <main style={{ maxWidth: 1200, margin: "0 auto", padding: "24px 22px 80px" }}>
       <header style={{ marginBottom: 20 }}>
-        <h1 className="t-2xl w-heavy caps" style={{ margin: 0 }}>
-          {filters.view === "rising" ? "gems rising now" : "all gems"}
+        <h1 className="t-2xl w-heavy" style={{ margin: 0 }}>
+          {filters.view === "rising" ? "Gems rising now" : "All gems"}
         </h1>
         <p className="t-sm" style={{ color: "var(--muted)", marginTop: 6 }}>
           {loading
@@ -84,9 +84,9 @@ export function DiscoverFeed() {
       )}
 
       {error ? (
-        <Fallback message="Can't reach the board. Is the server up?" onRetry={retry} />
+        <Fallback message="The feed didn't load. Check that the server is running, then try again." onRetry={retry} />
       ) : loading ? (
-        <div className="t-lg w-strong caps" style={{ padding: 48, color: "var(--muted)" }}>Loading board…</div>
+        <div className="t-lg w-strong" style={{ padding: 48, color: "var(--muted)" }}>Loading…</div>
       ) : rows.length === 0 ? (
         <EmptyState
           title="No gems yet"

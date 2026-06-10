@@ -130,7 +130,7 @@ export function GemCard({ row }: { row: ShortlistRow }) {
       </div>
 
       <div>
-        <div className="eyebrow" style={{ marginBottom: 2 }}>{g.kind === "growth" ? "ad growth" : "ads live"}</div>
+        <div className="eyebrow" style={{ marginBottom: 2 }}>{g.kind === "growth" ? "Ad growth" : "Ads live"}</div>
         <Trend glyph={g.glyph} label={g.text} tone={g.tone} />
       </div>
     </Link>

@@ -58,10 +58,10 @@ export function checklistSteps(
   ctx: { savedCount: number; hasNote: boolean },
 ): { steps: ChecklistStep[]; allDone: boolean } {
   const steps: ChecklistStep[] = [
-    { id: "find", label: "find a gem", done: !!flags.visitedGem },
-    { id: "why", label: "read why it might be working", done: !!flags.expandedWhy },
-    { id: "save", label: "save it", done: ctx.savedCount > 0 },
-    { id: "note", label: "write why you like it", done: ctx.hasNote },
+    { id: "find", label: "Open a gem", done: !!flags.visitedGem },
+    { id: "why", label: "Read why it might be working", done: !!flags.expandedWhy },
+    { id: "save", label: "Save one", done: ctx.savedCount > 0 },
+    { id: "note", label: "Note why you like it", done: ctx.hasNote },
   ];
   return { steps, allDone: steps.every((s) => s.done) };
 }

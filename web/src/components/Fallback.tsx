@@ -22,8 +22,8 @@ export function Fallback({
         textAlign: "center",
       }}
     >
-      <div className="display-x" style={{ fontSize: "1.9rem", textTransform: "uppercase" }}>
-        hit a wall
+      <div className="t-xl w-heavy">
+        Can&apos;t reach the server
       </div>
       <p className="font-mono" style={{ fontSize: "0.74rem", color: "var(--muted)", marginTop: 10 }}>
         {message}
@@ -31,7 +31,7 @@ export function Fallback({
       {onRetry && (
         <button
           onClick={onRetry}
-          className="display"
+          className="w-strong"
           style={{
             marginTop: 18,
             cursor: "pointer",
@@ -40,7 +40,6 @@ export function Fallback({
             border: "1.5px solid var(--ink)",
             padding: "8px 18px",
             fontSize: "0.95rem",
-            textTransform: "uppercase",
           }}
         >
           Try again

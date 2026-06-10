@@ -29,9 +29,14 @@ export const DEFAULT_FILTERS: Filters = {
 };
 
 const SORT_LABEL: Record<Sort, string> = {
-  gemscore: "best score",
-  fastest: "fastest climb",
-  newest: "newest",
+  gemscore: "Best score",
+  fastest: "Fastest climb",
+  newest: "Newest",
+};
+
+const VIEW_LABEL: Record<View, string> = {
+  rising: "Rising",
+  all: "All",
 };
 
 const control: React.CSSProperties = {
@@ -52,18 +57,17 @@ function Segmented({ view, onChange }: { view: View; onChange: (v: View) => void
           key={v}
           type="button"
           onClick={() => onChange(v)}
-          className="font-mono caps"
+          className="font-mono"
           style={{
             cursor: "pointer",
             border: "none",
             padding: "6px 12px",
             fontSize: "var(--fs-xs)",
-            letterSpacing: "0.08em",
             background: view === v ? "var(--ink)" : "transparent",
             color: view === v ? "var(--bg)" : "var(--ink)",
           }}
         >
-          {v}
+          {VIEW_LABEL[v]}
         </button>
       ))}
     </div>
@@ -91,7 +95,7 @@ export function FilterRail({
         <Segmented view={filters.view} onChange={(v) => set({ view: v })} />
 
         <label className="eyebrow" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-          sort
+          Sort
           <select value={filters.sort} onChange={(e) => set({ sort: e.target.value as Sort })} style={control}>
             {(Object.keys(SORT_LABEL) as Sort[]).map((s) => (
               <option key={s} value={s}>{SORT_LABEL[s]}</option>
@@ -103,7 +107,7 @@ export function FilterRail({
           type="button"
           onClick={() => setOpen((o) => !o)}
           aria-expanded={open}
-          className="font-mono caps"
+          className="font-mono"
           style={{
             display: "inline-flex",
             alignItems: "center",
@@ -114,11 +118,10 @@ export function FilterRail({
             border: "1px solid var(--ink)",
             padding: "6px 10px",
             fontSize: "var(--fs-xs)",
-            letterSpacing: "0.08em",
           }}
         >
           <IconAdjustmentsHorizontal size={14} stroke={1.75} />
-          more filter
+          More filters
         </button>
 
         {advancedActive && (
@@ -128,7 +131,7 @@ export function FilterRail({
             className="font-mono"
             style={{ background: "transparent", border: "none", cursor: "pointer", color: "var(--muted)", fontSize: "var(--fs-xs)", textDecoration: "underline" }}
           >
-            clear
+            Clear
           </button>
         )}
       </div>
@@ -146,9 +149,9 @@ export function FilterRail({
           }}
         >
           <label className="eyebrow" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-            kind
+            Kind
             <select value={filters.cohort} onChange={(e) => set({ cohort: e.target.value })} style={control}>
-              <option value="">all</option>
+              <option value="">All</option>
               {cohorts.map((c) => (
                 <option key={c} value={c}>{c}</option>
               ))}
@@ -156,7 +159,7 @@ export function FilterRail({
           </label>
 
           <label className="eyebrow" style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-            score ≥ <span className="nums" style={{ color: "var(--ink)", minWidth: 20 }}>{filters.minScore}</span>
+            Score ≥ <span className="nums" style={{ color: "var(--ink)", minWidth: 20 }}>{filters.minScore}</span>
             <input
               type="range"
               min={0}
@@ -169,17 +172,17 @@ export function FilterRail({
           </label>
 
           <label className="eyebrow" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-            ads run ≥
+            Ads running ≥
             <select value={filters.minAdAge} onChange={(e) => set({ minAdAge: Number(e.target.value) })} style={control}>
               {[0, 14, 21, 30].map((d) => (
-                <option key={d} value={d}>{d === 0 ? "any" : `${d}d`}</option>
+                <option key={d} value={d}>{d === 0 ? "Any" : `${d} days`}</option>
               ))}
             </select>
           </label>
 
           <label className="eyebrow" style={{ display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
             <input type="checkbox" checked={filters.hasFunnel} onChange={(e) => set({ hasFunnel: e.target.checked })} style={{ accentColor: "var(--ink)" }} />
-            real funnel only
+            Real funnel only
           </label>
         </div>
       )}
