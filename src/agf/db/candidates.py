@@ -47,9 +47,9 @@ def mark_triaged(conn, candidate_id: int, *, status: str,
 def kept_advertiser_ids(conn) -> list[int]:
     """Advertiser ids of kept candidates, oldest-triaged first (the enrich feed)."""
     return [r[0] for r in conn.execute(text(
-        "SELECT DISTINCT ON (kept_advertiser_id) kept_advertiser_id "
-        "FROM discovery.candidates WHERE status='kept' AND kept_advertiser_id IS NOT NULL "
-        "ORDER BY kept_advertiser_id, triaged_at")).all()]
+        "SELECT kept_advertiser_id FROM discovery.candidates "
+        "WHERE status='kept' AND kept_advertiser_id IS NOT NULL "
+        "GROUP BY kept_advertiser_id ORDER BY MIN(triaged_at), kept_advertiser_id")).all()]
 
 
 def sweep_ran_today(conn, as_of) -> bool:

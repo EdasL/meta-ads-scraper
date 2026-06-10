@@ -75,15 +75,19 @@ async def run_sweep(engine, extractor, *, entries=None, keywords=None,
              "drops": {"no_link": 0, "social": 0, "incumbent_likes": 0,
                        "non_app": 0, "no_store_id": 0}}
     for entry in entries:
+        # entry.max_pages is the per-keyword ceiling (the experiment harness honors it
+        # in full); the production sweep further caps every keyword at `max_pages`
+        # (AGF_SWEEP_PAGES) so taxonomy edits can lower a keyword's cost but not raise it.
+        pages = min(entry.max_pages, max_pages)
         try:
             ads = await extractor.search(query=entry.keyword, countries=list(countries),
-                                         search_type=entry.search_type, max_pages=max_pages)
+                                         search_type=entry.search_type, max_pages=pages)
         except ExtractError:
             stats["errors"] += 1
             sleep(kw_delay * 2)
             continue
         stats["keywords_swept"] += 1
-        stats["serp_requests"] += max_pages          # upper bound; search may stop earlier
+        stats["serp_requests"] += pages              # upper bound; search may stop earlier
         stats["raw_ads"] += len(ads)
         rows, seen_keys = [], set()
         for ad in ads:

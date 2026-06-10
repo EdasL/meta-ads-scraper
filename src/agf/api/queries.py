@@ -3,7 +3,7 @@ write. conn-first; the read conn is SET READ ONLY by the dependency, the write c
 commits in the dependency."""
 from sqlalchemy import text
 
-_MV_COLS = ("advertiser_id, cohort, page_name, app_id, app_name, gem_score, "
+_MV_COLS = ("advertiser_id, cohort, page_name, app_id, app_name, icon_url, gem_score, "
             "scaling_velocity, under_radar, funnel_intent, active_ad_count, "
             "max_longevity_days, alert, first_count, latest_count, weeks_observed, "
             "pct_change, refreshed_at")

@@ -11,6 +11,7 @@ class ShortlistRow(BaseModel):
     page_name: str | None
     app_id: int | None = None
     app_name: str | None = None
+    icon_url: str | None = None
     gem_score: float
     scaling_velocity: float | None = None
     under_radar: float | None = None
