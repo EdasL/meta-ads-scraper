@@ -44,6 +44,12 @@ def _seed(conn):
             repo.upsert_app_advertiser_metric(conn, adv, WEEK0 + timedelta(weeks=i),
                                               n, n, reach)
         ids[pid] = adv
+    # the gem must pass the quality vetoes too: not a game, small installs/likes
+    # (raw UPDATE: is_game persistence + meta signals are other write paths)
+    conn.execute(text("UPDATE public.apps SET is_game=FALSE, installs=40000 "
+                      "WHERE store_id='P5GEM'"))
+    conn.execute(text("UPDATE public.advertisers SET page_like_count=2500 "
+                      "WHERE id=:i"), {"i": ids["P5GEM"]})
     return ids
 
 
@@ -87,11 +93,14 @@ def test_score_all_flags_gem_not_brand_not_spike(_migrated_engine):
                 {"i": list(ids.values())}).all()}
         gem, brand, spike = ids["P5GEM"], ids["P5BRAND"], ids["P5SPIKE"]
         assert rows[gem].alert is True                      # the gem alerts (>=70, not vetoed)
-        assert rows[brand].alert is False                   # famous brand: UR~0 -> low score
-        assert rows[gem].gem_score > rows[brand].gem_score
+        assert scores[gem].vetoed is False
+        assert rows[gem].gem_score > scores[brand].gem_score
         assert scores[spike].vetoed is True                 # seasonal spike vetoed
         assert scores[spike].veto_reason == "seasonal_spike"
-        assert rows[spike].alert is False
+        assert spike not in rows                            # vetoed rows never reach the feed
+        assert scores[brand].vetoed is True                 # 8M ratings == established, not a gem
+        assert scores[brand].veto_reason == "established_traction"
+        assert brand not in rows
         assert rows[gem].cohort == "Health & Fitness×US"
     finally:
         _cleanup(eng)

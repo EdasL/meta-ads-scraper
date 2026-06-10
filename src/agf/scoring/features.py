@@ -13,6 +13,22 @@ def log_growth_wow(series) -> float:
     return math.log((s[-1] + _EPS) / (s[-2] + _EPS))
 
 
+def window_log_growth(series) -> float:
+    """Overall ramp: log growth from the first NON-ZERO week to the latest (smoothed).
+
+    Unlike `log_growth_wow` (which only sees the most recent week, so a real ramp that has
+    plateaued reads as flat), this credits SUSTAINED multi-week scaling — a 30->80 or 0->40
+    advertiser scores high even if the last week was flat. Anchoring on the first non-zero
+    week makes a 'from zero' ramp the strongest emerging signal instead of a divide-by-zero.
+    Flat / <2 points -> 0.0."""
+    s = list(series)
+    if len(s) < 2:
+        return 0.0
+    nonzero = [x for x in s if x > 0]
+    base = nonzero[0] if nonzero else 0
+    return math.log((s[-1] + _EPS) / (base + _EPS))
+
+
 def acceleration(series) -> float:
     """Change in WoW log-growth (2nd derivative). Convex>0, concave<0, flat/<3 ->0."""
     s = list(series)
@@ -54,6 +70,7 @@ class FeatureVector:
     app_name: str | None
     # scaling-velocity inputs
     wow_log_growth: float
+    window_growth: float
     accel: float
     ewma_velocity: float
     max_longevity_days: int
@@ -74,6 +91,17 @@ class FeatureVector:
     is_emerging: bool
     parent_company_id: int | None
     weeks_observed: int
+    # quality-veto inputs (real-gems feed 2026-06-10) — appended with defaults so
+    # existing positional constructors keep working; NULL/unknown never vetoes
+    is_game: bool | None = None
+    installs: int | None = None
+    page_like_count: int | None = None
+    meta_active_ads: int | None = None
+    meta_active_ads_capped: bool | None = None
+    # traction maxima across ALL linked store listings (the latest-app fields above
+    # miss e.g. a 10M-install Android listing when the newest ad links the iOS app)
+    max_installs: int | None = None
+    max_rating_count: int | None = None
 
 
 def _as_of_epoch(as_of) -> int:
@@ -108,14 +136,23 @@ def build_features(conn, advertiser_id: int, as_of) -> FeatureVector:
     has_app = any(r.app_id is not None for r in ad_rows)
 
     adv = conn.execute(text(
-        "SELECT page_name, parent_company_id, ig_followers FROM public.advertisers "
-        "WHERE id=:a"), {"a": advertiser_id}).first()
+        "SELECT page_name, parent_company_id, ig_followers, "
+        "       page_like_count, meta_active_ads, meta_active_ads_capped "
+        "FROM public.advertisers WHERE id=:a"), {"a": advertiser_id}).first()
 
     app = conn.execute(text("""
-        SELECT ap.id, ap.name, ap.genre, ap.rating_count, ap.release_date, ap.is_emerging
+        SELECT ap.id, ap.name, ap.genre, ap.rating_count, ap.release_date, ap.is_emerging,
+               ap.is_game, ap.installs
         FROM public.ads a JOIN public.apps ap ON ap.id = a.app_id
         WHERE a.advertiser_id=:a AND a.app_id IS NOT NULL
         ORDER BY a.last_seen DESC NULLS LAST LIMIT 1"""), {"a": advertiser_id}).first()
+
+    # traction maxima across EVERY linked listing (iOS + Android), for the
+    # established_traction veto — the latest-app row alone can hide a huge sibling
+    traction = conn.execute(text("""
+        SELECT max(ap.installs) AS mi, max(ap.rating_count) AS mr
+        FROM public.ads a JOIN public.apps ap ON ap.id = a.app_id
+        WHERE a.advertiser_id=:a AND a.app_id IS NOT NULL"""), {"a": advertiser_id}).first()
 
     release_age = None
     if app and app.release_date:
@@ -132,6 +169,7 @@ def build_features(conn, advertiser_id: int, as_of) -> FeatureVector:
         app_id=app.id if app else None,
         app_name=app.name if app else None,
         wow_log_growth=log_growth_wow(series),
+        window_growth=window_log_growth(series),
         accel=acceleration(series),
         # smooth the weekly *velocity* (deltas), not the level — else a big flat
         # incumbent (high count, zero growth) outscores a small fast-growing gem.
@@ -151,4 +189,11 @@ def build_features(conn, advertiser_id: int, as_of) -> FeatureVector:
         is_emerging=bool(app.is_emerging) if app else False,
         parent_company_id=adv.parent_company_id if adv else None,
         weeks_observed=len(series),
+        is_game=app.is_game if app else None,
+        installs=app.installs if app else None,
+        page_like_count=adv.page_like_count if adv else None,
+        meta_active_ads=adv.meta_active_ads if adv else None,
+        meta_active_ads_capped=adv.meta_active_ads_capped if adv else None,
+        max_installs=int(traction.mi) if traction and traction.mi is not None else None,
+        max_rating_count=int(traction.mr) if traction and traction.mr is not None else None,
     )

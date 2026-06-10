@@ -1,4 +1,5 @@
 from datetime import date, datetime, timezone
+from sqlalchemy import text
 from agf.parse import AdRecord
 from agf.db import repo
 from agf.scoring.features import build_features
@@ -40,3 +41,41 @@ def test_build_features_accel_and_longevity_share(pg_conn):
     assert fv.is_emerging is True
     assert fv.install_cta is True
     assert fv.velocity_series == (1, 2, 4, 8)
+
+
+def test_build_features_quality_veto_inputs(pg_conn):
+    """New veto inputs (real-gems feed): app is_game/installs + advertiser meta signals."""
+    adv = repo.upsert_advertiser(pg_conn, _ad("F3", days_old=20))
+    app = repo.upsert_app(pg_conn, {"store": "ios", "store_id": "999",
+                                    "name": "Feet", "genre": "Health & Fitness",
+                                    "rating_count": 120, "installs": 12_000,
+                                    "release_date": "2026-05-20", "is_emerging": True})
+    repo.upsert_ad(pg_conn, _ad("F3", days_old=20), adv, app)
+    # set directly: is_game persistence + meta signals are other agents' write paths
+    pg_conn.execute(text("UPDATE public.apps SET is_game=FALSE WHERE id=:i"), {"i": app})
+    pg_conn.execute(text(
+        "UPDATE public.advertisers SET page_like_count=3500, meta_active_ads=42, "
+        "meta_active_ads_capped=TRUE WHERE id=:i"), {"i": adv})
+
+    fv = build_features(pg_conn, adv, AS_OF)
+
+    assert fv.is_game is False
+    assert fv.installs == 12_000
+    assert fv.page_like_count == 3500
+    assert fv.meta_active_ads == 42
+    assert fv.meta_active_ads_capped is True
+
+
+def test_build_features_quality_inputs_null_when_unknown(pg_conn):
+    """No app row + un-enriched advertiser -> all new inputs stay None/default."""
+    adv = repo.upsert_advertiser(pg_conn, _ad("F4", days_old=20))
+    repo.upsert_ad(pg_conn, _ad("F4", days_old=20), adv, None)
+
+    fv = build_features(pg_conn, adv, AS_OF)
+
+    assert fv.has_app is False
+    assert fv.is_game is None
+    assert fv.installs is None
+    assert fv.page_like_count is None
+    assert fv.meta_active_ads is None
+    assert fv.meta_active_ads_capped is False   # column default; never vetoes
