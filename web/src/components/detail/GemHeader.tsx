@@ -90,42 +90,52 @@ export function GemHeader({ gem }: { gem: GemDossier }) {
         </div>
       </div>
 
-      {/* key evidence stats */}
-      <div style={{ display: "flex", gap: 32, flexWrap: "wrap", marginTop: 18, paddingTop: 14, borderTop: "1px solid var(--line)" }}>
-        <Stat label="Ads in library" value={adsInLibrary} />
-        <Stat label="Ads this week" value={latest?.distinct_creative_count ? latest.distinct_creative_count.toLocaleString() : undefined} />
-        <Stat label="Page likes" value={gem.page_like_count?.toLocaleString()} />
-        <Stat label="Owner" value={gem.company.parent_company ?? "Independent"} />
-      </div>
-
-      {/* outbound links */}
-      {links.length > 0 && (
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 16 }}>
-          {links.map((l) => (
-            <a
-              key={l.label}
-              href={l.href}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="font-mono"
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 6,
-                padding: "7px 12px",
-                border: "1px solid var(--ink)",
-                background: "var(--paper)",
-                color: "var(--ink)",
-                textDecoration: "none",
-                fontSize: "var(--fs-xs)",
-              }}
-            >
-              {l.label}
-              <IconExternalLink size={13} stroke={2} />
-            </a>
-          ))}
+      {/* key evidence stats + outbound links, one row */}
+      <div
+        style={{
+          display: "flex",
+          gap: "14px 24px",
+          flexWrap: "wrap",
+          alignItems: "flex-end",
+          justifyContent: "space-between",
+          marginTop: 16,
+          paddingTop: 14,
+          borderTop: "1px solid var(--line)",
+        }}
+      >
+        <div style={{ display: "flex", gap: 28, flexWrap: "wrap" }}>
+          <Stat label="Ads in library" value={adsInLibrary} />
+          <Stat label="Ads this week" value={latest?.distinct_creative_count ? latest.distinct_creative_count.toLocaleString() : undefined} />
+          <Stat label="Page likes" value={gem.page_like_count?.toLocaleString()} />
         </div>
-      )}
+        {links.length > 0 && (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            {links.map((l) => (
+              <a
+                key={l.label}
+                href={l.href}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-mono"
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
+                  padding: "7px 12px",
+                  border: "1px solid var(--ink)",
+                  background: "var(--paper)",
+                  color: "var(--ink)",
+                  textDecoration: "none",
+                  fontSize: "var(--fs-xs)",
+                }}
+              >
+                {l.label}
+                <IconExternalLink size={13} stroke={2} />
+              </a>
+            ))}
+          </div>
+        )}
+      </div>
 
       {/* generated explainer */}
       {explainer && (

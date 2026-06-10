@@ -8,8 +8,13 @@ import { IconHelpCircle } from "@tabler/icons-react";
  * proprietary term — keeps jargon out of the main read while still teachable.
  * Closes on outside-click or Escape. No browser dialogs.
  */
+const TIP_WIDTH = 230;
+
 export function InfoDot({ text, label = "what this means" }: { text: string; label?: string }) {
   const [open, setOpen] = useState(false);
+  // Anchor the popover to whichever edge keeps it on screen — a left-anchored
+  // tip from a trigger near the right page edge would run off the viewport.
+  const [alignRight, setAlignRight] = useState(false);
   const ref = useRef<HTMLSpanElement>(null);
   const tipId = useId();
 
@@ -38,6 +43,8 @@ export function InfoDot({ text, label = "what this means" }: { text: string; lab
         aria-describedby={open ? tipId : undefined}
         onClick={(e) => {
           e.stopPropagation();
+          const r = ref.current?.getBoundingClientRect();
+          if (r) setAlignRight(r.left + TIP_WIDTH > window.innerWidth - 16);
           setOpen((o) => !o);
         }}
         style={{
@@ -61,9 +68,10 @@ export function InfoDot({ text, label = "what this means" }: { text: string; lab
           style={{
             position: "absolute",
             top: "150%",
-            left: 0,
+            left: alignRight ? undefined : 0,
+            right: alignRight ? 0 : undefined,
             zIndex: 60,
-            width: 230,
+            width: TIP_WIDTH,
             padding: "9px 11px",
             border: "1.5px solid var(--ink)",
             background: "var(--surface-4)",

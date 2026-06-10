@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { SketchLineChart, type ChartPoint } from "@/components/sketch";
+import { SketchLineChart, type ChartPoint, type ChartTooltipItem } from "@/components/sketch";
 import { trendFromScaling } from "@/lib/why";
 import { adRunLine, creativeMetaLine, monthDayLabel } from "@/lib/format";
 import { adLibraryAdUrl, bareDomain } from "@/lib/links";
@@ -179,7 +179,8 @@ function adLabel(c: Creative): string {
   return c.type === "video" ? "Video ad (no text)" : c.type === "image" ? "Image ad (no text)" : "Text ad";
 }
 
-/** The ad-count curve. Hovering a week names the ads that launched in it. */
+/** The ad-count curve. Hovering a week shows mini previews of the exact ads
+ * that launched in it. */
 export function AdGrowth({ gem }: { gem: GemDossier }) {
   const weekMs = 7 * 24 * 3600 * 1000;
   const chart: ChartPoint[] = gem.scaling.map((s) => {
@@ -189,6 +190,11 @@ export function AdGrowth({ gem }: { gem: GemDossier }) {
       const t = Date.parse(c.ad_started_on);
       return t >= t0 && t < t0 + weekMs;
     });
+    const items: ChartTooltipItem[] = launched.map((c) => ({
+      text: adLabel(c),
+      mediaUrl: c.snapshot_image_url,
+      mediaType: c.type === "video" ? "video" : "image",
+    }));
     return {
       label: fmtWeek(s.week_start),
       value: s.active_ad_count,
@@ -197,7 +203,7 @@ export function AdGrowth({ gem }: { gem: GemDossier }) {
         linesLabel: launched.length
           ? `${launched.length} ${launched.length === 1 ? "ad" : "ads"} launched this week`
           : undefined,
-        lines: launched.map(adLabel),
+        items,
       },
     };
   });

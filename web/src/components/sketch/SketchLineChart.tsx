@@ -2,20 +2,56 @@
 
 import { useEffect, useRef, useState } from "react";
 
+/** One ad (or similar) shown inside a point's tooltip — a mini thumbnail
+ * when media exists, else a small glyph tile. */
+export type ChartTooltipItem = {
+  text: string;
+  mediaUrl?: string;
+  mediaType?: "image" | "video";
+};
+
 export type ChartPoint = {
   label: string;
   value: number;
-  /** Optional hover detail: a title line plus supporting lines (e.g. the
-   * exact ads launched in that week). `linesLabel` introduces the lines. */
-  tooltip?: { title: string; lines: string[]; linesLabel?: string };
+  /** Optional hover detail: a title line plus the exact items (e.g. ads
+   * launched that week) as mini thumbnails. `linesLabel` introduces them. */
+  tooltip?: { title: string; items?: ChartTooltipItem[]; linesLabel?: string };
 };
 
 const INK = "var(--ink)";
 const MUTED = "var(--muted)";
 const PAPER = "var(--paper)";
 
-/** Max supporting lines shown in a tooltip before collapsing to "+n more". */
-const TOOLTIP_MAX_LINES = 4;
+/** Max thumbnails shown in a tooltip before collapsing to "+n more". */
+const TOOLTIP_MAX_ITEMS = 8;
+
+/** Mini creative preview: image, first video frame, or a glyph tile. */
+function TooltipThumb({ item }: { item: ChartTooltipItem }) {
+  const frame: React.CSSProperties = {
+    width: 38,
+    height: 50,
+    objectFit: "cover",
+    display: "block",
+    border: "1px solid var(--line)",
+    background: "var(--surface-3)",
+  };
+  if (item.mediaUrl && item.mediaType === "video") {
+    return <video src={item.mediaUrl} muted playsInline preload="metadata" title={item.text} style={frame} />;
+  }
+  if (item.mediaUrl) {
+    // eslint-disable-next-line @next/next/no-img-element -- dynamic /api/media proxy thumbnails; next/image is a poor fit for an internal tool
+    return <img src={item.mediaUrl} alt={item.text} loading="lazy" title={item.text} style={frame} />;
+  }
+  return (
+    <span
+      aria-label={item.text}
+      title={item.text}
+      style={{ ...frame, display: "inline-flex", alignItems: "center", justifyContent: "center", color: "var(--faint)" }}
+    >
+      ▣
+    </span>
+  );
+}
 
 /**
  * A crisp line chart with readable point markers and hover tooltips.
@@ -84,9 +120,9 @@ export function SketchLineChart({
 
   const h = hover !== null && hover < points.length ? hover : null;
   const tip = h !== null ? points[h] : null;
-  const extraLines = tip?.tooltip?.lines ?? [];
-  const shownLines = extraLines.slice(0, TOOLTIP_MAX_LINES);
-  const hiddenCount = extraLines.length - shownLines.length;
+  const items = tip?.tooltip?.items ?? [];
+  const shownItems = items.slice(0, TOOLTIP_MAX_ITEMS);
+  const hiddenCount = items.length - shownItems.length;
   // Keep the tooltip on the canvas: flip sides past the midpoint.
   const tipLeft = h !== null ? xs[h] : 0;
   const tipFlip = h !== null && w > 0 && xs[h] > w * 0.55;
@@ -139,9 +175,9 @@ export function SketchLineChart({
           style={{
             position: "absolute",
             top: 0,
-            left: tipFlip ? undefined : Math.min(tipLeft + 12, Math.max(w - 200, 0)),
-            right: tipFlip ? Math.min(w - tipLeft + 12, Math.max(w - 200, 0)) : undefined,
-            maxWidth: 230,
+            left: tipFlip ? undefined : Math.min(tipLeft + 12, Math.max(w - 210, 0)),
+            right: tipFlip ? Math.min(w - tipLeft + 12, Math.max(w - 210, 0)) : undefined,
+            maxWidth: 210,
             background: "var(--surface-4)",
             border: "1px solid var(--ink)",
             boxShadow: "3px 3px 0 var(--ink)",
@@ -152,24 +188,20 @@ export function SketchLineChart({
         >
           <div className="t-xs w-strong nums">{tip.tooltip?.title ?? tip.label}</div>
           <div className="t-xs nums" style={{ color: "var(--ink-soft)", marginTop: 2 }}>{valueLabel(tip.value)}</div>
-          {shownLines.length > 0 && (
-            <ul style={{ margin: "6px 0 0", padding: 0, listStyle: "none" }}>
+          {shownItems.length > 0 && (
+            <div style={{ marginTop: 6 }}>
               {tip.tooltip?.linesLabel && (
-                <li className="t-xs w-strong" style={{ color: "var(--ink-soft)" }}>{tip.tooltip.linesLabel}</li>
+                <div className="t-xs w-strong" style={{ color: "var(--ink-soft)", marginBottom: 4 }}>{tip.tooltip.linesLabel}</div>
               )}
-              {shownLines.map((line, i) => (
-                <li
-                  key={i}
-                  className="t-xs"
-                  style={{ color: "var(--muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
-                >
-                  {line}
-                </li>
-              ))}
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                {shownItems.map((item, i) => (
+                  <TooltipThumb key={i} item={item} />
+                ))}
+              </div>
               {hiddenCount > 0 && (
-                <li className="t-xs" style={{ color: "var(--faint)" }}>+{hiddenCount} more</li>
+                <div className="t-xs" style={{ color: "var(--faint)", marginTop: 4 }}>+{hiddenCount} more</div>
               )}
-            </ul>
+            </div>
           )}
         </div>
       )}

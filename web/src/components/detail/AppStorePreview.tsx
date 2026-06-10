@@ -55,7 +55,8 @@ export function StorePresenceChips({ apps }: { apps: AppInfo[] }) {
   );
 }
 
-/** One screenshot in the strip; hides itself if the image fails to load. */
+/** One screenshot in the strip, styled the way stores present them: tall,
+ * rounded, light border. Hides itself if the image fails to load. */
 function Shot({ src, index }: { src: string; index: number }) {
   const [broken, setBroken] = useState(false);
   if (broken) return null;
@@ -66,7 +67,7 @@ function Shot({ src, index }: { src: string; index: number }) {
       alt={`App screenshot ${index + 1}`}
       loading="lazy"
       onError={() => setBroken(true)}
-      style={{ height: 230, width: "auto", flex: "0 0 auto", border: "1.5px solid var(--ink)", display: "block" }}
+      style={{ height: 320, width: "auto", flex: "0 0 auto", border: "1px solid var(--line)", borderRadius: 12, display: "block" }}
     />
   );
 }
@@ -255,6 +256,15 @@ export function AppStorePreview({ gem }: { gem: GemDossier }) {
           gap: 18,
         }}
       >
+        {/* the app's own images lead, the way the store presents them */}
+        {app.screenshots && app.screenshots.length > 0 && (
+          <div style={{ display: "flex", gap: 12, overflowX: "auto", paddingBottom: 6 }}>
+            {app.screenshots.map((src, i) => (
+              <Shot key={`${src}-${i}`} src={src} index={i} />
+            ))}
+          </div>
+        )}
+
         {metaParts.length > 0 && (
           <div className="font-mono nums" style={{ fontSize: "var(--fs-xs)", color: "var(--muted)" }}>
             {metaParts.join(" · ")}
@@ -262,14 +272,6 @@ export function AppStorePreview({ gem }: { gem: GemDossier }) {
         )}
 
         {app.description && <Description text={app.description} />}
-
-        {app.screenshots && app.screenshots.length > 0 && (
-          <div style={{ display: "flex", gap: 10, overflowX: "auto", paddingBottom: 6 }}>
-            {app.screenshots.map((src, i) => (
-              <Shot key={`${src}-${i}`} src={src} index={i} />
-            ))}
-          </div>
-        )}
 
         <AppGrowthChart app={app} points={gem.app_metrics} />
 
