@@ -53,7 +53,7 @@ export function GemFacts({ gem }: { gem: GemDossier }) {
         <Fact label="ig followers" value={c.ig_followers?.toLocaleString()} />
         <Fact label="page likes" value={gem.page_like_count?.toLocaleString()} />
         <Fact label="price" value={gem.pricing} />
-        <Fact label="distinct ads" value={distinct ? distinct.toLocaleString() : undefined} />
+        <Fact label="ads this week" value={distinct ? distinct.toLocaleString() : undefined} />
         <Fact label="eu reach" value={euReach ? euReach.toLocaleString() : undefined} />
         <Fact label="ads in library" value={adsInLibrary} />
         <Fact label="ads checked" value={gem.ads_last_seen ? timeAgo(gem.ads_last_seen, nowMs) : undefined} />

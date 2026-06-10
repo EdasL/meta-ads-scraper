@@ -60,6 +60,40 @@ export function isoDateLabel(iso: string): string {
   return `${month} ${Number(m[3])}, ${m[1]}`;
 }
 
+/** "Jul 10" from an ISO date string — month + day, no year. */
+function monthDayName(iso: string): string {
+  const m = ISO_DATE.exec(iso);
+  if (!m) return "—";
+  const month = MONTHS[Number(m[2]) - 1];
+  if (!month) return "—";
+  return `${month} ${Number(m[3])}`;
+}
+
+/**
+ * The ad's run line, mirroring the Ad Library's "Started running on …":
+ *   active: "Started Jan 15, 2026 · 146d"
+ *   ended:  "Jul 10 – Aug 22, 2025 · 43d" (start year shown once when shared)
+ * `ad_ended_on` is ignored while the ad is active (Meta sets end_date to the
+ * last-seen day even for running ads). Returns null when the start is unknown.
+ */
+export function adRunLine(c: {
+  ad_started_on?: string;
+  ad_ended_on?: string;
+  ad_active?: boolean;
+  ad_days_running?: number;
+}): string | null {
+  if (!c.ad_started_on) return null;
+  // 0 days = started and ended the same day — "<1d", never a confusing "0d".
+  const days =
+    c.ad_days_running != null ? ` · ${c.ad_days_running === 0 ? "<1" : c.ad_days_running}d` : "";
+  if (c.ad_active || !c.ad_ended_on) {
+    return `Started ${isoDateLabel(c.ad_started_on)}${days}`;
+  }
+  const sameYear = c.ad_started_on.slice(0, 4) === c.ad_ended_on.slice(0, 4);
+  const start = sameYear ? monthDayName(c.ad_started_on) : isoDateLabel(c.ad_started_on);
+  return `${start} – ${isoDateLabel(c.ad_ended_on)}${days}`;
+}
+
 /** Short labels for Meta publisher platforms ("FACEBOOK" → "fb"). */
 const PLATFORM_SHORT: Record<string, string> = {
   facebook: "fb",

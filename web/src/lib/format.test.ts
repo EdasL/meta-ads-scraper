@@ -5,6 +5,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  adRunLine,
   compactCount,
   creativeMetaLine,
   daysAgoLabel,
@@ -80,4 +81,51 @@ test("creativeMetaLine: since + days + EU reach + platforms; never invents", () 
   );
   // nothing known → null (the tile renders no meta line)
   assert.equal(creativeMetaLine({}), null);
+});
+
+test("adRunLine: active ads show start + days; end date is ignored while active", () => {
+  assert.equal(
+    adRunLine({
+      ad_started_on: "2026-01-15",
+      ad_ended_on: "2026-06-10", // Meta sets end_date = last-seen even when active
+      ad_active: true,
+      ad_days_running: 146,
+    }),
+    "Started Jan 15, 2026 · 146d",
+  );
+  assert.equal(adRunLine({ ad_started_on: "2026-01-15", ad_active: true }), "Started Jan 15, 2026");
+});
+
+test("adRunLine: ended ads show the run range, year shown once when shared", () => {
+  assert.equal(
+    adRunLine({
+      ad_started_on: "2025-07-10",
+      ad_ended_on: "2025-08-22",
+      ad_active: false,
+      ad_days_running: 43,
+    }),
+    "Jul 10 – Aug 22, 2025 · 43d",
+  );
+  // run crosses a year boundary → both dates carry their year
+  assert.equal(
+    adRunLine({ ad_started_on: "2025-12-20", ad_ended_on: "2026-01-04", ad_active: false, ad_days_running: 15 }),
+    "Dec 20, 2025 – Jan 4, 2026 · 15d",
+  );
+  // ended but no end date recorded → fall back to the start
+  assert.equal(
+    adRunLine({ ad_started_on: "2025-07-10", ad_active: false, ad_days_running: 6 }),
+    "Started Jul 10, 2025 · 6d",
+  );
+});
+
+test("adRunLine: same-day run shows <1d, never 0d", () => {
+  assert.equal(
+    adRunLine({ ad_started_on: "2026-02-09", ad_ended_on: "2026-02-09", ad_active: false, ad_days_running: 0 }),
+    "Feb 9 – Feb 9, 2026 · <1d",
+  );
+});
+
+test("adRunLine: unknown start → null (the card renders no run line)", () => {
+  assert.equal(adRunLine({ ad_active: true, ad_days_running: 9 }), null);
+  assert.equal(adRunLine({}), null);
 });

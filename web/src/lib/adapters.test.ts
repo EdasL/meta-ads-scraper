@@ -303,8 +303,15 @@ test("adaptDossier carries the new signal fields: app preview, ad meta, library 
       creatives: [
         {
           type: "image", s3_key: "creatives/x.jpg", body_text: "b", title: "t",
+          external_ad_id: "924353860103615", cta_text: "Install now",
+          link_url: "http://itunes.apple.com/app/id90211",
           ad_started_on: "2026-04-09", ad_active: true, ad_days_running: 62,
           publisher_platforms: ["FACEBOOK", "INSTAGRAM"], eu_total_reach: 120000,
+        },
+        {
+          type: "text", s3_key: null, body_text: "ended ad copy", title: null,
+          external_ad_id: "111", ad_active: false,
+          ad_started_on: "2025-07-10", ad_ended_on: "2025-08-22", ad_days_running: 43,
         },
       ],
       ads_last_seen: "2026-06-09T06:00:00Z",
@@ -346,6 +353,18 @@ test("adaptDossier carries the new signal fields: app preview, ad meta, library 
   assert.equal(cr.ad_days_running, 62);
   assert.deepEqual(cr.publisher_platforms, ["FACEBOOK", "INSTAGRAM"]);
   assert.equal(cr.eu_total_reach, 120000);
+  // identity + CTA: id prefers external_ad_id over s3_key
+  assert.equal(cr.id, "924353860103615");
+  assert.equal(cr.external_ad_id, "924353860103615");
+  assert.equal(cr.cta_text, "Install now");
+  assert.equal(cr.link_url, "http://itunes.apple.com/app/id90211");
+  // ended text-backstop ad: honest type, run range carried through
+  const ended = dossier.creatives[1];
+  assert.equal(ended.type, "text");
+  assert.equal(ended.ad_active, false);
+  assert.equal(ended.ad_started_on, "2025-07-10");
+  assert.equal(ended.ad_ended_on, "2025-08-22");
+  assert.equal(ended.ad_days_running, 43);
 
   // dossier-level ad-library + freshness fields
   assert.equal(dossier.ads_last_seen, "2026-06-09T06:00:00Z");

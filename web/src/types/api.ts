@@ -98,7 +98,11 @@ export interface ApiCreativeInfo {
   s3_key: string | null;
   body_text: string | null;
   title: string | null;
+  external_ad_id?: string | null;
+  cta_text?: string | null;
+  link_url?: string | null;
   ad_started_on?: string | null;
+  ad_ended_on?: string | null;
   ad_active?: boolean | null;
   ad_days_running?: number | null;
   publisher_platforms?: string[] | null;

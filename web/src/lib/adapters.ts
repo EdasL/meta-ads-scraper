@@ -151,16 +151,21 @@ export function adaptReviewRow(r: ApiReviewQueueRow): ReviewQueueRow {
 }
 
 function adaptCreative(c: ApiCreativeInfo, i: number, mediaUrl: MediaUrl): Creative {
-  const type: CreativeType = c.type === "video" ? "video" : "image";
+  const type: CreativeType =
+    c.type === "video" ? "video" : c.type === "text" ? "text" : "image";
   return {
-    id: c.s3_key ?? `creative-${i}`,
+    id: c.external_ad_id ?? c.s3_key ?? `creative-${i}`,
     type,
     title: c.title ?? undefined,
     body_text: c.body_text ?? undefined,
     // the API returns an S3 key; the media proxy serves the bytes. The Dossier
     // falls back to a glyph if the image 404s (e.g. proxy not deployed yet).
     snapshot_image_url: c.s3_key ? mediaUrl(c.s3_key) : undefined,
+    external_ad_id: c.external_ad_id ?? undefined,
+    cta_text: c.cta_text ?? undefined,
+    link_url: c.link_url ?? undefined,
     ad_started_on: c.ad_started_on ?? undefined,
+    ad_ended_on: c.ad_ended_on ?? undefined,
     ad_active: c.ad_active ?? undefined,
     ad_days_running: c.ad_days_running ?? undefined,
     publisher_platforms:

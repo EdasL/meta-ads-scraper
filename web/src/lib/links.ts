@@ -15,6 +15,11 @@ export function bareDomain(domain: string | null | undefined): string {
   return domain.replace(/^https?:\/\//i, "").replace(/\/+$/, "");
 }
 
+/** The Meta Ad Library page for ONE ad (its public per-ad record). */
+export function adLibraryAdUrl(externalAdId: string): string {
+  return `https://www.facebook.com/ads/library/?id=${externalAdId}`;
+}
+
 /**
  * Build the link set from the dossier. Order is stable (profile, website, app
  * store, ads library); links whose data is missing are simply omitted.

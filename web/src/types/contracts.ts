@@ -56,16 +56,23 @@ export interface ShortlistRow {
   hero_creative: HeroCreative | null; // real ad creative for the card hero
 }
 
-export type CreativeType = "image" | "video";
+export type CreativeType = "image" | "video" | "text";
 
+/** One ad card: the ad's best creative plus its run metadata. */
 export interface Creative {
   id: string;
   type: CreativeType;
   title?: string;
   body_text?: string;
   snapshot_image_url?: string;
+  /** Meta Ad Library ID — links the card to the ad's own library page. */
+  external_ad_id?: string;
+  cta_text?: string;
+  link_url?: string;
   /** ISO date the ad started running (ads.start_date). */
   ad_started_on?: string;
+  /** ISO date the ad stopped (ads.end_date) — meaningful only when not active. */
+  ad_ended_on?: string;
   ad_active?: boolean;
   /** Days the ad has run (active: today−start; ended: end−start). */
   ad_days_running?: number;
