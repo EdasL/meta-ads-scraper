@@ -11,7 +11,7 @@ from agf.db import repo
 from agf.enrich import emerging_from_release
 from agf.enrich_full.schemas import EnrichResult
 from agf.enrich_full.funnel_capture import resolve_landing, capture_funnel
-from agf.enrich_full.creatives import download_creative
+from agf.enrich_full.creatives import download_creative, link_duplicate_creative
 from agf.enrich_full.appstore import lookup_itunes_batch, lookup_google_play
 from agf.enrich_full.company import enrich_company
 
@@ -59,7 +59,44 @@ async def _lookup_app(deps, kind, store_id):
     return None
 
 
-async def enrich_gem(conn, advertiser_id, *, top_n=5, deps: EnrichDeps) -> EnrichResult:
+def _media_only_pass(conn, advertiser_id, deps: EnrichDeps, *, done, cap) -> int:
+    """Download ONE media file for every other prefetched ad of this gem. The
+    listing pull already paid for these URLs (prefetch_creative_urls); without
+    this pass every ad beyond top-N renders a textless card. Ads that already
+    have s3-backed media are skipped; duplicate bytes are linked, not re-stored.
+    Returns the number of ads that gained media."""
+    n = 0
+    for ext_id, urls in (deps.creative_urls or {}).items():
+        if cap <= 0:
+            break
+        if ext_id in done or not urls:
+            continue
+        ad_id = conn.execute(text(
+            "SELECT id FROM public.ads WHERE advertiser_id=:a AND external_ad_id=:e"),
+            {"a": advertiser_id, "e": ext_id}).scalar()
+        if not ad_id:
+            continue
+        if conn.execute(text(
+                "SELECT 1 FROM public.creatives WHERE ad_id=:a AND s3_key IS NOT NULL LIMIT 1"),
+                {"a": ad_id}).first():
+            continue
+        ctype, url = urls[0]
+        try:                                  # fbcdn URLs expire → per-ad isolation
+            ca = download_creative(conn, ad_id, url, ctype, fetch=deps.fetch_bytes,
+                                   put=deps.put, s3=deps.s3)
+        except Exception:
+            continue
+        cap -= 1
+        if ca.s3_key:
+            n += 1
+        elif ca.creative_id is not None and link_duplicate_creative(
+                conn, ad_id, ca.creative_id, ctype):
+            n += 1
+    return n
+
+
+async def enrich_gem(conn, advertiser_id, *, top_n=5, media_cap=120,
+                     deps: EnrichDeps) -> EnrichResult:
     ads = conn.execute(text(
         "SELECT id, external_ad_id, link_url FROM public.ads WHERE advertiser_id=:a "
         "ORDER BY last_seen DESC NULLS LAST, id LIMIT :n"),
@@ -118,6 +155,10 @@ async def enrich_gem(conn, advertiser_id, *, top_n=5, deps: EnrichDeps) -> Enric
             if ca.dedup_of is None:
                 n_creatives += 1
 
+    n_creatives += _media_only_pass(conn, advertiser_id, deps,
+                                    done={str(ad.external_ad_id) for ad in ads},
+                                    cap=media_cap)
+
     company = enrich_company(conn, advertiser_id, domain=company_domain,
                              html=company_html, app_meta=last_app_meta,
                              whois_fn=deps.whois_fn)
@@ -125,13 +166,14 @@ async def enrich_gem(conn, advertiser_id, *, top_n=5, deps: EnrichDeps) -> Enric
                         funnels=n_funnels, creatives=n_creatives, company=company)
 
 
-def make_enrich_handler(deps_factory, *, top_n=5):
+def make_enrich_handler(deps_factory, *, top_n=5, media_cap=120):
     """Adapter (§3.9): handler(conn, advertiser_id) for run_worker. deps_factory(conn,
     advertiser_id)->EnrichDeps builds per-gem deps (e.g. a fresh extractor.search for
     current creative URLs — fbcdn signed URLs expire)."""
 
     def handler(conn, advertiser_id):
         deps = deps_factory(conn, advertiser_id)
-        res = asyncio.run(enrich_gem(conn, advertiser_id, top_n=top_n, deps=deps))
+        res = asyncio.run(enrich_gem(conn, advertiser_id, top_n=top_n,
+                                     media_cap=media_cap, deps=deps))
         return f"ads={res.n_ads_processed} funnels={res.funnels} creatives={res.creatives}"
     return handler

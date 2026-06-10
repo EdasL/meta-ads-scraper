@@ -27,7 +27,7 @@ import time
 from sqlalchemy import text
 
 from agf.db.engine import get_engine, begin
-from agf.enrich_full.creatives import download_creative
+from agf.enrich_full.creatives import download_creative, link_duplicate_creative
 from agf.extract.facade import Extractor
 
 HIST_PAGES = int(os.environ.get("AGF_HIST_PAGES", "12"))
@@ -44,27 +44,6 @@ def target_advertisers(engine, argv: list[str]) -> list[int]:
     with engine.connect() as conn:
         return [r[0] for r in conn.execute(text(
             "SELECT DISTINCT advertiser_id FROM frontend.saved_gems ORDER BY 1"))]
-
-
-def link_duplicate(conn, ad_id: int, creative_id: int, mtype: str, ad) -> bool:
-    """Give `ad_id` its own creatives row pointing at the duplicate's s3_key.
-    sha256 stays NULL so the partial unique index keeps byte identity on the
-    original row. Returns True when a row was inserted."""
-    row = conn.execute(text(
-        "SELECT type, s3_key FROM public.creatives WHERE id=:i"),
-        {"i": creative_id}).first()
-    if not row or not row[1]:
-        return False
-    if conn.execute(text(
-            "SELECT 1 FROM public.creatives WHERE ad_id=:a AND s3_key=:k LIMIT 1"),
-            {"a": ad_id, "k": row[1]}).first():
-        return False
-    conn.execute(text("""
-        INSERT INTO public.creatives (ad_id, type, body_text, title, s3_key)
-        VALUES (:a, :t, :b, :ti, :k)
-    """), {"a": ad_id, "t": row[0] or mtype, "b": getattr(ad, "body_text", None),
-           "ti": getattr(ad, "cta_text", None) or None, "k": row[1]})
-    return True
 
 
 def backfill_advertiser(engine, ext, aid: int, stats: dict) -> None:
@@ -120,7 +99,10 @@ def backfill_advertiser(engine, ext, aid: int, stats: dict) -> None:
             budget -= 1
             if asset.s3_key:
                 stats["downloaded"] += 1
-            elif asset.creative_id is not None and link_duplicate(conn, ad_id, asset.creative_id, mtype, ad):
+            elif asset.creative_id is not None and link_duplicate_creative(
+                    conn, ad_id, asset.creative_id, mtype,
+                    body_text=getattr(ad, "body_text", None),
+                    title=getattr(ad, "cta_text", None) or None):
                 stats["linked_dup"] += 1
     log(f"  adv {aid}: listing={len(seen)} ads, stats so far {stats}")
 

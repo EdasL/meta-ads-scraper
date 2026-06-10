@@ -25,6 +25,7 @@ Env:
   AGF_DISCOVERY_ENRICH_BUDGET  proxy-request budget, split in half: keeper-history
                                backfill gets budget//2, enrich the rest (default 600)
   AGF_ENRICH_TOP_N             ads enriched per gem                  (default 5)
+  AGF_MEDIA_CAP                media downloads per gem beyond top-N  (default 120)
   AGF_ENRICH_TTL_HOURS         re-enrich a gem at most this often    (default 168 = 7d)
   AGF_SCORE_AFTER_SWEEP=1      run run_scoring after discovery       (default off; cron owns it)
   AGF_MIN_GEM_SCORE            enrich gems at/above this score       (default 70)
@@ -118,9 +119,11 @@ def prefetch_creative_urls(extractor, conn, advertiser_ids, max_pages: int = 10)
         # Per-gem isolation: a page whose search exhausts the facade's retries (hard
         # proxy timeout) costs that gem's media this pass, not the whole batch.
         try:
+            # active_status="ALL": ended ads often still serve media for a while —
+            # the media-only enrich pass needs their URLs too, same page budget.
             ads = asyncio.run(extractor.search(query="", countries=["US"],
                                                search_type="page", view_all_page_id=page_id,
-                                               max_pages=max_pages))
+                                               active_status="ALL", max_pages=max_pages))
         except ExtractError as exc:
             print(f"[worker] creative prefetch failed for advertiser {aid}: {exc}",
                   file=sys.stderr, flush=True)
@@ -182,7 +185,8 @@ def eligible_gem_ids(conn, min_score):
 # --- one sweep ---------------------------------------------------------------
 def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
              sweep_pages=2, kw_delay=3.0, enrich_budget=600, enrich_top_n=5,
-             enrich_ttl_hours=168, score_after=False, min_score=ALERT_THRESHOLD) -> dict:
+             enrich_media_cap=120, enrich_ttl_hours=168, score_after=False,
+             min_score=ALERT_THRESHOLD) -> dict:
     """One sweep→triage→(score)→enrich pass. Returns a summary dict (no printing).
     http_client is the sweep-scoped httpx.Client for the production triage/enrich path
     (None in a dry-run, which uses offline lookups and the no-network fake deps)."""
@@ -300,7 +304,8 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
             deps_factory = production_deps_factory(extractor, http_client, creative_urls)
     due_before = datetime.now(timezone.utc) - timedelta(hours=enrich_ttl_hours)
     enriched = run_worker("enrich", "advertiser",
-                          make_enrich_handler(deps_factory, top_n=enrich_top_n),
+                          make_enrich_handler(deps_factory, top_n=enrich_top_n,
+                                              media_cap=enrich_media_cap),
                           source=engine, candidate_ids=cand_ids,
                           due_before=due_before, limit=enrich_limit)
     return {"sweep": sweep_stats, "triage": triage_stats,
@@ -359,6 +364,7 @@ def main(argv=None) -> None:
         kw_delay=_env_float("AGF_KW_DELAY", 3.0),
         enrich_budget=_env_int("AGF_DISCOVERY_ENRICH_BUDGET", 600),
         enrich_top_n=_env_int("AGF_ENRICH_TOP_N", 5),
+        enrich_media_cap=_env_int("AGF_MEDIA_CAP", 120),
         enrich_ttl_hours=_env_int("AGF_ENRICH_TTL_HOURS", 168),
         score_after=_env_bool("AGF_SCORE_AFTER_SWEEP"),
         min_score=_env_float("AGF_MIN_GEM_SCORE", ALERT_THRESHOLD),

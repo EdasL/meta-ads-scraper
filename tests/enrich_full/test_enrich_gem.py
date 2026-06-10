@@ -137,6 +137,86 @@ def test_enrich_gem_top_n_truncates(pg_conn):
     assert res.n_ads_processed == 2               # 3 ads exist, top_n=2 -> 2 processed
 
 
+def _png_colored(seed: int):
+    import io
+    from PIL import Image
+    buf = io.BytesIO()
+    Image.new("RGB", (16, 16), ((seed * 37) % 256, (seed * 11) % 256, seed % 256)).save(buf, "PNG")
+    return buf.getvalue()
+
+
+def test_enrich_gem_media_pass_covers_prefetched_ads_beyond_top_n(pg_conn):
+    # 3 ads, top_n=1: the prefetched media URLs for the other 2 ads must still
+    # be downloaded (media-only pass) — otherwise their cards render textless.
+    adv = None
+    for i in range(3):
+        ar = _ad(f"MEDIA-{i}", "https://getgem.com")
+        adv = repo.upsert_advertiser(pg_conn, ar)
+        repo.upsert_ad(pg_conn, ar, adv, None)
+
+    def fetch(url):
+        return _png_colored(int(url.rsplit("/", 1)[1].split(".")[0])), "image/png"
+
+    deps = EnrichDeps(
+        extractor=FakeExtractor(), capture=False, fetch_bytes=fetch,
+        put=lambda key, d, ct, client=None: key,
+        creative_urls={f"MEDIA-{i}": [("image", f"https://cdn/{i}.png")] for i in range(3)})
+    res = asyncio.run(enrich_gem(pg_conn, adv, top_n=1, deps=deps))
+
+    assert res.n_ads_processed == 1
+    assert res.creatives == 3
+    rows = pg_conn.execute(text(
+        "SELECT a.external_ad_id FROM public.ads a WHERE a.advertiser_id=:adv AND EXISTS "
+        "(SELECT 1 FROM public.creatives c WHERE c.ad_id=a.id AND c.s3_key IS NOT NULL)"),
+        {"adv": adv}).scalars().all()
+    assert sorted(rows) == ["MEDIA-0", "MEDIA-1", "MEDIA-2"]
+
+
+def test_enrich_gem_media_pass_links_duplicate_bytes(pg_conn):
+    # Two beyond-top-N ads serving identical bytes: the second must still get
+    # its own creatives row (shared s3_key, sha256 NULL — the partial unique
+    # index owns byte identity), so its card renders the media.
+    adv = None
+    for i in range(3):
+        ar = _ad(f"DUPM-{i}", "https://getgem.com")
+        adv = repo.upsert_advertiser(pg_conn, ar)
+        repo.upsert_ad(pg_conn, ar, adv, None)
+
+    deps = EnrichDeps(
+        extractor=FakeExtractor(), capture=False,
+        fetch_bytes=lambda u: (_png_colored(99), "image/png"),
+        put=lambda key, d, ct, client=None: key,
+        creative_urls={f"DUPM-{i}": [("image", f"https://cdn/{i}.png")] for i in (1, 2)})
+    asyncio.run(enrich_gem(pg_conn, adv, top_n=1, deps=deps))
+
+    rows = pg_conn.execute(text(
+        "SELECT a.external_ad_id, c.s3_key, c.sha256 FROM public.creatives c "
+        "JOIN public.ads a ON a.id=c.ad_id WHERE a.advertiser_id=:adv AND c.s3_key IS NOT NULL "
+        "ORDER BY c.id"), {"adv": adv}).all()
+    assert [r.external_ad_id for r in rows] == ["DUPM-1", "DUPM-2"]
+    assert rows[0].s3_key == rows[1].s3_key
+    assert rows[0].sha256 is not None and rows[1].sha256 is None
+
+
+def test_enrich_gem_media_pass_respects_cap(pg_conn):
+    adv = None
+    for i in range(3):
+        ar = _ad(f"CAP-{i}", "https://getgem.com")
+        adv = repo.upsert_advertiser(pg_conn, ar)
+        repo.upsert_ad(pg_conn, ar, adv, None)
+
+    def fetch(url):
+        return _png_colored(int(url.rsplit("/", 1)[1].split(".")[0])), "image/png"
+
+    deps = EnrichDeps(
+        extractor=FakeExtractor(), capture=False, fetch_bytes=fetch,
+        put=lambda key, d, ct, client=None: key,
+        creative_urls={f"CAP-{i}": [("image", f"https://cdn/{i}.png")] for i in range(3)})
+    res = asyncio.run(enrich_gem(pg_conn, adv, top_n=0, media_cap=2, deps=deps))
+
+    assert res.creatives == 2
+
+
 def test_enrich_gem_dead_creative_url_does_not_crash(pg_conn):
     ar = _ad("DEAD-WEB", "https://getgem.com")
     adv = repo.upsert_advertiser(pg_conn, ar)

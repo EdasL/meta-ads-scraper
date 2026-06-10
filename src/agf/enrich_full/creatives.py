@@ -66,3 +66,25 @@ def download_creative(conn, ad_id, url, type, *, body_text=None, title=None,
     return CreativeAsset(type=type, sha256=sha, phash=ph, s3_key=key,
                          content_type=content_type, file_size=len(data),
                          creative_id=cid, dedup_of=None)
+
+
+def link_duplicate_creative(conn, ad_id, creative_id, mtype, *, body_text=None,
+                            title=None) -> bool:
+    """Give `ad_id` its own creatives row pointing at an existing duplicate's
+    s3_key, so the ad's card renders the media. sha256 stays NULL — the partial
+    unique index keeps byte identity on the original row. Returns True when a
+    row was inserted."""
+    row = conn.execute(text(
+        "SELECT type, s3_key FROM public.creatives WHERE id=:i"),
+        {"i": creative_id}).first()
+    if not row or not row[1]:
+        return False
+    if conn.execute(text(
+            "SELECT 1 FROM public.creatives WHERE ad_id=:a AND s3_key=:k LIMIT 1"),
+            {"a": ad_id, "k": row[1]}).first():
+        return False
+    conn.execute(text(
+        "INSERT INTO public.creatives (ad_id, type, body_text, title, s3_key) "
+        "VALUES (:a, :t, :b, :ti, :k)"),
+        {"a": ad_id, "t": row[0] or mtype, "b": body_text, "ti": title, "k": row[1]})
+    return True
