@@ -2,7 +2,8 @@
 
 Composes the already-tested pieces behind ONE guarded loop —
     build extractor (warms lazily via SessionPool) →
-    breadth-first discovery (daily-gated keyword sweep → store-lookup triage) →
+    breadth-first discovery (daily-gated keyword sweep → store-lookup triage →
+    keeper-history backfill: store keeper ads + reconstruct the weekly series) →
     app-store refresh (daily adtech.app_metrics snapshot + metadata + reviews) →
     [optional] run_scoring →
     enrich keepers + flagged gems via run_worker(make_enrich_handler(deps_factory))
@@ -21,7 +22,8 @@ Env:
   AGF_DRY_RUN=1                fake extractor + run once, no network  (also: --dry-run / --once)
   AGF_SWEEP_PAGES              SERP pages per sweep keyword          (default 2)
   AGF_KW_DELAY                 seconds between sweep keywords        (default 3.0)
-  AGF_DISCOVERY_ENRICH_BUDGET  proxy-request budget for enrich       (default 600 ≈ 42 gems)
+  AGF_DISCOVERY_ENRICH_BUDGET  proxy-request budget, split in half: keeper-history
+                               backfill gets budget//2, enrich the rest (default 600)
   AGF_ENRICH_TOP_N             ads enriched per gem                  (default 5)
   AGF_ENRICH_TTL_HOURS         re-enrich a gem at most this often    (default 168 = 7d)
   AGF_SCORE_AFTER_SWEEP=1      run run_scoring after discovery       (default off; cron owns it)
@@ -40,6 +42,7 @@ from sqlalchemy import text
 from agf.db.engine import get_engine, begin
 from agf.db.candidates import (close_sweep_run, kept_advertiser_ids,
                                open_sweep_run, sweep_ran_today)
+from agf.discovery.keeper_history import pull_keeper_history
 from agf.discovery.sweep import run_sweep
 from agf.discovery.taxonomy import sweep_entries
 from agf.discovery.triage import run_triage
@@ -179,8 +182,8 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
     #    one txn. A dry-run always sweeps (offline) and never records a sweep_runs row.
     sweep_stats, triage_stats = None, None
     with engine.connect() as conn:
-        due = dry_run or not sweep_ran_today(conn, as_of)
-    if due:
+        sweep_due = dry_run or not sweep_ran_today(conn, as_of)
+    if sweep_due:
         run_id = None
         if not dry_run:
             with begin(engine) as conn:
@@ -254,6 +257,20 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
         with begin(engine) as conn:
             prune_app_history(conn, keep_days=keep_days)
 
+    # 1.8) keeper history — triage promotes keepers with advertiser+app rows but ZERO
+    #      ads, so their weekly series in adtech.app_advertiser_metrics never builds and
+    #      they can never pass the scoring persistence gate (weeks_observed >= 2). One
+    #      page-scoped active_status=ALL pull per keeper stores its ads and reconstructs
+    #      the last 16 Monday-aligned weeks (the proven scripts/persist_candidates.py
+    #      path). Same daily gate as the sweep; spends half the discovery enrich budget —
+    #      step 3 keeps the other half.
+    keeper_history = None
+    if sweep_due:
+        keeper_history = asyncio.run(pull_keeper_history(
+            engine, extractor, budget_requests=enrich_budget // 2,
+            sleep=(lambda s: None) if dry_run else time.sleep,
+            kw_delay=0.0 if dry_run else 2.0))
+
     # 2) scoring — optional; its own committed txn + CONCURRENT matview refresh
     scored = run_scoring(engine, as_of) if score_after else None
 
@@ -263,7 +280,7 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
     #    (12 history pages + creative prefetch). One transaction per gem (run_worker,
     #    source=engine); creative URLs are prefetched on a READ connection first.
     est_requests_per_gem = 14
-    enrich_limit = max(1, enrich_budget // est_requests_per_gem)
+    enrich_limit = max(1, (enrich_budget - enrich_budget // 2) // est_requests_per_gem)
     with engine.connect() as conn:
         kept = kept_advertiser_ids(conn)
         cand_ids = kept if dry_run else list(dict.fromkeys(
@@ -279,6 +296,7 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
                           source=engine, candidate_ids=cand_ids,
                           due_before=due_before, limit=enrich_limit)
     return {"sweep": sweep_stats, "triage": triage_stats,
+            "keeper_history": keeper_history,
             "snapshot_weeks": snapshot_weeks, "apps_refreshed": apps_refreshed,
             "scored": scored, "enrich_candidates": cand_ids, "enriched": enriched}
 
@@ -310,8 +328,10 @@ def _summary_line(s: dict) -> str:
     sweep_part = (f"new={sw['candidates_new']} seen={sw['candidates_seen']} "
                   f"kw={sw['keywords_swept']}" if sw else "skipped(daily-gate)")
     kept = tr["kept"] if tr else 0
-    line = (f"[worker] sweep: {sweep_part} kept={kept} "
-            f"weekly_snapshots={s['snapshot_weeks']} "
+    line = f"[worker] sweep: {sweep_part} kept={kept}"
+    if s.get("keeper_history") is not None:
+        line += f" hist={s['keeper_history']['keepers_done']}"
+    line += (f" weekly_snapshots={s['snapshot_weeks']} "
             f"apps_refreshed={s.get('apps_refreshed', 0)} "
             f"enriched={len(s['enriched'])}/{len(s['enrich_candidates'])}")
     if s["scored"] is not None:

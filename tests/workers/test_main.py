@@ -1,7 +1,8 @@
 """The live worker loop, dry-run end-to-end against real Postgres with the in-src
 FakeExtractor (zero Meta traffic). Proves the composition the ops `worker` service
-runs: build extractor → sweep → triage → enrich keepers via run_worker. Skips
-cleanly without AGF_TEST_DB_URL; cleans up its FAKE* sentinels."""
+runs: build extractor → sweep → triage → keeper-history backfill → enrich keepers
+via run_worker. Skips cleanly without AGF_TEST_DB_URL; cleans up its FAKE*
+sentinels."""
 import os
 import subprocess
 import sys
@@ -57,6 +58,10 @@ def test_dry_run_sweep_triages_and_enriches(_migrated_engine):
         assert summary["sweep"]["drops"]["social"] == 0
         # triage: the offline lookup keeps both -> promoted advertisers + apps
         assert summary["triage"]["kept"] == 2 and summary["triage"]["dropped"] == {}
+        # keeper history: both keepers got their page history pulled (>= tolerates
+        # stray committed keepers in the shared DB) and stored at least the demo ads
+        kh = summary["keeper_history"]
+        assert kh["keepers_done"] >= 2 and kh["ads_stored"] >= 2 and kh["errors"] == 0
         # enrich: the loop drove the enrich handler over both kept advertisers
         assert len(summary["enrich_candidates"]) == 2
         assert len(summary["enriched"]) == 2
@@ -72,6 +77,20 @@ def test_dry_run_sweep_triages_and_enriches(_migrated_engine):
                 "SELECT count(*) FROM public.apps WHERE store_id = ANY(:s) AND name IS NOT NULL"),
                 {"s": list(FAKE_STORE_IDS)}).scalar()
         assert n == 2 and kept_rows == 2 and apps == 2
+        # keeper history closed the unscoreable-keeper gap: each kept advertiser now
+        # has its demo ad in public.ads AND a 16-week reconstructed series in
+        # adtech.app_advertiser_metrics (scoped to the FAKE sentinels — shared DB).
+        with eng.connect() as conn:
+            hist = conn.execute(text(
+                "SELECT adv.page_id, count(DISTINCT a.id) AS ads, "
+                "       count(DISTINCT m.week_start) AS wks "
+                "FROM public.advertisers adv "
+                "LEFT JOIN public.ads a ON a.advertiser_id = adv.id "
+                "LEFT JOIN adtech.app_advertiser_metrics m ON m.advertiser_id = adv.id "
+                "WHERE adv.page_id = ANY(:p) GROUP BY adv.page_id"),
+                {"p": list(FAKE_PAGES)}).all()
+        assert {r.page_id: (r.ads, r.wks) for r in hist} == \
+            {"FAKE1": (1, 16), "FAKE2": (1, 16)}
         # velocity tracker: the GLOBAL weekly rollup ran (only_ids=None). Keepers have
         # no ads yet, so a clean DB legitimately rolls up 0 rows — assert instead that
         # no advertiser with active ads is missing this week's metrics row.
@@ -102,5 +121,6 @@ def test_dry_run_cli_runs_once_and_exits_zero(_migrated_engine):
         assert out.returncode == 0, out.stderr
         assert "[worker] starting — mode=DRY-RUN" in out.stdout
         assert "kept=2" in out.stdout
+        assert " hist=" in out.stdout
     finally:
         _clean_fake(_migrated_engine)
