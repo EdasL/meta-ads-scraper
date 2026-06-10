@@ -10,7 +10,11 @@ def test_shortlist_ranked_and_filtered(seeded):
         assert got == [ids["P7A"], ids["P7B"]]            # ranked by gem_score DESC, ≥70
         hf = queries.shortlist(conn, cohort="Health & Fitness×US", min_score=0)
         assert ids["P7C"] not in [r["advertiser_id"] for r in hf]   # cohort filter excludes Edu
-        assert queries.shortlist(conn, min_score=70, limit=1)[0]["advertiser_id"] == ids["P7A"]
+        # limit returns the top-ranked row. Compare against the unlimited query's head
+        # rather than a sentinel id — the shared agf_it DB may hold committed rows from
+        # other suites/live runs that legitimately outrank our P7A fixture.
+        assert (queries.shortlist(conn, min_score=70, limit=1)[0]["advertiser_id"]
+                == rows[0]["advertiser_id"])
 
 
 def test_dossier_and_scaling_and_missing(seeded):

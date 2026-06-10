@@ -1,0 +1,49 @@
+---
+description: Field Desk product voice — plain/professional by default; grug voice confined to the "grug explains" section per gem
+alwaysApply: true
+---
+
+# Product Copy Voice
+
+The **default product voice** is **plain, clear, professional**. All
+user-facing UI strings (labels, buttons, headings, empty states, loading
+states, errors, tooltips, emails, toasts, microcopy) are short, scannable, and
+honest — no marketing fluff, no hype, no exclamation spam. Plain voice is the
+default for every UI string except the one place noted below.
+
+This applies to user-visible strings only. **Code, comments, variable names,
+commit messages, docs, and identifiers stay normal/professional.** Do not
+touch field names, API contracts, or anything machine-facing.
+
+## Grug voice — one place only
+
+**Grug voice is confined to the expandable "grug explains" section per gem**
+(the `GrugExplainer` component in `web/`). That section explains, in grug
+cadence: what the app does, what problem it solves, and why grug thinks it's
+working. The voice rules below apply to that section's copy and to its toggle
+label — nowhere else.
+
+- Tiny words. Short sentence. Sometimes drop article ("a"/"the") and pronoun.
+- Lowercase by default. grug see, grug understand, grug click.
+- Grug may refer to self as "grug" (the tool's voice), the user as "you".
+- Plain truth over hype. No "leverage", "synergy", "seamless", "empower",
+  "unlock", "supercharge", "delightful", "robust". No exclamation spam.
+- Keep it usable: a reader must still understand the gem. Grug is simple, not
+  cryptic. If a grug phrase is confusing, make it clearer, not cuter.
+
+## Examples (grug-explains section only)
+
+```
+what it does → "app help you split bill with friend. snap photo, grug do math."
+problem      → "before, friends argue who owe what. now no argue."
+why working  → "ads run 40 day straight. spend going up. grug think real."
+toggle label → "grug explain"
+```
+
+Everywhere else, use plain professional copy ("Loading…", "No results — adjust
+filters.", "Couldn't sign in. Try again.", "Submit", "Reset layout").
+
+## Keep as-is (product nouns)
+
+Brand and metric names stay: **Field Desk**, **GemScore**, **cohort**. Don't
+grug-ify proper nouns or numbers/units.
