@@ -124,6 +124,32 @@ def cmd_score(args) -> None:
     log(f"score: weekly_snapshots={weeks} scored={scored} (matview refreshed)")
 
 
+def cmd_media(args) -> None:
+    """Feed gems are only UI-visible with >=1 s3-backed creative (shortlist EXISTS
+    clause) — backfill media for the score-ordered feed gems still missing one."""
+    engine = get_engine()
+    with engine.connect() as conn:
+        ids = [r[0] for r in conn.execute(text("""
+            SELECT e.advertiser_id FROM frontend.emerging_scaling_apps e
+            WHERE NOT EXISTS (SELECT 1 FROM public.creatives c
+                              JOIN public.ads a ON a.id = c.ad_id
+                              WHERE a.advertiser_id = e.advertiser_id
+                                AND c.s3_key IS NOT NULL)
+            ORDER BY e.gem_score DESC
+        """)).all()]
+    if args.limit:
+        ids = ids[:args.limit]
+    log(f"media: {len(ids)} feed gems missing s3 media")
+    if not ids:
+        return
+    import os
+    import subprocess
+    import sys
+    script = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                          "backfill_ad_media.py")
+    subprocess.run([sys.executable, script, *map(str, ids)], check=True)
+
+
 def cmd_status(args) -> None:
     engine = get_engine()
     with engine.connect() as conn:
@@ -134,10 +160,16 @@ def cmd_status(args) -> None:
                    (SELECT count(*) FROM discovery.candidates WHERE status='kept'),
                    (SELECT count(*) FROM adtech.advertiser_scores),
                    (SELECT count(*) FROM adtech.advertiser_scores WHERE vetoed=false),
-                   (SELECT count(*) FROM frontend.emerging_scaling_apps)
+                   (SELECT count(*) FROM frontend.emerging_scaling_apps),
+                   (SELECT count(*) FROM frontend.emerging_scaling_apps e
+                    WHERE EXISTS (SELECT 1 FROM public.creatives c
+                                  JOIN public.ads a ON a.id = c.ad_id
+                                  WHERE a.advertiser_id = e.advertiser_id
+                                    AND c.s3_key IS NOT NULL))
         """)).one()
     log(f"status: advertisers={row[0]} with_ads={row[1]} cand_new={row[2]} "
-        f"cand_kept={row[3]} scored={row[4]} non_vetoed={row[5]} feed={row[6]}")
+        f"cand_kept={row[3]} scored={row[4]} non_vetoed={row[5]} feed={row[6]} "
+        f"visible={row[7]}")
 
 
 def main() -> None:
@@ -166,6 +198,11 @@ def main() -> None:
 
     p = sub.add_parser("score")
     p.set_defaults(fn=cmd_score)
+
+    p = sub.add_parser("media")
+    p.add_argument("--limit", type=int, default=0,
+                   help="cap how many gems to backfill this pass (0 = all)")
+    p.set_defaults(fn=cmd_media)
 
     p = sub.add_parser("status")
     p.set_defaults(fn=cmd_status)

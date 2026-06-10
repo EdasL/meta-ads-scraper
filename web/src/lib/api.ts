@@ -53,6 +53,7 @@ async function liveOrNull<T>(path: string): Promise<T | null> {
 
 export async function getShortlist(query: ShortlistQuery = {}): Promise<ShortlistRow[]> {
   const params = new URLSearchParams();
+  params.set("limit", "1000"); // server default is 50; the feed shows the full pool
   if (query.cohort) params.set("cohort", query.cohort);
   if (query.min_score != null) params.set("min_score", String(query.min_score));
   const rows = await live<ApiShortlistRow[]>(`/shortlist?${params}`);
