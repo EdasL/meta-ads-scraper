@@ -1,5 +1,8 @@
 """Emerging-app/funnel discovery experiment harness.
 
+RESEARCH HARNESS ONLY — production discovery is src/agf/discovery/sweep.py + triage.py
+(see ops/RUNBOOK.md). This script remains for technique experiments / HTML review.
+
 Runs several discovery TECHNIQUES over the keyword taxonomy against the live Meta Ad Library,
 records per-technique yield so we can reason about what works, dedups candidates by page_id,
 vetoes incumbents by page_like_count, classifies app-vs-funnel by destination URL, and emits a

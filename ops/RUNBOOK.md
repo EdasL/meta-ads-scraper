@@ -99,9 +99,35 @@ Logs: `/var/log/agf/*.log`.
 
 The `worker` service runs `python -m agf.workers.main` — one guarded loop that each
 sweep: builds the Extractor (warms a curl_cffi session lazily via `SessionPool` +
-`ProxyPool.from_env`) → `run_discovery` (Firehose B + EU→US bridge + 14-day confirm) →
-optionally `run_scoring` → enriches flagged gems via `run_worker(make_enrich_handler(
-deps_factory))`, then sleeps `AGF_SWEEP_INTERVAL_SEC` (default 1h) and repeats.
+`ProxyPool.from_env`) → **breadth-first discovery** (below; daily-gated) → optionally
+`run_scoring` → enriches via `run_worker(make_enrich_handler(deps_factory))`, then
+sleeps `AGF_SWEEP_INTERVAL_SEC` (default 1h) and repeats.
+
+### Discovery (breadth-first, 2026-06-10)
+
+Daily, gated by `discovery.sweep_runs` (one finished row per day; the hourly worker
+loop checks the gate). Three stages, cheapest first:
+
+1. **Sweep** (proxy): `sweep_entries()` (~305 US app keywords) × `AGF_SWEEP_PAGES`
+   (default 2) SERP pages. Drops non-app/social destinations and pages with
+   `page_like_count > 10k` (`scoring.vetoes.INCUMBENT_PAGE_LIKES_MAX`) using SERP
+   data only. Survivors → `discovery.candidates` (re-seen rows bump `times_seen`,
+   never re-triage).
+2. **Triage** (free): iTunes batch + Play sidecar lookups; keeps non-games under
+   100k installs / 5k ratings with a live US listing. Keepers are promoted to
+   `public.advertisers`/`public.apps` (the tracked pool). Lookup failures stay
+   `new` and retry next day.
+3. **Enrich** (proxy): keepers first, then TTL-due flagged gems, bounded by
+   `AGF_DISCOVERY_ENRICH_BUDGET` (default 600 requests; the worker computes
+   `budget // 14` ≈ 42 gems/day at 14 requests per gem).
+
+Audit: `SELECT * FROM discovery.sweep_runs ORDER BY id DESC LIMIT 7;` and
+`SELECT drop_reason, count(*) FROM discovery.candidates GROUP BY 1;` answer
+"is the gate too tight" with data. One-keyword live smoke: `scripts/sweep_smoke.py`.
+
+The EU impressions firehose (`run_discovery`, Firehose B + bridge) is **no longer
+wired into the worker** — the module remains for research. The keyword experiment
+harness (`scripts/discover_experiment.py`) is research-only too.
 
 **App-store refresh** runs each sweep right after discovery (production only, zero Meta
 traffic — Apple/Google endpoints, no proxy): every app missing today's
@@ -119,22 +145,24 @@ the incumbent veto) — counted per enriched advertiser in `scripts/scrape_real.
 backfillable via `scripts/count_ads.py` (needs `AGF_PROXIES`; re-checks at most once per
 `--ttl-hours`, default 24).
 
-**Enrichment** runs for **flagged gems only** (`emerging_scaling_apps WHERE alert AND
-gem_score ≥ AGF_MIN_GEM_SCORE`), capped at `AGF_ENRICH_LIMIT` per sweep, `AGF_ENRICH_TTL_HOURS`
+**Enrichment** runs for **kept candidates first, then flagged gems**
+(`emerging_scaling_apps WHERE alert AND gem_score ≥ AGF_MIN_GEM_SCORE`), bounded by the
+`AGF_DISCOVERY_ENRICH_BUDGET` request budget per sweep, `AGF_ENRICH_TTL_HOURS`
 between re-enriches. The production `deps_factory` does a **fresh
 `extractor.search(view_all_page_id=page_id)`** for current creative URLs (**fbcdn signed
 URLs expire**) and wires the iTunes/HTTP/S3/WHOIS clients; the Node `google-play-scraper`
 sidecar (`src/agf/enrich_full/sidecar`, `npm install`) + standby Playwright are in the image.
 
 **Sweep caps (so a real run can't hammer Meta), all with in-code defaults:**
-`AGF_EU_COUNTRIES` (DE,GB) · `AGF_EU_MAX_PAGES` (3) · `AGF_MIN_RUNNING_DAYS` (25) ·
-`AGF_MIN_LONGEVITY_DAYS` (14) · `AGF_ENRICH_LIMIT` (10) · `AGF_ENRICH_TOP_N` (5) ·
-`AGF_ENRICH_TTL_HOURS` (168) · `AGF_SCORE_AFTER_SWEEP` (off — the cron owns daily scoring) ·
-`AGF_SWEEP_INTERVAL_SEC` (3600). Set `AGF_PROXIES` before a live run.
+`AGF_SWEEP_PAGES` (2) · `AGF_KW_DELAY` (3.0s) · `AGF_DISCOVERY_ENRICH_BUDGET` (600) ·
+`AGF_ENRICH_TOP_N` (5) · `AGF_ENRICH_TTL_HOURS` (168) · `AGF_SCORE_AFTER_SWEEP`
+(off — the cron owns daily scoring) · `AGF_SWEEP_INTERVAL_SEC` (3600). Set
+`AGF_PROXIES` before a live run. The EU knobs (`AGF_EU_*`, `AGF_MIN_RUNNING_DAYS`,
+`AGF_MIN_LONGEVITY_DAYS`, `AGF_ENRICH_LIMIT`) are **retired**.
 
 **Dry-run (no Meta traffic).** `AGF_DRY_RUN=1` (or `--dry-run`) swaps an in-process
-`agf.extract.fake.FakeExtractor`, runs exactly ONE sweep, and enriches the just-confirmed
-advertisers — so the whole path can be smoked offline:
+`agf.extract.fake.FakeExtractor`, runs exactly ONE sweep (2 keywords, offline triage
+stubs), and enriches the just-kept advertisers — so the whole path can be smoked offline:
 `docker compose -f ops/docker-compose.yml run --rm -e AGF_DRY_RUN=1 worker`, or locally
 `AGF_DRY_RUN=1 AGF_DATABASE_URL=… PYTHONPATH=src python -m agf.workers.main`.
 
