@@ -13,7 +13,10 @@ class FakeITunes:
         results = [{"trackId": int(i), "trackName": f"App {i}", "sellerName": "Dev",
                     "primaryGenreName": "Health & Fitness",
                     "releaseDate": "2026-05-20T07:00:00Z",
-                    "userRatingCount": 123, "averageUserRating": 4.5} for i in ids if i]
+                    "userRatingCount": 123, "averageUserRating": 4.5,
+                    "artworkUrl512": f"https://icons/{i}.png",
+                    "screenshotUrls": [f"https://shots/{i}-1.png"],
+                    "formattedPrice": "Free"} for i in ids if i]
         return _Resp({"resultCount": len(results), "results": results})
 
 
@@ -39,6 +42,21 @@ def test_empty_ids_no_calls():
     assert cl.calls == []
 
 
+def test_batch_maps_preview_fields():
+    out = lookup_itunes_batch(FakeITunes(), ["111"])
+    m = out["111"]
+    assert m.icon_url == "https://icons/111.png"
+    assert m.screenshots == ["https://shots/111-1.png"]
+    assert m.price_label == "Free"
+
+
+def test_batch_pause_between_chunks_not_before_first():
+    slept = []
+    lookup_itunes_batch(FakeITunes(), ["1", "2", "3"], chunk=2,
+                        pause=3.0, sleep=slept.append)
+    assert slept == [3.0]                      # 2 chunks -> exactly 1 pause
+
+
 def test_resolve_pending_app_metadata_fills_null_name_apps(pg_conn):
     # discovery's app-linking creates apps with NULL name; resolution fills them in so they
     # are interpretable AND feed genre/release/ratings into scoring (no Meta traffic).
@@ -47,10 +65,14 @@ def test_resolve_pending_app_metadata_fills_null_name_apps(pg_conn):
     n = resolve_pending_app_metadata(pg_conn, FakeITunes())
     assert n >= 1
     row = pg_conn.execute(text(
-        "SELECT name, genre, rating_count FROM public.apps WHERE id=:i"), {"i": aid}).first()
+        "SELECT name, genre, rating_count, icon_url, screenshots, price_label "
+        "FROM public.apps WHERE id=:i"), {"i": aid}).first()
     assert row.name == "App 7771"
     assert row.genre == "Health & Fitness"
     assert row.rating_count == 123
+    assert row.icon_url == "https://icons/7771.png"        # preview set lands on first contact
+    assert row.screenshots == ["https://shots/7771-1.png"]
+    assert row.price_label == "Free"
 
 
 def test_resolve_pending_app_metadata_noop_when_all_named(pg_conn):

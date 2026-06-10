@@ -86,6 +86,28 @@ def test_search_retries_on_network_timeout(monkeypatch):
     assert pool.invalidated is False   # transient → no re-warm; gateway rotation handles the IP
 
 
+def test_count_active_ads_delegates_and_rotates_on_rate_limit(monkeypatch):
+    # same resilience contract as search: back off + rotate the proxy on a throttle
+    calls = {"n": 0}
+    captured = {}
+
+    def flaky_count(session, tokens, page_id, **kw):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise ExtractError("Rate limit exceeded (code=1675004)", ErrorKind.RATE_LIMIT)
+        captured["page_id"] = page_id
+        captured.update(kw)
+        return 42, False
+
+    monkeypatch.setattr("agf.extract.facade.count_active_ads", flaky_count)
+    pool = StubPool()
+    ex = Extractor(pool=pool, max_attempts=3, backoff_base=0.0, sleep=lambda s: None)
+    out = asyncio.run(ex.count_active_ads(page_id="98765", cap=100))
+    assert out == (42, False)
+    assert captured["page_id"] == "98765" and captured["cap"] == 100
+    assert calls["n"] == 2 and pool.invalidated is True
+
+
 def test_search_does_not_invalidate_on_success(monkeypatch):
     monkeypatch.setattr("agf.extract.facade.search_ads",
                         lambda session, tokens, **kw: ([_ad("1")], None, False))

@@ -11,10 +11,17 @@ class AppMeta:
     release_date: str
     rating_count: int
     avg_rating: float
+    description: str = ""
+    icon_url: str | None = None        # iOS artworkUrl512 / Play icon
+    screenshots: list | None = None    # list of URL strings (None when the store has none)
+    installs: int | None = None        # Play maxInstalls; Apple publishes no install counts
+    price_label: str | None = None     # iOS formattedPrice / Play priceText
 
 
 def parse_lookup(payload: dict) -> AppMeta | None:
-    """Parse an iTunes Lookup response into AppMeta (None if no result)."""
+    """Parse an iTunes Lookup response into AppMeta (None if no result).
+
+    screenshotUrls CAN be empty while ipadScreenshotUrls is populated — fall back."""
     results = payload.get("results") or []
     if not results:
         return None
@@ -27,6 +34,10 @@ def parse_lookup(payload: dict) -> AppMeta | None:
         release_date=r.get("releaseDate", ""),
         rating_count=int(r.get("userRatingCount") or 0),
         avg_rating=float(r.get("averageUserRating") or 0.0),
+        description=r.get("description", ""),
+        icon_url=r.get("artworkUrl512"),
+        screenshots=(r.get("screenshotUrls") or r.get("ipadScreenshotUrls") or None),
+        price_label=r.get("formattedPrice"),
     )
 
 

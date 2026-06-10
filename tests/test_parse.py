@@ -24,6 +24,7 @@ def test_record_fields():
     assert rec.cta_type == "INSTALL_MOBILE_APP"
     assert rec.link_url == "https://apps.apple.com/us/app/fitgem/id6470000001"
     assert rec.collation_count == 7
+    assert rec.page_like_count == 842        # snapshot.page_like_count — incumbent-size signal
     assert rec.start_date == 1714500000
     assert rec.image_urls == ["https://scontent.fbcdn.net/x.jpg"]
     assert rec.video_urls == ["https://video.fbcdn.net/y.mp4"]

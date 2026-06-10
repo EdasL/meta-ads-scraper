@@ -1,6 +1,8 @@
+import json
 from pathlib import Path
 import pytest
-from agf.extract.search import build_search_variables, search_ads
+from agf.extract.search import (build_search_variables, count_active_ads, search_ads,
+                                search_pages_typeahead)
 from agf.extract.token_heal import SessionTokens
 from agf.extract.errors import ErrorKind, ExtractError
 from tests.extract.conftest import FakeResponse, FakeSession
@@ -29,6 +31,51 @@ def test_build_search_variables_impressions_sort_and_page_scope():
     assert v["sortData"] == {"mode": "SORT_BY_TOTAL_IMPRESSIONS", "direction": "DESCENDING"}
     assert v["searchType"] == "page"
     assert v["viewAllPageID"] == "98765"
+
+
+def test_sort_mode_relevancy_omits_sortdata():
+    # sort_mode=None (the default) => relevancy ranking => sortData must be absent
+    v = build_search_variables(query="calorie tracker", countries=["US"], sort_mode=None)
+    assert "sortData" not in v
+
+
+def test_sort_mode_ascending_sets_direction():
+    v = build_search_variables(query="x", countries=["US"], sort_mode="ASCENDING")
+    assert v["sortData"] == {"mode": "SORT_BY_TOTAL_IMPRESSIONS", "direction": "ASCENDING"}
+
+
+def test_sort_mode_overrides_legacy_bool():
+    # explicit sort_mode wins over the legacy sort_by_impressions alias
+    v = build_search_variables(query="x", countries=["US"],
+                               sort_by_impressions=True, sort_mode="ASCENDING")
+    assert v["sortData"]["direction"] == "ASCENDING"
+
+
+TYPEAHEAD_BODY = (
+    '{"data":{"ad_library_main":{"typeahead_suggestions":{"page_results":['
+    '{"page_id":"545533155319546","likes":678,"name":"QuitBuddy","ig_username":null,'
+    '"page_is_deleted":false},'
+    '{"page_id":"999","likes":12,"name":"Deleted Co","page_is_deleted":true}]}}}}'
+)
+
+
+def test_search_pages_typeahead_parses_and_drops_deleted():
+    session = FakeSession(responses={
+        ("POST", "/api/graphql/"): [FakeResponse(200, "for (;;);" + TYPEAHEAD_BODY)],
+    })
+    pages = search_pages_typeahead(session, TOKENS, query="personalized plan")
+    assert [p["page_id"] for p in pages] == ["545533155319546"]   # deleted page filtered out
+    assert pages[0]["page_like_count"] == 678
+    assert pages[0]["page_name"] == "QuitBuddy"
+
+
+def test_search_pages_typeahead_raises_on_rate_limit():
+    session = FakeSession(responses={
+        ("POST", "/api/graphql/"): [FakeResponse(200, RATE_LIMIT_BODY)],
+    })
+    with pytest.raises(ExtractError) as ei:
+        search_pages_typeahead(session, TOKENS, query="x")
+    assert ei.value.kind is ErrorKind.RATE_LIMIT
 
 
 def test_search_ads_paginates_and_collates():
@@ -74,3 +121,74 @@ def test_search_ads_sleeps_between_pages():
     search_ads(session, TOKENS, query="x", countries=["US"], max_pages=5,
                delay=1.0, jitter=0.0, sleep=slept.append)
     assert slept == [1.0]            # exactly one inter-page sleep for two pages
+
+
+# --- count_active_ads (bounded view_all_page_id pagination) ----------------------
+def _count_page(ids, *, cursor=None, has_next=False):
+    """A Page-scoped search response body with one collated ad per archive id."""
+    results = [{"ad_archive_id": i, "page_id": "P9", "page_name": "Gem",
+                "is_active": True, "start_date": 1714500000, "end_date": None,
+                "collation_count": 1, "snapshot": {}} for i in ids]
+    return json.dumps({"data": {"ad_library_main": {"search_results_connection": {
+        "edges": [{"node": {"collated_results": results}}],
+        "page_info": {"has_next_page": has_next, "end_cursor": cursor}}}}})
+
+
+def test_count_active_ads_exact_total_when_pagination_ends():
+    session = FakeSession(responses={("POST", "/api/graphql/"): [
+        FakeResponse(200, _count_page(["1", "2"], cursor="C1", has_next=True)),
+        FakeResponse(200, _count_page(["3"], cursor=None, has_next=False)),
+    ]})
+    count, capped = count_active_ads(session, TOKENS, "P9", cap=250)
+    assert (count, capped) == (3, False)
+    assert sum(1 for m, _u in session.calls if m == "POST") == 2
+
+
+def test_count_active_ads_early_exits_at_cap():
+    session = FakeSession(responses={("POST", "/api/graphql/"): [
+        FakeResponse(200, _count_page(["1", "2"], cursor="C1", has_next=True)),
+        FakeResponse(200, _count_page(["3", "4"], cursor="C2", has_next=True)),
+        FakeResponse(200, _count_page(["5", "6"], cursor="C3", has_next=True)),
+    ]})
+    count, capped = count_active_ads(session, TOKENS, "P9", cap=3)
+    assert capped is True and count >= 3
+    assert sum(1 for m, _u in session.calls if m == "POST") == 2   # stopped at the cap
+
+
+def test_count_active_ads_counts_distinct_archive_ids():
+    # the same ad can reappear across pages (collation churn) — count it once
+    session = FakeSession(responses={("POST", "/api/graphql/"): [
+        FakeResponse(200, _count_page(["1", "2"], cursor="C1", has_next=True)),
+        FakeResponse(200, _count_page(["2", "3"], cursor=None, has_next=False)),
+    ]})
+    count, capped = count_active_ads(session, TOKENS, "P9", cap=250)
+    assert (count, capped) == (3, False)
+
+
+def test_count_active_ads_page_bound_reads_as_capped():
+    # max_pages exhausted with more pages remaining -> the count is a lower bound
+    session = FakeSession(responses={("POST", "/api/graphql/"): [
+        FakeResponse(200, _count_page(["1"], cursor="C1", has_next=True)),
+        FakeResponse(200, _count_page(["2"], cursor="C2", has_next=True)),
+    ]})
+    count, capped = count_active_ads(session, TOKENS, "P9", cap=250, max_pages=2)
+    assert (count, capped) == (2, True)
+
+
+def test_count_active_ads_raises_on_rate_limit():
+    session = FakeSession(responses={
+        ("POST", "/api/graphql/"): [FakeResponse(200, RATE_LIMIT_BODY)],
+    })
+    with pytest.raises(ExtractError) as ei:
+        count_active_ads(session, TOKENS, "P9")
+    assert ei.value.kind is ErrorKind.RATE_LIMIT
+
+
+def test_count_active_ads_sleeps_between_pages():
+    slept = []
+    session = FakeSession(responses={("POST", "/api/graphql/"): [
+        FakeResponse(200, _count_page(["1"], cursor="C1", has_next=True)),
+        FakeResponse(200, _count_page(["2"], cursor=None, has_next=False)),
+    ]})
+    count_active_ads(session, TOKENS, "P9", delay=1.0, jitter=0.0, sleep=slept.append)
+    assert slept == [1.0]            # pacing matches the search_ads contract

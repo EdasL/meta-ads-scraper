@@ -16,7 +16,10 @@ async function main() {
       }
       out.push({ appId: a.appId, title: a.title, developer: a.developer,
                  genre: a.genre, released: a.released, releaseDateISO,
-                 score: a.score, ratings: a.ratings });
+                 score: a.score, ratings: a.ratings, description: a.description,
+                 icon: a.icon, screenshots: a.screenshots,
+                 maxInstalls: a.maxInstalls, installs: a.installs,
+                 priceText: a.priceText });
     } catch (e) {
       out.push({ appId, error: String((e && e.message) || e) });
     }

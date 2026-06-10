@@ -19,6 +19,32 @@ def test_parses_sidecar_json_into_appmeta():
     assert m.release_date == "2026-06-03" and m.rating_count == 321 and m.avg_rating == 4.6
 
 
+def test_parses_preview_and_install_fields():
+    def fake_runner(ids):
+        return json.dumps([
+            {"appId": "com.gem.app", "title": "Gem", "developer": "Acme",
+             "genre": "Health", "releaseDateISO": "2026-06-03", "score": 4.6,
+             "ratings": 321, "icon": "https://play/icon.png",
+             "screenshots": ["https://play/s1.png", "https://play/s2.png"],
+             "maxInstalls": 116000000, "installs": "100,000,000+",
+             "priceText": "Free"},
+        ])
+    m = lookup_google_play(["com.gem.app"], runner=fake_runner)["com.gem.app"]
+    assert m.icon_url == "https://play/icon.png"
+    assert m.screenshots == ["https://play/s1.png", "https://play/s2.png"]
+    assert m.installs == 116000000             # maxInstalls (near-exact), not the bucket
+    assert m.price_label == "Free"
+
+
+def test_missing_preview_fields_default_to_none():
+    raw = json.dumps([{"appId": "com.min", "title": "Min", "developer": "D",
+                       "genre": "G", "releaseDateISO": "2026-01-01",
+                       "score": 4.0, "ratings": 5}])
+    m = lookup_google_play(["com.min"], runner=lambda ids: raw)["com.min"]
+    assert m.icon_url is None and m.screenshots is None
+    assert m.installs is None and m.price_label is None
+
+
 def test_empty_ids_no_runner_call():
     called = []
     assert lookup_google_play([], runner=lambda ids: called.append(ids) or "[]") == {}

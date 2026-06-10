@@ -1,5 +1,6 @@
 """conn-first data-access (master-plan §3.3). Every function takes a SQLAlchemy
 Connection as its first arg and runs inside the caller's transaction (no commits)."""
+import json
 from datetime import datetime, timezone, date
 from sqlalchemy import text
 from agf.db.dedup import is_duplicate_creative
@@ -28,6 +29,20 @@ def _as_date(v):
             return None
 
 
+_DESC_CAP = 1500
+
+
+def _cap_description(value, cap: int = _DESC_CAP):
+    """Trim an app-store description to `cap` chars; empty/blank -> None so a later
+    NULL never wipes a good value (paired with COALESCE on the upsert)."""
+    if not value:
+        return None
+    text_value = str(value).strip()
+    if not text_value:
+        return None
+    return text_value[:cap]
+
+
 def _app_dict(meta) -> dict:
     """Accept either a dict of app columns or a Plan-1 AppMeta (iOS)."""
     if isinstance(meta, dict):
@@ -36,7 +51,12 @@ def _app_dict(meta) -> dict:
         m = {"store": "ios", "store_id": meta.track_id, "name": meta.name,
              "developer": getattr(meta, "seller", None), "genre": meta.genre,
              "release_date": meta.release_date, "rating": getattr(meta, "avg_rating", None),
-             "rating_count": meta.rating_count}
+             "rating_count": meta.rating_count,
+             "installs": getattr(meta, "installs", None),
+             "icon_url": getattr(meta, "icon_url", None),
+             "screenshots": getattr(meta, "screenshots", None),
+             "price_label": getattr(meta, "price_label", None),
+             "description": getattr(meta, "description", None)}
     else:
         raise TypeError("upsert_app expects a dict or AppMeta")
     if not m.get("store") or not m.get("store_id"):
@@ -46,26 +66,34 @@ def _app_dict(meta) -> dict:
 
 # --- core upserts ------------------------------------------------------------
 def upsert_advertiser(conn, ar) -> int:
-    """Minimal advertiser insert (page_id, page_name). Enrichment cols are Plan-6."""
+    """Minimal advertiser insert (page_id, page_name, page_like_count). Enrichment cols
+    are Plan-6. page_like_count (snapshot.page_like_count — the cheap incumbent-size
+    signal) only updates when the incoming value is non-NULL."""
     return conn.execute(text("""
-        INSERT INTO public.advertisers (page_id, page_name)
-        VALUES (:page_id, :page_name)
+        INSERT INTO public.advertisers (page_id, page_name, page_like_count)
+        VALUES (:page_id, :page_name, :page_like_count)
         ON CONFLICT (page_id) DO UPDATE
           SET page_name = COALESCE(EXCLUDED.page_name, public.advertisers.page_name),
+              page_like_count = COALESCE(EXCLUDED.page_like_count,
+                                         public.advertisers.page_like_count),
               last_seen = now()
         RETURNING id
-    """), {"page_id": ar.page_id, "page_name": getattr(ar, "page_name", None)}).scalar_one()
+    """), {"page_id": ar.page_id, "page_name": getattr(ar, "page_name", None),
+           "page_like_count": getattr(ar, "page_like_count", None)}).scalar_one()
 
 
 def upsert_app(conn, meta) -> int:
     m = _app_dict(meta)
+    screenshots = m.get("screenshots")
     return conn.execute(text("""
         INSERT INTO public.apps
           (store, store_id, name, developer, genre, release_date, rating,
-           rating_count, installs, free, icon_url, is_emerging)
+           rating_count, installs, free, icon_url, screenshots, price_label,
+           is_emerging, description)
         VALUES
           (:store, :store_id, :name, :developer, :genre, :release_date, :rating,
-           :rating_count, :installs, :free, :icon_url, :is_emerging)
+           :rating_count, :installs, :free, :icon_url, CAST(:screenshots AS jsonb),
+           :price_label, :is_emerging, :description)
         ON CONFLICT (store, store_id) DO UPDATE SET
           name         = COALESCE(EXCLUDED.name, public.apps.name),
           developer    = COALESCE(EXCLUDED.developer, public.apps.developer),
@@ -76,7 +104,10 @@ def upsert_app(conn, meta) -> int:
           installs     = COALESCE(EXCLUDED.installs, public.apps.installs),
           free         = COALESCE(EXCLUDED.free, public.apps.free),
           icon_url     = COALESCE(EXCLUDED.icon_url, public.apps.icon_url),
+          screenshots  = COALESCE(EXCLUDED.screenshots, public.apps.screenshots),
+          price_label  = COALESCE(EXCLUDED.price_label, public.apps.price_label),
           is_emerging  = COALESCE(EXCLUDED.is_emerging, public.apps.is_emerging),
+          description  = COALESCE(EXCLUDED.description, public.apps.description),
           updated_at   = now()
         RETURNING id
     """), {
@@ -85,7 +116,10 @@ def upsert_app(conn, meta) -> int:
         "release_date": _as_date(m.get("release_date")), "rating": m.get("rating"),
         "rating_count": m.get("rating_count"), "installs": m.get("installs"),
         "free": m.get("free"), "icon_url": m.get("icon_url"),
+        "screenshots": json.dumps(list(screenshots)) if screenshots else None,
+        "price_label": m.get("price_label"),
         "is_emerging": m.get("is_emerging"),
+        "description": _cap_description(m.get("description")),
     }).scalar_one()
 
 
@@ -133,6 +167,71 @@ def upsert_creative(conn, ad_id, type, body_text, title, snapshot_image_url,
 
 
 # --- metrics / enrichment ----------------------------------------------------
+def upsert_app_metric(conn, app_id, snapshot_date, rating, rating_count, installs) -> None:
+    """One adtech.app_metrics row per app per day (the app-side growth series:
+    rating_count delta is the iOS download proxy; installs = Play maxInstalls).
+    Idempotent on (app_id, snapshot_date)."""
+    conn.execute(text("""
+        INSERT INTO adtech.app_metrics (app_id, snapshot_date, rating, rating_count, installs)
+        VALUES (:app_id, :d, :rating, :rating_count, :installs)
+        ON CONFLICT (app_id, snapshot_date) DO UPDATE SET
+          rating = EXCLUDED.rating,
+          rating_count = EXCLUDED.rating_count,
+          installs = EXCLUDED.installs
+    """), {"app_id": app_id, "d": _as_date(snapshot_date), "rating": rating,
+           "rating_count": rating_count, "installs": installs})
+
+
+def prune_app_history(conn, keep_days: int = 730) -> tuple[int, int]:
+    """Time-bound the app-side history tables. The growth series is the core
+    product signal, so the default window is conservative (2 years). Returns
+    (app_metrics_deleted, app_reviews_deleted)."""
+    m = conn.execute(text(
+        "DELETE FROM adtech.app_metrics WHERE snapshot_date < current_date - :d"
+    ), {"d": keep_days}).rowcount
+    r = conn.execute(text(
+        "DELETE FROM public.app_reviews WHERE fetched_at < now() - :d * interval '1 day'"
+    ), {"d": keep_days}).rowcount
+    return m, r
+
+
+def upsert_app_reviews(conn, app_id, reviews) -> int:
+    """Upsert recent store reviews (public.app_reviews), keyed (app_id, review_id).
+    Returns the number of rows written (insert or update)."""
+    n = 0
+    for r in reviews:
+        if not getattr(r, "review_id", None):
+            continue
+        conn.execute(text("""
+            INSERT INTO public.app_reviews
+              (app_id, review_id, author, rating, title, content, reviewed_at)
+            VALUES (:app_id, :rid, :author, :rating, :title, :content, :reviewed_at)
+            ON CONFLICT (app_id, review_id) DO UPDATE SET
+              author      = COALESCE(EXCLUDED.author, public.app_reviews.author),
+              rating      = COALESCE(EXCLUDED.rating, public.app_reviews.rating),
+              title       = COALESCE(EXCLUDED.title, public.app_reviews.title),
+              content     = COALESCE(EXCLUDED.content, public.app_reviews.content),
+              reviewed_at = COALESCE(EXCLUDED.reviewed_at, public.app_reviews.reviewed_at),
+              fetched_at  = now()
+        """), {"app_id": app_id, "rid": str(r.review_id), "author": r.author,
+               "rating": r.rating, "title": r.title, "content": r.content,
+               "reviewed_at": r.reviewed_at})
+        n += 1
+    return n
+
+
+def set_meta_active_ads(conn, advertiser_id, count, capped) -> None:
+    """Persist the true active-ad count from bounded view_all_page_id pagination.
+    capped=True means pagination hit the cap, so `count` is a lower bound ("count+")."""
+    conn.execute(text("""
+        UPDATE public.advertisers
+        SET meta_active_ads = :n,
+            meta_active_ads_capped = :capped,
+            meta_active_ads_checked_at = now()
+        WHERE id = :id
+    """), {"id": advertiser_id, "n": count, "capped": bool(capped)})
+
+
 def record_ad_metric(conn, ad_id, snapshot_date, eu_total_reach, active) -> None:
     conn.execute(text("""
         INSERT INTO adtech.ad_metrics (ad_id, snapshot_date, eu_total_reach, active)
@@ -154,6 +253,24 @@ def upsert_app_advertiser_metric(conn, advertiser_id, week_start, active_ad_coun
           total_eu_reach = EXCLUDED.total_eu_reach
     """), {"adv": advertiser_id, "wk": _as_date(week_start), "acount": active_ad_count,
            "ccount": distinct_creative_count, "reach": total_eu_reach})
+
+
+def upsert_advertiser_growth(conn, advertiser_id, first_count, latest_count,
+                             weeks_observed, pct_change) -> None:
+    """Upsert the per-advertiser growth summary (adtech.advertiser_growth). One row per
+    advertiser; recomputed each scoring run. conn-first: no commit."""
+    conn.execute(text("""
+        INSERT INTO adtech.advertiser_growth
+          (advertiser_id, first_count, latest_count, weeks_observed, pct_change, computed_at)
+        VALUES (:adv, :first, :latest, :weeks, :pct, clock_timestamp())
+        ON CONFLICT (advertiser_id) DO UPDATE SET
+          first_count    = EXCLUDED.first_count,
+          latest_count   = EXCLUDED.latest_count,
+          weeks_observed = EXCLUDED.weeks_observed,
+          pct_change     = EXCLUDED.pct_change,
+          computed_at    = clock_timestamp()
+    """), {"adv": advertiser_id, "first": first_count, "latest": latest_count,
+           "weeks": weeks_observed, "pct": pct_change})
 
 
 def upsert_funnel(conn, ad_id, landing_url, final_url_after_redirect, screenshot_s3_key) -> None:

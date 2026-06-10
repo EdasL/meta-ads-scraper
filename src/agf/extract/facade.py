@@ -3,7 +3,7 @@ import time as _time
 from agf.parse import AdRecord
 from agf.extract.ad_details import AdDetails, fetch_ad_details
 from agf.extract.deeplink import ResolvedLink, resolve_deeplink
-from agf.extract.search import search_ads
+from agf.extract.search import count_active_ads, search_ads, search_pages_typeahead
 from agf.extract.session_pool import SessionPool
 from agf.extract.tls_client import AdLibrarySession
 from agf.extract.proxy import ProxyPool
@@ -65,16 +65,39 @@ class Extractor:
                             base=self._backoff_base, sleep=self._sleep, on_retry=on_retry)
 
     async def search(self, *, query="", countries=["US"], active_status="ACTIVE",
-                     sort_by_impressions=False, search_type="KEYWORD_UNORDERED",
+                     sort_by_impressions=False, sort_mode: str | None = None,
+                     search_type="KEYWORD_UNORDERED",
                      view_all_page_id=None, max_pages=10) -> list[AdRecord]:
         def attempt():
             ws = self._pool.acquire()
             records, _cursor, _has_next = search_ads(
                 ws.session, ws.tokens, query=query, countries=countries,
                 active_status=active_status, sort_by_impressions=sort_by_impressions,
-                search_type=search_type, view_all_page_id=view_all_page_id, max_pages=max_pages,
+                sort_mode=sort_mode, search_type=search_type,
+                view_all_page_id=view_all_page_id, max_pages=max_pages,
                 delay=self._search_delay, jitter=self._search_jitter, sleep=self._sleep)
             return records
+        return await asyncio.to_thread(lambda: self._run_resilient(attempt))
+
+    async def count_active_ads(self, *, page_id, countries=["US"], cap=250,
+                               max_pages=40) -> tuple[int, bool]:
+        """True active-ad count for a Page (bounded view_all_page_id pagination, early
+        exit at `cap` -> capped=True). Throttle-aware: paced between pages, backs off +
+        rotates IP on rate-limit, same as `search`."""
+        def attempt():
+            ws = self._pool.acquire()
+            return count_active_ads(
+                ws.session, ws.tokens, page_id, countries=countries, cap=cap,
+                max_pages=max_pages, delay=self._search_delay,
+                jitter=self._search_jitter, sleep=self._sleep)
+        return await asyncio.to_thread(lambda: self._run_resilient(attempt))
+
+    async def typeahead(self, *, query: str, country: str = "US") -> list[dict]:
+        """Keyword -> candidate Pages (page_id + page_like_count + name). Throttle-aware:
+        rotates IP + backs off on rate-limit, same as `search`."""
+        def attempt():
+            ws = self._pool.acquire()
+            return search_pages_typeahead(ws.session, ws.tokens, query=query, country=country)
         return await asyncio.to_thread(lambda: self._run_resilient(attempt))
 
     async def ad_details(self, ad_archive_id) -> AdDetails:

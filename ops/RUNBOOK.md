@@ -103,6 +103,22 @@ sweep: builds the Extractor (warms a curl_cffi session lazily via `SessionPool` 
 optionally `run_scoring` → enriches flagged gems via `run_worker(make_enrich_handler(
 deps_factory))`, then sleeps `AGF_SWEEP_INTERVAL_SEC` (default 1h) and repeats.
 
+**App-store refresh** runs each sweep right after discovery (production only, zero Meta
+traffic — Apple/Google endpoints, no proxy): every app missing today's
+`adtech.app_metrics` snapshot gets a **batched** iTunes / google-play re-lookup
+(icon / screenshots / price / installs / ratings → `public.apps`), one daily
+`adtech.app_metrics` row (rating, rating_count, installs — the app-side growth series;
+iOS downloads are proxied by rating_count deltas), and its ~20 most-recent store reviews
+(`public.app_reviews`). Scoping to "missing today's snapshot" keeps an hourly sweep
+cadence at ≤1 store hit per app per day. One-shot/backfill: `scripts/refresh_apps.py`
+(`--ids 1,2` / `--all`; default = apps due today).
+
+**True active-ad counts** (`advertisers.meta_active_ads`, "N ads in library") come from
+bounded `view_all_page_id` pagination with early exit at the cap (capped=TRUE = "cap+",
+the incumbent veto) — counted per enriched advertiser in `scripts/scrape_real.py` and
+backfillable via `scripts/count_ads.py` (needs `AGF_PROXIES`; re-checks at most once per
+`--ttl-hours`, default 24).
+
 **Enrichment** runs for **flagged gems only** (`emerging_scaling_apps WHERE alert AND
 gem_score ≥ AGF_MIN_GEM_SCORE`), capped at `AGF_ENRICH_LIMIT` per sweep, `AGF_ENRICH_TTL_HOURS`
 between re-enriches. The production `deps_factory` does a **fresh

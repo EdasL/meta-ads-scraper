@@ -5,6 +5,7 @@
      "publisher_platform":["FACEBOOK","INSTAGRAM"],
      "snapshot":{"cta_type":"INSTALL_MOBILE_APP","cta_text":"Install",
        "link_url":"https://apps.apple.com/us/app/fitgem/id6470000001",
+       "page_like_count":842,
        "body":{"text":"Get fit in 7"},"title":"FitGem",
        "images":[{"original_image_url":"https://scontent.fbcdn.net/x.jpg"}],
        "videos":[{"video_hd_url":"https://video.fbcdn.net/y.mp4"}],"cards":[]}}

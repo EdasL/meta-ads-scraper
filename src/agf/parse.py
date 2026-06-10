@@ -14,6 +14,7 @@ class AdRecord:
     cta_text: str | None
     link_url: str | None
     body_text: str | None
+    page_like_count: int | None = None   # snapshot.page_like_count — cheap incumbent-size signal
     image_urls: list[str] = field(default_factory=list)
     video_urls: list[str] = field(default_factory=list)
 
@@ -42,6 +43,7 @@ def _to_record(node: dict) -> AdRecord:
         cta_text=snap.get("cta_text"),
         link_url=snap.get("link_url"),
         body_text=body.get("text"),
+        page_like_count=snap.get("page_like_count"),
         image_urls=[i["original_image_url"] for i in (snap.get("images") or []) if i.get("original_image_url")],
         video_urls=[v["video_hd_url"] for v in (snap.get("videos") or []) if v.get("video_hd_url")],
     )

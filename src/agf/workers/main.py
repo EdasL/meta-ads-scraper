@@ -3,6 +3,7 @@
 Composes the already-tested pieces behind ONE guarded loop —
     build extractor (warms lazily via SessionPool) →
     run_discovery (Firehose B + EU→US bridge + 14-day confirm) →
+    app-store refresh (daily adtech.app_metrics snapshot + metadata + reviews) →
     [optional] run_scoring →
     enrich flagged gems via run_worker(make_enrich_handler(deps_factory))
 — then sleeps and repeats. Previously the ops `worker` service ran a print-and
@@ -200,6 +201,28 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
         with begin(engine) as conn:
             resolve_pending_app_metadata(conn, http_client)
 
+    # 1.7) app-store refresh — daily per-app signals where the ad snapshots roll up:
+    #      store metadata (icon/screenshots/price/installs), today's adtech.app_metrics
+    #      snapshot row (the app-side growth series), and the ~20 most-recent reviews.
+    #      Scoped to apps missing today's snapshot, so an hourly sweep cadence still
+    #      hits the store APIs at most once per app per day. Production only (needs the
+    #      sweep's HTTP client); Apple/Google endpoints — zero Meta traffic.
+    apps_refreshed = 0
+    if not dry_run and http_client is not None:
+        from agf.enrich_full.app_refresh import apps_due_for_refresh, refresh_apps
+        with engine.connect() as conn:
+            due = apps_due_for_refresh(conn, as_of)
+        if due:
+            refreshed = refresh_apps(engine, only_ids=due, itunes_client=http_client,
+                                     snapshot_date=as_of)
+            apps_refreshed = refreshed["apps"]
+        # retention: the app-side history is the growth signal, so the window is
+        # conservative (default 2 years, AGF_APP_HISTORY_KEEP_DAYS to override).
+        from agf.db.repo import prune_app_history
+        keep_days = int(os.environ.get("AGF_APP_HISTORY_KEEP_DAYS", "730"))
+        with begin(engine) as conn:
+            prune_app_history(conn, keep_days=keep_days)
+
     # 2) scoring — optional; its own committed txn + CONCURRENT matview refresh
     scored = run_scoring(engine, as_of) if score_after else None
 
@@ -221,6 +244,7 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
                           source=engine, candidate_ids=cand_ids,
                           due_before=due_before, limit=enrich_limit)
     return {"discovery": disc, "scored": scored, "snapshot_weeks": snapshot_weeks,
+            "apps_refreshed": apps_refreshed,
             "enrich_candidates": cand_ids, "enriched": enriched}
 
 
@@ -250,6 +274,7 @@ def _summary_line(s: dict) -> str:
     d = s["discovery"]
     line = (f"[worker] sweep: candidates={d['candidates']} pages={d['pages']} "
             f"confirmed={len(d['confirmed'])} weekly_snapshots={s['snapshot_weeks']} "
+            f"apps_refreshed={s.get('apps_refreshed', 0)} "
             f"enriched={len(s['enriched'])}/{len(s['enrich_candidates'])}")
     if s["scored"] is not None:
         line += f" scored={s['scored']}"

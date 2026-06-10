@@ -17,6 +17,42 @@ def test_upsert_advertiser_idempotent(pg_conn):
     assert cnt == 1
 
 
+def test_upsert_advertiser_persists_page_like_count_non_null_only(pg_conn):
+    ad = _ad()
+    ad.page_like_count = 842
+    aid = repo.upsert_advertiser(pg_conn, ad)
+    assert pg_conn.execute(text(
+        "SELECT page_like_count FROM public.advertisers WHERE id=:i"),
+        {"i": aid}).scalar() == 842
+    # a later record with NULL likes must NOT wipe the stored value
+    repo.upsert_advertiser(pg_conn, _ad())
+    assert pg_conn.execute(text(
+        "SELECT page_like_count FROM public.advertisers WHERE id=:i"),
+        {"i": aid}).scalar() == 842
+    # a fresh non-NULL value updates it
+    ad.page_like_count = 900
+    repo.upsert_advertiser(pg_conn, ad)
+    assert pg_conn.execute(text(
+        "SELECT page_like_count FROM public.advertisers WHERE id=:i"),
+        {"i": aid}).scalar() == 900
+
+
+def test_upsert_app_screenshots_and_price_label(pg_conn):
+    app1 = repo.upsert_app(pg_conn, {"store": "ios", "store_id": "777111",
+                                     "screenshots": ["https://s/1.png", "https://s/2.png"],
+                                     "price_label": "Free", "icon_url": "https://i.png"})
+    row = pg_conn.execute(text(
+        "SELECT screenshots, price_label, icon_url FROM public.apps WHERE id=:i"),
+        {"i": app1}).first()
+    assert row.screenshots == ["https://s/1.png", "https://s/2.png"]   # JSONB array
+    assert row.price_label == "Free" and row.icon_url == "https://i.png"
+    # a refresh without screenshots keeps the stored set (COALESCE)
+    repo.upsert_app(pg_conn, {"store": "ios", "store_id": "777111", "name": "Later"})
+    row = pg_conn.execute(text(
+        "SELECT name, screenshots FROM public.apps WHERE id=:i"), {"i": app1}).first()
+    assert row.name == "Later" and row.screenshots == ["https://s/1.png", "https://s/2.png"]
+
+
 def test_upsert_app_idempotent_on_store_store_id(pg_conn):
     app1 = repo.upsert_app(pg_conn, {"store": "ios", "store_id": "111", "name": "FitGem",
                                      "release_date": "2026-02-10T08:00:00Z",

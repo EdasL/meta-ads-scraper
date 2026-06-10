@@ -30,6 +30,12 @@ class FakeExtractor:
             return list(self.eu_ads)
         return list(self.keyword_ads.get(query, self.default_ads))
 
+    async def count_active_ads(self, *, page_id, countries=("US",), cap=250,
+                               max_pages=40):
+        ads = self.page_ads.get(page_id, [])
+        n = len({a.ad_archive_id for a in ads})
+        return (min(n, cap), True) if n >= cap else (n, False)
+
     async def ad_details(self, ad_archive_id):
         raise NotImplementedError("FakeExtractor has no ad_details")
 
