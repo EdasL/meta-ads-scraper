@@ -67,9 +67,10 @@ def test_enrich_gem_assembled(pg_conn):
     app_id = pg_conn.execute(text("SELECT app_id FROM public.ads WHERE id=:i"),
                              {"i": ad_ios}).scalar()
     assert app_id is not None
-    app = pg_conn.execute(text("SELECT name, is_emerging, genre FROM public.apps WHERE id=:i"),
-                          {"i": app_id}).first()
+    app = pg_conn.execute(text("SELECT name, is_emerging, genre, is_game FROM public.apps "
+                               "WHERE id=:i"), {"i": app_id}).first()
     assert app.name == "GemApp" and app.is_emerging is True
+    assert app.is_game is False    # Health & Fitness primary genre -> authoritative non-game
     # funnel captured
     assert res.funnels == 1
     fr = pg_conn.execute(text("SELECT screenshot_s3_key, final_url_after_redirect "

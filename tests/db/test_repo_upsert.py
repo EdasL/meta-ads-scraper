@@ -65,6 +65,64 @@ def test_upsert_app_idempotent_on_store_store_id(pg_conn):
     assert str(row.release_date) == "2026-02-10"  # preserved (COALESCE)
 
 
+def test_upsert_app_is_game_coalesce_preserved(pg_conn):
+    app1 = repo.upsert_app(pg_conn, {"store": "ios", "store_id": "991", "is_game": True})
+    q = text("SELECT is_game FROM public.apps WHERE id=:i")
+    assert pg_conn.execute(q, {"i": app1}).scalar() is True
+    # a refresh that does not know (None) must NOT wipe the stored classification
+    repo.upsert_app(pg_conn, {"store": "ios", "store_id": "991", "name": "Later"})
+    assert pg_conn.execute(q, {"i": app1}).scalar() is True
+    # a fresh authoritative value updates it (False is non-NULL -> COALESCE picks it)
+    repo.upsert_app(pg_conn, {"store": "ios", "store_id": "991", "is_game": False})
+    assert pg_conn.execute(q, {"i": app1}).scalar() is False
+
+
+def test_ensure_text_creative_type_from_ad_media_and_rerun_safe(pg_conn):
+    adv = repo.upsert_advertiser(pg_conn, _ad())
+    ad_vid = _ad(archive="V1")
+    ad_vid.video_urls = ["https://v/1.mp4"]
+    vid = repo.upsert_ad(pg_conn, ad_vid, adv, None)
+    assert repo.ensure_text_creative(pg_conn, vid, ad_vid) is True
+    row = pg_conn.execute(text(
+        "SELECT type, s3_key, body_text, title FROM public.creatives WHERE ad_id=:a"),
+        {"a": vid}).one()
+    assert row.type == "video" and row.s3_key is None
+    assert row.body_text == "body" and row.title == "Install"   # cta_text -> title
+    # re-run: no second text row for an ad that already has a creative
+    assert repo.ensure_text_creative(pg_conn, vid, ad_vid) is False
+    assert pg_conn.execute(text(
+        "SELECT count(*) FROM public.creatives WHERE ad_id=:a"), {"a": vid}).scalar() == 1
+
+
+def test_ensure_text_creative_image_and_text_fallbacks(pg_conn):
+    adv = repo.upsert_advertiser(pg_conn, _ad())
+    ad_img = _ad(archive="I1")
+    ad_img.image_urls = ["https://i/1.png"]
+    img = repo.upsert_ad(pg_conn, ad_img, adv, None)
+    repo.ensure_text_creative(pg_conn, img, ad_img)
+    assert pg_conn.execute(text(
+        "SELECT type FROM public.creatives WHERE ad_id=:a"), {"a": img}).scalar() == "image"
+    ad_txt = _ad(archive="T1")
+    ad_txt.cta_text = None
+    txt = repo.upsert_ad(pg_conn, ad_txt, adv, None)
+    repo.ensure_text_creative(pg_conn, txt, ad_txt)
+    row = pg_conn.execute(text(
+        "SELECT type, title FROM public.creatives WHERE ad_id=:a"), {"a": txt}).one()
+    assert row.type == "text" and row.title is None
+
+
+def test_ensure_text_creative_noop_when_media_row_exists(pg_conn):
+    # the enrich worker's s3_key media row counts as a creative: no text backstop added
+    adv = repo.upsert_advertiser(pg_conn, _ad())
+    ad = _ad(archive="M1")
+    aid = repo.upsert_ad(pg_conn, ad, adv, None)
+    repo.upsert_creative(pg_conn, aid, "image", "body", None, None,
+                         "creatives/abc.jpg", "sha-m1", None)
+    assert repo.ensure_text_creative(pg_conn, aid, ad) is False
+    assert pg_conn.execute(text(
+        "SELECT count(*) FROM public.creatives WHERE ad_id=:a"), {"a": aid}).scalar() == 1
+
+
 def test_upsert_ad_links_advertiser_and_app(pg_conn):
     adv = repo.upsert_advertiser(pg_conn, _ad())
     app = repo.upsert_app(pg_conn, {"store": "ios", "store_id": "111", "name": "FitGem"})

@@ -21,7 +21,8 @@ Pipeline:
   4. resolve_pending_app_metadata so app names/genres/store ids populate.
   5. run_scoring(today) -> scores + growth + matview refresh so the API surfaces them.
 
-Bounds: max 2 pages/search, <=5 advertisers enriched, <=5 ads/advertiser. No looping.
+Bounds: max 2 pages/search, <=5 advertisers enriched, <=MAX_ADS ads stored per page
+(AGF_MAX_ADS_PER_PAGE, default 250, active first). No looping.
 Idempotent-ish: re-running re-enriches the same advertisers (dedup keeps S3 clean).
 
 Run (from repo root, with the task ENV exported):
@@ -60,6 +61,7 @@ KEYWORD_QUERIES = [
 ]
 MAX_PAGES = 2
 MAX_ENRICH = 5
+MAX_ADS = int(os.environ.get("AGF_MAX_ADS_PER_PAGE", "250"))  # ads stored per page
 MIN_APP_ADVERTISERS = 3   # below this from discovery -> trigger the keyword fallback
 AD_COUNT_CAP = 250        # count_active_ads early-exit ("250+" = incumbent territory)
 
@@ -72,17 +74,24 @@ def log(msg):
 def _store_ad_records(conn, ads, source):
     """Persist a batch of AdRecords (from extractor.search) via upsert_candidate — the
     same store path discovery's bridge uses. Emits a page Candidate (carrying the ad) for
-    every ad, plus an app Candidate when the link resolves to a store id. Returns the set
-    of advertiser ids touched."""
+    every ad, plus an app Candidate when the link resolves to a store id. Ads are stored
+    active-first, capped at MAX_ADS per page; every stored ad gets a text-only creative
+    backstop (s3_key NULL) so it renders in the evidence reel. Returns the set of
+    advertiser ids touched."""
     touched = set()
-    for ad in ads:
+    stored_per_page: dict[str, int] = {}
+    for ad in sorted(ads, key=lambda a: not a.is_active):   # stable: active first
         if not ad.page_id:
             continue
+        if stored_per_page.get(ad.page_id, 0) >= MAX_ADS:
+            continue
+        stored_per_page[ad.page_id] = stored_per_page.get(ad.page_id, 0) + 1
         page_cand = Candidate(source=source, kind="page", page_id=ad.page_id,
                               page_name=ad.page_name, ad_record=ad)
         res = upsert_candidate(conn, page_cand)
         if res.get("advertiser_id"):
             touched.add(res["advertiser_id"])
+        ad_id = res.get("ad_id")
         intent = classify_url(ad.link_url)
         if intent.kind in ("ios", "android") and intent.store_id:
             store = "ios" if intent.kind == "ios" else "android"
@@ -94,6 +103,9 @@ def _store_ad_records(conn, ads, source):
             res = upsert_candidate(conn, app_cand)
             if res.get("advertiser_id"):
                 touched.add(res["advertiser_id"])
+            ad_id = res.get("ad_id") or ad_id
+        if ad_id:
+            repo.ensure_text_creative(conn, ad_id, ad)
     return touched
 
 

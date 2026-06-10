@@ -25,6 +25,24 @@ class _Resp:
     def json(self): return self._p
 
 
+class GenreITunes:
+    """iTunes fake with per-id genre fields (for the is_game mapping). Ids absent from
+    `by_id` get a minimal result with NO genre info at all."""
+    def __init__(self, by_id):
+        self.by_id = by_id
+
+    def get(self, url, params=None):
+        ids = [i for i in (params or {}).get("id", "").split(",") if i]
+        results = []
+        for i in ids:
+            r = {"trackId": int(i), "trackName": f"App {i}", "sellerName": "Dev",
+                 "releaseDate": "2026-05-20T07:00:00Z",
+                 "userRatingCount": 1, "averageUserRating": 4.0}
+            r.update(self.by_id.get(i, {}))
+            results.append(r)
+        return _Resp({"resultCount": len(results), "results": results})
+
+
 def test_batches_in_chunks_and_keys_by_track_id():
     cl = FakeITunes()
     out = lookup_itunes_batch(cl, ["111", "222", "333"], chunk=2)
@@ -57,6 +75,24 @@ def test_batch_pause_between_chunks_not_before_first():
     assert slept == [3.0]                      # 2 chunks -> exactly 1 pause
 
 
+def test_ios_is_game_from_primary_genre_and_genre_ids():
+    out = lookup_itunes_batch(GenreITunes({
+        "1": {"primaryGenreName": "Games", "genreIds": ["7014", "6014"]},
+        "2": {"primaryGenreName": "Health & Fitness", "genreIds": ["6013"]},
+        "3": {"primaryGenreName": "Productivity", "genreIds": [6014, 6007]},  # int ids
+        "4": {"primaryGenreName": "Education"},                               # no genreIds
+    }), ["1", "2", "3", "4"])
+    assert out["1"].is_game is True
+    assert out["2"].is_game is False
+    assert out["3"].is_game is True            # 6014 present even as int -> game
+    assert out["4"].is_game is False           # authoritative non-game primary genre
+
+
+def test_ios_is_game_none_without_any_genre_info():
+    out = lookup_itunes_batch(GenreITunes({}), ["9"])
+    assert out["9"].is_game is None            # unknown stays unknown — never guessed
+
+
 def test_resolve_pending_app_metadata_fills_null_name_apps(pg_conn):
     # discovery's app-linking creates apps with NULL name; resolution fills them in so they
     # are interpretable AND feed genre/release/ratings into scoring (no Meta traffic).
@@ -73,6 +109,25 @@ def test_resolve_pending_app_metadata_fills_null_name_apps(pg_conn):
     assert row.icon_url == "https://icons/7771.png"        # preview set lands on first contact
     assert row.screenshots == ["https://shots/7771-1.png"]
     assert row.price_label == "Free"
+
+
+def test_resolve_pending_app_metadata_writes_is_game(pg_conn):
+    pg_conn.execute(text(
+        "INSERT INTO public.apps (store, store_id) VALUES ('ios','5551'), ('ios','5552')"))
+    resolve_pending_app_metadata(pg_conn, GenreITunes({
+        "5551": {"primaryGenreName": "Games", "genreIds": ["6014"]},
+        "5552": {"primaryGenreName": "Health & Fitness", "genreIds": ["6013"]}}))
+    got = dict(pg_conn.execute(text(
+        "SELECT store_id, is_game FROM public.apps WHERE store_id IN ('5551','5552')")).all())
+    assert got == {"5551": True, "5552": False}
+
+
+def test_resolve_pending_app_metadata_unknown_genre_leaves_is_game_null(pg_conn):
+    pg_conn.execute(text(
+        "INSERT INTO public.apps (store, store_id) VALUES ('ios','5553')"))
+    resolve_pending_app_metadata(pg_conn, GenreITunes({}))   # result w/o genre fields
+    assert pg_conn.execute(text(
+        "SELECT is_game FROM public.apps WHERE store_id='5553'")).scalar() is None
 
 
 def test_resolve_pending_app_metadata_noop_when_all_named(pg_conn):

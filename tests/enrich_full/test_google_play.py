@@ -45,6 +45,32 @@ def test_missing_preview_fields_default_to_none():
     assert m.installs is None and m.price_label is None
 
 
+def test_genre_id_maps_to_is_game():
+    raw = json.dumps([
+        {"appId": "com.game", "title": "G", "developer": "D", "genre": "Puzzle",
+         "genreId": "GAME_PUZZLE", "releaseDateISO": "2026-01-01", "score": 4.0, "ratings": 5},
+        {"appId": "com.fit", "title": "F", "developer": "D", "genre": "Health & Fitness",
+         "genreId": "HEALTH_AND_FITNESS", "releaseDateISO": "2026-01-01", "score": 4.0,
+         "ratings": 5}])
+    out = lookup_google_play(["com.game", "com.fit"], runner=lambda ids: raw)
+    assert out["com.game"].is_game is True     # genreId GAME_* is the authoritative flag
+    assert out["com.fit"].is_game is False
+
+
+def test_missing_genre_id_leaves_is_game_none():
+    raw = json.dumps([{"appId": "com.min", "title": "Min", "developer": "D",
+                       "genre": "Arcade", "releaseDateISO": "2026-01-01",
+                       "score": 4.0, "ratings": 5}])
+    m = lookup_google_play(["com.min"], runner=lambda ids: raw)["com.min"]
+    assert m.is_game is None                   # display-name genre is NEVER used
+
+
+def test_sidecar_emits_genre_id():
+    # contract guard: the Node sidecar must surface google-play-scraper's genreId,
+    # the only authoritative android game signal.
+    assert "genreId" in Path(_SIDECAR).read_text()
+
+
 def test_empty_ids_no_runner_call():
     called = []
     assert lookup_google_play([], runner=lambda ids: called.append(ids) or "[]") == {}

@@ -88,13 +88,14 @@ def dry_run_deps_factory(extractor):
     return factory
 
 
-def prefetch_creative_urls(extractor, conn, advertiser_ids) -> dict:
+def prefetch_creative_urls(extractor, conn, advertiser_ids, max_pages: int = 10) -> dict:
     """Fetch current creative URLs per gem via a live page search, OUTSIDE any write
     transaction (fbcdn signed URLs expire, so they must be fresh). This is deliberately
     NOT done inside the per-gem deps_factory: run_worker calls that handler inside an open
     write transaction, and a slow Meta search there would pin a DB connection + hold
-    write locks across the network round-trip. Returns {advertiser_id: {external_ad_id:
-    [(type, url)]}}."""
+    write locks across the network round-trip. max_pages bounds the Meta calls per gem —
+    callers that only download media for the top-N ads need far fewer than the default.
+    Returns {advertiser_id: {external_ad_id: [(type, url)]}}."""
     out: dict = {}
     for aid in advertiser_ids:
         page_id = conn.execute(text("SELECT page_id FROM public.advertisers WHERE id=:a"),
@@ -102,7 +103,8 @@ def prefetch_creative_urls(extractor, conn, advertiser_ids) -> dict:
         if not page_id:
             continue
         ads = asyncio.run(extractor.search(query="", countries=["US"],
-                                           search_type="page", view_all_page_id=page_id))
+                                           search_type="page", view_all_page_id=page_id,
+                                           max_pages=max_pages))
         per_ad = {}
         for ad in ads:
             urls = [("image", u) for u in (getattr(ad, "image_urls", None) or [])]

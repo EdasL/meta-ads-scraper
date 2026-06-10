@@ -86,6 +86,7 @@ async def enrich_gem(conn, advertiser_id, *, top_n=5, deps: EnrichDeps) -> Enric
                     "icon_url": getattr(meta, "icon_url", None),
                     "screenshots": getattr(meta, "screenshots", None),
                     "price_label": getattr(meta, "price_label", None),
+                    "is_game": getattr(meta, "is_game", None),
                     "is_emerging": _is_emerging(meta.release_date, now)})
                 conn.execute(text("UPDATE public.ads SET app_id=:p WHERE id=:i"),
                              {"p": app_id, "i": ad.id})

@@ -21,6 +21,30 @@ def _chunks(seq, n):
         yield seq[i:i + n]
 
 
+# --- is_game classification (authoritative store taxonomies ONLY; never inferred
+# --- from genre display names — those are localized, free-form strings) ---------
+_IOS_GAMES_GENRE_ID = "6014"
+
+
+def _ios_is_game(result: dict):
+    """iOS game flag from a raw iTunes Lookup result. iTunes returns genreIds as
+    strings, but handle ints too. None when the result has no genre info at all."""
+    primary = result.get("primaryGenreName")
+    genre_ids = result.get("genreIds")
+    if primary is None and genre_ids is None:
+        return None
+    ids = {str(g) for g in (genre_ids or [])}
+    return primary == "Games" or _IOS_GAMES_GENRE_ID in ids
+
+
+def _android_is_game(genre_id):
+    """Android game flag from google-play-scraper's genreId (e.g. GAME_PUZZLE).
+    None when the sidecar did not emit one."""
+    if not genre_id:
+        return None
+    return str(genre_id).startswith("GAME_")
+
+
 def lookup_itunes_batch(client, ids, *, chunk=200, country="us",
                         pause=0.0, sleep=_time.sleep) -> dict:
     """Look up iOS apps by trackId in ≤chunk batches -> {track_id: AppMeta}.
@@ -37,6 +61,7 @@ def lookup_itunes_batch(client, ids, *, chunk=200, country="us",
         for r in payload.get("results", []):
             meta = parse_lookup({"results": [r]})
             if meta and meta.track_id:
+                meta.is_game = _ios_is_game(r)
                 out[meta.track_id] = meta
     return out
 
@@ -65,7 +90,7 @@ def lookup_google_play(package_ids, *, runner=None) -> dict:
         if not track_id or r.get("error"):
             continue
         max_installs = r.get("maxInstalls")
-        out[track_id] = AppMeta(
+        meta = AppMeta(
             track_id=track_id, name=r.get("title", ""), seller=r.get("developer", ""),
             genre=r.get("genre", ""),
             release_date=r.get("releaseDateISO") or r.get("released") or "",
@@ -76,6 +101,8 @@ def lookup_google_play(package_ids, *, runner=None) -> dict:
             screenshots=(r.get("screenshots") or None),
             installs=int(max_installs) if max_installs is not None else None,
             price_label=r.get("priceText"))
+        meta.is_game = _android_is_game(r.get("genreId"))
+        out[track_id] = meta
     return out
 
 
@@ -107,6 +134,7 @@ def resolve_pending_app_metadata(conn, itunes_client, *, gplay_runner=None) -> i
             "screenshots=COALESCE(CAST(:shots AS jsonb), screenshots), "
             "installs=COALESCE(:installs, installs), "
             "price_label=COALESCE(:price, price_label), "
+            "is_game=COALESCE(:is_game, is_game), "
             "updated_at=clock_timestamp() WHERE id=:id"),
             {"n": meta.name or None, "d": meta.seller or None, "g": meta.genre or None,
              "r": meta.release_date or "", "ar": meta.avg_rating, "rc": meta.rating_count,
@@ -115,6 +143,7 @@ def resolve_pending_app_metadata(conn, itunes_client, *, gplay_runner=None) -> i
              "shots": json.dumps(screenshots) if screenshots else None,
              "installs": getattr(meta, "installs", None),
              "price": getattr(meta, "price_label", None),
+             "is_game": getattr(meta, "is_game", None),
              "id": app_id})
         n += 1
     return n

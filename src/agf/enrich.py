@@ -16,6 +16,7 @@ class AppMeta:
     screenshots: list | None = None    # list of URL strings (None when the store has none)
     installs: int | None = None        # Play maxInstalls; Apple publishes no install counts
     price_label: str | None = None     # iOS formattedPrice / Play priceText
+    is_game: bool | None = None        # iTunes primaryGenreName/genreIds, Play GAME_* genreId; None = unknown
 
 
 def parse_lookup(payload: dict) -> AppMeta | None:

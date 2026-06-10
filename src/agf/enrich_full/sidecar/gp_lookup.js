@@ -15,7 +15,7 @@ async function main() {
         if (!isNaN(d.getTime())) releaseDateISO = d.toISOString().slice(0, 10);
       }
       out.push({ appId: a.appId, title: a.title, developer: a.developer,
-                 genre: a.genre, released: a.released, releaseDateISO,
+                 genre: a.genre, genreId: a.genreId, released: a.released, releaseDateISO,
                  score: a.score, ratings: a.ratings, description: a.description,
                  icon: a.icon, screenshots: a.screenshots,
                  maxInstalls: a.maxInstalls, installs: a.installs,

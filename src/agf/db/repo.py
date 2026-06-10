@@ -56,7 +56,8 @@ def _app_dict(meta) -> dict:
              "icon_url": getattr(meta, "icon_url", None),
              "screenshots": getattr(meta, "screenshots", None),
              "price_label": getattr(meta, "price_label", None),
-             "description": getattr(meta, "description", None)}
+             "description": getattr(meta, "description", None),
+             "is_game": getattr(meta, "is_game", None)}
     else:
         raise TypeError("upsert_app expects a dict or AppMeta")
     if not m.get("store") or not m.get("store_id"):
@@ -89,11 +90,11 @@ def upsert_app(conn, meta) -> int:
         INSERT INTO public.apps
           (store, store_id, name, developer, genre, release_date, rating,
            rating_count, installs, free, icon_url, screenshots, price_label,
-           is_emerging, description)
+           is_emerging, description, is_game)
         VALUES
           (:store, :store_id, :name, :developer, :genre, :release_date, :rating,
            :rating_count, :installs, :free, :icon_url, CAST(:screenshots AS jsonb),
-           :price_label, :is_emerging, :description)
+           :price_label, :is_emerging, :description, :is_game)
         ON CONFLICT (store, store_id) DO UPDATE SET
           name         = COALESCE(EXCLUDED.name, public.apps.name),
           developer    = COALESCE(EXCLUDED.developer, public.apps.developer),
@@ -108,6 +109,7 @@ def upsert_app(conn, meta) -> int:
           price_label  = COALESCE(EXCLUDED.price_label, public.apps.price_label),
           is_emerging  = COALESCE(EXCLUDED.is_emerging, public.apps.is_emerging),
           description  = COALESCE(EXCLUDED.description, public.apps.description),
+          is_game      = COALESCE(EXCLUDED.is_game, public.apps.is_game),
           updated_at   = now()
         RETURNING id
     """), {
@@ -120,6 +122,7 @@ def upsert_app(conn, meta) -> int:
         "price_label": m.get("price_label"),
         "is_emerging": m.get("is_emerging"),
         "description": _cap_description(m.get("description")),
+        "is_game": m.get("is_game"),
     }).scalar_one()
 
 
@@ -164,6 +167,30 @@ def upsert_creative(conn, ad_id, type, body_text, title, snapshot_image_url,
         RETURNING id
     """), {"ad_id": ad_id, "type": type, "body": body_text, "title": title,
            "snap": snapshot_image_url, "s3": s3_key, "sha": sha256, "phash": phash}).scalar_one()
+
+
+def ensure_text_creative(conn, ad_id, ar) -> bool:
+    """Backstop a text-only creatives row (s3_key NULL) for an ad with no creatives yet,
+    so every persisted ad renders in the web evidence reel (which lists public.creatives).
+    `type` reflects the source ad's media so the reel can label the tile; the enrich
+    worker later adds real s3_key media rows for top ads — this never blocks that, and
+    no-ops when the ad already has ANY creative (dedup-safe on re-run). Returns True
+    when a row was inserted."""
+    if conn.execute(text("SELECT 1 FROM public.creatives WHERE ad_id=:a LIMIT 1"),
+                    {"a": ad_id}).first():
+        return False
+    if getattr(ar, "video_urls", None):
+        ctype = "video"
+    elif getattr(ar, "image_urls", None):
+        ctype = "image"
+    else:
+        ctype = "text"
+    conn.execute(text("""
+        INSERT INTO public.creatives (ad_id, type, body_text, title)
+        VALUES (:ad_id, :type, :body, :title)
+    """), {"ad_id": ad_id, "type": ctype, "body": getattr(ar, "body_text", None),
+           "title": getattr(ar, "cta_text", None) or None})
+    return True
 
 
 # --- metrics / enrichment ----------------------------------------------------
