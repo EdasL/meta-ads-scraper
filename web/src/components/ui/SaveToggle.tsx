@@ -1,12 +1,13 @@
 "use client";
 
-import { IconStar, IconStarFilled } from "@tabler/icons-react";
+import { IconHeart, IconHeartFilled } from "@tabler/icons-react";
 import type { ShortlistRow } from "@/types/contracts";
 import { toggleSave, useIsSaved } from "@/lib/useSaved";
 
 /**
  * One-keystroke save. Zero decisions: toggles the gem into the default
- * watchlist (freezing its score snapshot). Inverted when saved.
+ * watchlist (freezing its score snapshot). Icon-only heart to keep it
+ * compact; inverted when saved.
  */
 export function SaveToggle({
   row,
@@ -22,28 +23,24 @@ export function SaveToggle({
       type="button"
       aria-pressed={saved}
       aria-label={saved ? "Remove from saved" : "Save this gem"}
+      title={saved ? "Remove from saved" : "Save this gem"}
       onClick={(e) => {
         e.stopPropagation();
         e.preventDefault();
         toggleSave(row);
       }}
-      className="font-mono caps"
       style={{
         display: "inline-flex",
         alignItems: "center",
-        gap: 6,
+        justifyContent: "center",
         cursor: "pointer",
-        padding: small ? "4px 9px" : "7px 13px",
-        fontSize: "var(--fs-xs)",
-        letterSpacing: "0.1em",
+        padding: small ? 4 : 6,
         border: "1.5px solid var(--ink)",
         background: saved ? "var(--ink)" : "transparent",
         color: saved ? "var(--bg)" : "var(--ink)",
-        whiteSpace: "nowrap",
       }}
     >
-      {saved ? <IconStarFilled size={14} /> : <IconStar size={14} stroke={1.75} />}
-      {saved ? "Saved" : "Save"}
+      {saved ? <IconHeartFilled size={small ? 14 : 16} /> : <IconHeart size={small ? 14 : 16} stroke={1.75} />}
     </button>
   );
 }
