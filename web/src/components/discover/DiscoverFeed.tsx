@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { getShortlist } from "@/lib/api";
-import { statusChip } from "@/lib/why";
 import { Fallback } from "@/components/Fallback";
 import { ActivationChecklist, EmptyState } from "@/components/ui";
 import type { ShortlistRow } from "@/types/contracts";
@@ -17,7 +16,9 @@ const SORTERS: Record<Sort, (a: ShortlistRow, b: ShortlistRow) => number> = {
 
 function applyFilters(rows: ShortlistRow[], f: Filters): ShortlistRow[] {
   let list = rows.slice();
-  if (f.view === "rising") list = list.filter((r) => statusChip(r) !== "cooling");
+  // "rising" hides gems whose observed weekly ad count fell. Grounded in the
+  // real growth series; rows without one are kept (can't call them falling).
+  if (f.view === "rising") list = list.filter((r) => !(r.growth && r.growth.latest_count < r.growth.first_count));
   if (f.cohort) list = list.filter((r) => r.cohort === f.cohort);
   if (f.minScore > 0) list = list.filter((r) => r.gem_score >= f.minScore);
   if (f.hasFunnel) list = list.filter((r) => r.funnel_intent >= 0.5);
@@ -70,7 +71,7 @@ export function DiscoverFeed() {
         <p className="t-sm" style={{ color: "var(--muted)", marginTop: 6 }}>
           {loading
             ? "Loading…"
-            : `${visible.length} ${visible.length === 1 ? "gem" : "gems"} found. ${filters.view === "rising" ? "Movers first." : "Best score first."}`}
+            : `${visible.length} ${visible.length === 1 ? "gem" : "gems"} found.${filters.view === "rising" ? " Falling ad counts hidden." : ""}`}
         </p>
       </header>
 

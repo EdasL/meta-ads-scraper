@@ -6,8 +6,8 @@
  */
 
 /**
- * Grug's plain-language explainer for a gem — three short fields, LLM-generated
- * on the Go backend (grounded in the scraped ad copy + app-store description).
+ * Plain-language explainer for a gem — three short fields, LLM-generated on
+ * the Go backend (grounded in the scraped ad copy + app-store description).
  * Null until the explainer runner has produced it.
  */
 export interface Explainer {
@@ -51,7 +51,7 @@ export interface ShortlistRow {
   max_longevity_days: number;
   alert: boolean;
   refreshed_at: string; // ISO timestamp
-  explainer: Explainer | null; // grug explainer (null until generated)
+  explainer: Explainer | null; // LLM explainer (null until generated)
   growth: Growth | null; // quantified ad-count growth (null when sparse)
   hero_creative: HeroCreative | null; // real ad creative for the card hero
 }

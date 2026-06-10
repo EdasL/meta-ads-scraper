@@ -25,7 +25,7 @@ export function GemNotes({ row }: { row: ShortlistRow }) {
   if (!saved) {
     return (
       <section style={{ border: "1px dashed var(--line)", padding: 18, textAlign: "center", display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}>
-        <p className="t-sm" style={{ color: "var(--muted)", margin: 0 }}>watch it to keep + write why.</p>
+        <p className="t-sm" style={{ color: "var(--muted)", margin: 0 }}>Save it to keep notes and tags.</p>
         <SaveToggle row={row} />
       </section>
     );
@@ -58,7 +58,7 @@ export function GemNotes({ row }: { row: ShortlistRow }) {
           </select>
         </label>
         <label className="eyebrow" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-          you do
+          verdict
           <select
             value={saved.verdict ?? ""}
             onChange={(e) => setVerdict(saved.advertiserId, (e.target.value || undefined) as SavedVerdict | undefined)}

@@ -9,11 +9,11 @@ export type Stage = "just_saw" | "watching" | "looks_real" | "building";
 export type SavedVerdict = "build" | "clone" | "pass" | "revisit";
 export type Confidence = 1 | 2 | 3 | 4 | 5;
 
-/** Ordered stage pipeline; labels are grug (product-facing). */
+/** Ordered stage pipeline (product-facing labels). */
 export const STAGES: { id: Stage; label: string }[] = [
   { id: "just_saw", label: "just saw" },
   { id: "watching", label: "watching" },
-  { id: "looks_real", label: "look real" },
+  { id: "looks_real", label: "looks real" },
   { id: "building", label: "building" },
 ];
 

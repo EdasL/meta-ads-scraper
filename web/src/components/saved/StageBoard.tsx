@@ -16,7 +16,7 @@ const moveBtn: React.CSSProperties = {
   lineHeight: 0,
 };
 
-/** Kanban over the saved gems: just saw → watching → look real → building.
+/** Kanban over the saved gems: just saw → watching → looks real → building.
  * Move with ◂ ▸ (keyboard-friendly, robust). */
 export function StageBoard({ gems }: { gems: SavedGem[] }) {
   const order: Stage[] = STAGES.map((s) => s.id);

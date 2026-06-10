@@ -71,7 +71,7 @@ type ExplainerInput struct {
 	LandingURL     string
 }
 
-// Explainer is the structured grug-voice output. The JSON tags match both the
+// Explainer is the structured explainer output. The JSON tags match both the
 // genai ResponseSchema property names and the adtech.advertiser_explainers
 // columns, so the same shape round-trips model → struct → DB.
 type Explainer struct {
@@ -80,13 +80,13 @@ type Explainer struct {
 	WhyWorking    string `json:"why_working"`
 }
 
-const explainerSystemInstruction = "you are grug. tiny words. short lowercase sentences. " +
-	"use ONLY the ad copy and app data given. never invent features. if unsure, say less."
+const explainerSystemInstruction = "You write short, factual product notes in plain, professional language. " +
+	"Use ONLY the ad copy and app data provided. Never invent features or claims. If unsure, say less."
 
-// GenerateExplainer asks Gemini for a three-field grug explainer grounded in the
-// supplied ad copy + app data. It uses structured JSON (ResponseSchema) and the
-// same 3-attempt exponential backoff as femrun. Returns an error (callers skip)
-// when the helper is nil or every attempt fails.
+// GenerateExplainer asks Gemini for a three-field plain-voice explainer grounded
+// in the supplied ad copy + app data. It uses structured JSON (ResponseSchema)
+// and the same 3-attempt exponential backoff as femrun. Returns an error
+// (callers skip) when the helper is nil or every attempt fails.
 func (h *GeminiHelper) GenerateExplainer(ctx context.Context, in ExplainerInput) (Explainer, error) {
 	if h == nil {
 		return Explainer{}, fmt.Errorf("gemini helper not initialized")
@@ -97,15 +97,15 @@ func (h *GeminiHelper) GenerateExplainer(ctx context.Context, in ExplainerInput)
 		Properties: map[string]*genai.Schema{
 			"what_it_does": {
 				Type:        genai.TypeString,
-				Description: "in tiny words, what the app does. one or two short sentences.",
+				Description: "What the app does, in plain language. One or two short sentences.",
 			},
 			"problem_solved": {
 				Type:        genai.TypeString,
-				Description: "what problem it solves for the person. one short sentence.",
+				Description: "The problem it solves for the user. One short sentence.",
 			},
 			"why_working": {
 				Type:        genai.TypeString,
-				Description: "why the ads seem to be working, based only on the ad copy. one short sentence.",
+				Description: "Why the ad signals suggest traction, based only on the supplied ad data. One or two short sentences.",
 			},
 		},
 		Required:         []string{"what_it_does", "problem_solved", "why_working"},
@@ -170,7 +170,7 @@ func (h *GeminiHelper) GenerateExplainer(ctx context.Context, in ExplainerInput)
 // is never tempted to fill a blank label with invention.
 func buildExplainerPrompt(in ExplainerInput) string {
 	var b strings.Builder
-	b.WriteString("here is the app and its real ads. tell grug about it.\n\n")
+	b.WriteString("Here is an app and the real ad copy it runs. Describe it factually, using only this material.\n\n")
 
 	if s := strings.TrimSpace(in.AppName); s != "" {
 		fmt.Fprintf(&b, "app name: %s\n", s)

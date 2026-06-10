@@ -11,7 +11,7 @@ const robotoMono = Roboto_Mono({ variable: "--font-tech", subsets: ["latin"] });
 
 export const metadata: Metadata = {
   title: "Field Desk — Emerging App Finder",
-  description: "find idea that already work. app get big quiet on meta ads. grug point, you build.",
+  description: "Find emerging apps that are quietly scaling on Meta ads — caught early, with the evidence.",
 };
 
 export default function RootLayout({

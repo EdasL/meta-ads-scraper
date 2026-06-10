@@ -6,7 +6,7 @@
  * the server shape. Keep these aligned field-for-field with the Pydantic models.
  */
 
-/** `ExplainerInfo` (backend models.go) — grug explainer; null until generated. */
+/** `ExplainerInfo` (backend models.go) — LLM explainer; null until generated. */
 export interface ApiExplainer {
   what_it_does: string | null;
   problem_solved: string | null;

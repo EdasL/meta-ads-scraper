@@ -23,7 +23,7 @@ export function LoginForm() {
     const res = await signIn("credentials", { email, password, redirect: false });
     setBusy(false);
     if (res?.error) {
-      setError("that not right. try again.");
+      setError("That's not right. Try again.");
       return;
     }
     router.push(callbackUrl);
@@ -42,21 +42,21 @@ export function LoginForm() {
 
   return (
     <div style={{ width: "min(440px, 100%)" }}>
-      <div className="eyebrow" style={{ color: INK, marginBottom: 14 }}>only for us</div>
+      <div className="eyebrow" style={{ color: INK, marginBottom: 14 }}>internal tool</div>
       <div style={{ border: `1.5px solid ${INK}`, background: "var(--paper)", boxShadow: "6px 6px 0 var(--ink)" }}>
         <form onSubmit={onSubmit} style={{ padding: "28px 28px 32px" }}>
           <h1 className="display-x" style={{ fontSize: "2.6rem", margin: 0 }}>Field Desk</h1>
           <p className="font-mono" style={{ fontSize: "0.68rem", color: "var(--muted)", marginTop: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>
-            say who you are. then grug show gem.
+            sign in to see the board.
           </p>
 
           <label className="eyebrow" style={{ display: "block", marginTop: 22, color: INK }}>
-            your email
+            email
             <input style={field} type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="username" required />
           </label>
 
           <label className="eyebrow" style={{ display: "block", marginTop: 16, color: INK }}>
-            secret word
+            password
             <input style={field} type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" required />
           </label>
 
@@ -84,7 +84,7 @@ export function LoginForm() {
               gap: 8,
             }}
           >
-            {busy ? "grug think…" : <>go in <IconArrowRight size={20} stroke={2} /></>}
+            {busy ? "signing in…" : <>sign in <IconArrowRight size={20} stroke={2} /></>}
           </button>
         </form>
       </div>

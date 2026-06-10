@@ -4,11 +4,11 @@ import { useEffect, useId, useRef, useState } from "react";
 import { IconHelpCircle } from "@tabler/icons-react";
 
 /**
- * Inline glossary dot. Click (or focus) reveals a one-line grug definition for
- * a proprietary term — keeps jargon out of the main read while still teachable.
+ * Inline glossary dot. Click (or focus) reveals a one-line definition for a
+ * proprietary term — keeps jargon out of the main read while still teachable.
  * Closes on outside-click or Escape. No browser dialogs.
  */
-export function InfoDot({ text, label = "what this mean" }: { text: string; label?: string }) {
+export function InfoDot({ text, label = "what this means" }: { text: string; label?: string }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLSpanElement>(null);
   const tipId = useId();

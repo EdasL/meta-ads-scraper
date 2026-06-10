@@ -64,9 +64,9 @@ export function SavedGems() {
       <main style={page}>
         <h1 className="t-2xl w-heavy caps" style={{ margin: 0 }}>my gems</h1>
         <EmptyState
-          title="no gem saved yet"
-          hint="go find one. tap watch on a gem you like — grug keep it here with your note."
-          ctaLabel="find gem"
+          title="No gems saved yet"
+          hint="Save a gem from the board and it shows up here with your notes."
+          ctaLabel="find a gem"
           ctaHref="/discover"
         />
       </main>
@@ -77,7 +77,7 @@ export function SavedGems() {
     <main style={page}>
       <header style={{ marginBottom: 18 }}>
         <h1 className="t-2xl w-heavy caps" style={{ margin: 0 }}>my gems</h1>
-        <p className="t-sm" style={{ color: "var(--muted)", marginTop: 6 }}>{saved.length} saved. write why you like them.</p>
+        <p className="t-sm" style={{ color: "var(--muted)", marginTop: 6 }}>{saved.length} saved.</p>
       </header>
 
       <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", justifyContent: "space-between", marginBottom: 22 }}>
@@ -115,8 +115,8 @@ export function SavedGems() {
           <CompareView gems={compareGems} />
         ) : (
           <EmptyState
-            title="pick 2 gem to compare"
-            hint="go to list, tick the box on 2 to 5 gem, then come back here."
+            title="Pick 2 gems to compare"
+            hint="In the list view, tick the box on 2 to 5 gems, then come back here."
             ctaLabel="to list"
             onCta={() => setView("list")}
           />

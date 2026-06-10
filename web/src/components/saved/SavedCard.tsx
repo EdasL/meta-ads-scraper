@@ -4,8 +4,7 @@ import Link from "next/link";
 import { IconX } from "@tabler/icons-react";
 import { STAGES, type SavedGem, type Stage } from "@/lib/saved";
 import { setStage, unsave } from "@/lib/useSaved";
-import { signalChips } from "@/lib/why";
-import { AppIcon, ScoreBadge, SignalChips } from "@/components/ui";
+import { AppIcon, ScoreBadge } from "@/components/ui";
 
 function fmtDate(iso: string) {
   const d = new Date(iso);
@@ -25,7 +24,6 @@ const selectStyle: React.CSSProperties = {
  * time, your tags + note, stage control, and unsave. */
 export function SavedCard({ gem, selected, onToggleSelect }: { gem: SavedGem; selected: boolean; onToggleSelect: () => void }) {
   const snap = gem.scoreSnapshot;
-  const axes = { scaling_velocity: snap.scalingVelocity, under_radar: snap.underRadar, funnel_intent: snap.funnelIntent };
 
   return (
     <div style={{ border: "1.5px solid var(--ink)", background: "var(--paper)", boxShadow: "var(--shadow-hard)", padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>
@@ -44,7 +42,9 @@ export function SavedCard({ gem, selected, onToggleSelect }: { gem: SavedGem; se
         </button>
       </div>
 
-      <SignalChips chips={signalChips(axes)} compact />
+      <span className="font-mono nums" style={{ fontSize: "var(--fs-xs)", color: "var(--muted)" }}>
+        {snap.activeAdCount} ads live at save
+      </span>
 
       {gem.tags.length > 0 && (
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
@@ -57,7 +57,7 @@ export function SavedCard({ gem, selected, onToggleSelect }: { gem: SavedGem; se
       {gem.note ? (
         <p className="t-sm" style={{ color: "var(--ink-soft)", margin: 0, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{gem.note}</p>
       ) : (
-        <Link href={`/gems/${gem.advertiserId}`} className="t-sm" style={{ color: "var(--muted)" }}>no note yet. why this gem good? write it.</Link>
+        <Link href={`/gems/${gem.advertiserId}`} className="t-sm" style={{ color: "var(--muted)" }}>No note yet — add one.</Link>
       )}
 
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginTop: "auto" }}>

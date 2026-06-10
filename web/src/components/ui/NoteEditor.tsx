@@ -3,8 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 
 /**
- * Freeform note, grug-prompted. Debounced autosave + save on blur — never a
- * blocking modal. Prose lives at 16px for readability (spec §4.2).
+ * Freeform note. Debounced autosave + save on blur — never a blocking modal.
+ * Prose lives at 16px for readability (spec §4.2).
  *
  * Initializes from `value` once; to reset across gems the parent passes a
  * `key` (e.g. the advertiser id) so React remounts it with fresh state.
@@ -12,7 +12,7 @@ import { useEffect, useRef, useState } from "react";
 export function NoteEditor({
   value,
   onSave,
-  placeholder = "why you save this?",
+  placeholder = "Why did you save this?",
 }: {
   value: string;
   onSave: (v: string) => void;

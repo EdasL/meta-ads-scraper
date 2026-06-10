@@ -1,19 +1,16 @@
 # Field Desk — agent guide
 
-## Grug-brained copy (product voice)
+## Product copy (voice)
 
-All **product-facing text** in this product (UI labels, buttons, headings, empty
-states, errors, tooltips, emails, toasts — any user-visible string) is written in
-**grug voice**: simple, blunt, caveman-cadence. grug see, grug understand, grug
-click.
+All **product-facing text** (UI labels, buttons, headings, empty states,
+errors, tooltips, emails, toasts — any user-visible string) is **plain,
+clear, professional**. Short, scannable, honest. No marketing fluff, no
+exclamation spam, no novelty voices.
 
-- Tiny words, short sentences. Drop articles/pronouns when natural.
-- Lowercase by default; UPPERCASE only for big editorial display headings.
-- The tool speaks as "grug"; the user is "you".
-- Plain truth, no marketing fluff. No exclamation spam.
-- Still usable: simple, not cryptic.
-- **Machine-facing text stays normal**: code, comments, variable/field names,
-  API contracts, commit messages, docs are professional, not grug.
+- UI elements are grounded in real data (ads, store listings, DB). No
+  hardcoded or re-derived labels that restate an adjacent number.
+- Machine-facing text (code, comments, field names, API contracts, commit
+  messages, docs) is professional as well.
 - Keep product nouns intact: **Field Desk**, **GemScore**, **cohort**.
 
-Full rule + examples: `.cursor/rules/grug-copy.mdc` (also mirrored in `CLAUDE.md`).
+This rule is mirrored in `CLAUDE.md`.

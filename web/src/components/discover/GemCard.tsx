@@ -4,17 +4,16 @@ import { useState } from "react";
 import Link from "next/link";
 import type { HeroCreative, ShortlistRow } from "@/types/contracts";
 import { growthLine } from "@/lib/why";
-import { markExpandedWhy } from "@/lib/onboarding";
 import { daysAgoLabel, timeAgo } from "@/lib/format";
 import { AppIcon, ScoreBadge, SaveToggle, Trend } from "@/components/ui";
-import { GrugExplainer } from "@/components/GrugExplainer";
 
 /**
  * One gem in the Discover feed — hero-led. The real ad creative leads (with the
  * EvidenceReel body_text fallback when there's no image), the headline is the
- * ad's title/body, a colored growth line quantifies "why", and the score is
- * demoted to a corner badge. "grug explain?" expands in place. The whole card
- * links to the dossier; the explainer toggle + save button opt out of nav.
+ * ad's title/body, the growth line quantifies the observed ad-count move, and
+ * the score is demoted to a corner badge. Every value on the card comes from
+ * the ads/DB row. The whole card links to the dossier; the save button opts
+ * out of nav.
  */
 
 /** Body-text tile fallback (mirrors EvidenceReel.CreativeTile) when no image. */
@@ -129,7 +128,7 @@ export function GemCard({ row }: { row: ShortlistRow }) {
       </div>
 
       <div>
-        <div className="eyebrow" style={{ marginBottom: 4 }}>ad growth</div>
+        <div className="eyebrow" style={{ marginBottom: 4 }}>{g.kind === "growth" ? "ad growth" : "ads live"}</div>
         <Trend glyph={g.glyph} label={g.text} tone={g.tone} />
       </div>
 
@@ -137,16 +136,12 @@ export function GemCard({ row }: { row: ShortlistRow }) {
         className="font-mono nums"
         style={{ display: "flex", flexWrap: "wrap", gap: "2px 10px", fontSize: "var(--fs-xs)", color: "var(--muted)" }}
       >
-        <span>launched ~{daysAgoLabel(row.max_longevity_days)}</span>
+        <span>oldest ad {daysAgoLabel(row.max_longevity_days)}</span>
         <span aria-hidden>·</span>
         <span>updated {timeAgo(row.refreshed_at, nowMs)}</span>
       </div>
 
-      <div style={{ borderTop: "1px solid var(--line)", paddingTop: 10 }}>
-        <GrugExplainer row={row} onOpen={markExpandedWhy} />
-      </div>
-
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginTop: "auto", paddingTop: 4 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginTop: "auto", paddingTop: 10, borderTop: "1px solid var(--line)" }}>
         <span style={{ display: "inline-flex", alignItems: "center", gap: 8, minWidth: 0 }}>
           <AppIcon src={row.icon_url} name={footerName} />
           <span className="font-mono" style={{ fontSize: "var(--fs-xs)", color: "var(--muted)", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>

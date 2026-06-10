@@ -59,7 +59,7 @@ export function checklistSteps(
 ): { steps: ChecklistStep[]; allDone: boolean } {
   const steps: ChecklistStep[] = [
     { id: "find", label: "find a gem", done: !!flags.visitedGem },
-    { id: "why", label: "see why it climb", done: !!flags.expandedWhy },
+    { id: "why", label: "read why it might be working", done: !!flags.expandedWhy },
     { id: "save", label: "save it", done: ctx.savedCount > 0 },
     { id: "note", label: "write why you like it", done: ctx.hasNote },
   ];

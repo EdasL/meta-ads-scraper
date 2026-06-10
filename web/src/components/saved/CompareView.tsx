@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { scoreBand, type SignalKey } from "@/lib/why";
 import type { SavedGem } from "@/lib/saved";
 
 const cellHead: React.CSSProperties = { padding: "8px 10px", borderBottom: "1.5px solid var(--ink)", textAlign: "left", verticalAlign: "bottom" };
@@ -13,7 +12,7 @@ type Row = { label: string; get: (g: SavedGem) => string };
 const pct = (v: number) => `${Math.round(v * 100)}`;
 
 const ROWS: Row[] = [
-  { label: "gemscore", get: (g) => `${Math.round(g.scoreSnapshot.gemScore)} · ${scoreBand(g.scoreSnapshot.gemScore)}` },
+  { label: "gemscore", get: (g) => `${Math.round(g.scoreSnapshot.gemScore)}` },
   { label: "scaling", get: (g) => pct(g.scoreSnapshot.scalingVelocity) },
   { label: "under radar", get: (g) => pct(g.scoreSnapshot.underRadar) },
   { label: "funnel", get: (g) => pct(g.scoreSnapshot.funnelIntent) },
@@ -26,7 +25,7 @@ const ROWS: Row[] = [
  * "which do I build?" comparison for the founder (spec §5.3). */
 export function CompareView({ gems }: { gems: SavedGem[] }) {
   // Tag the single strongest gem per numeric signal as a quiet highlight.
-  const bestBy = (key: SignalKey | "gemScore"): number | null => {
+  const bestBy = (key: "scaling_velocity" | "under_radar" | "funnel_intent" | "gemScore"): number | null => {
     if (gems.length < 2) return null;
     let best = 0;
     const val = (g: SavedGem) =>

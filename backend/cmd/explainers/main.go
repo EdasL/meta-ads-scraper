@@ -1,4 +1,4 @@
-// Command explainers generates the grug-voice advertiser explainers offline.
+// Command explainers generates the plain-voice advertiser explainers offline.
 //
 // It is decoupled from the request path on purpose: a multi-second metered
 // model call must never block a READ ONLY GET transaction. The runner
