@@ -60,6 +60,15 @@ export function isoDateLabel(iso: string): string {
   return `${month} ${Number(m[3])}, ${m[1]}`;
 }
 
+/** "Jul 2025" from an ISO date string — month + year, no day. */
+export function monthYearLabel(iso: string): string {
+  const m = ISO_DATE.exec(iso);
+  if (!m) return "—";
+  const month = MONTHS[Number(m[2]) - 1];
+  if (!month) return "—";
+  return `${month} ${m[1]}`;
+}
+
 /** "Jul 10" from an ISO date string — month + day, no year. */
 function monthDayName(iso: string): string {
   const m = ISO_DATE.exec(iso);

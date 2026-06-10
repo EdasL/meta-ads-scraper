@@ -132,6 +132,11 @@ export function GemCard({ row }: { row: ShortlistRow }) {
       <div>
         <div className="eyebrow" style={{ marginBottom: 2 }}>{g.kind === "growth" ? "Ad growth" : "Ads live"}</div>
         <Trend glyph={g.glyph} label={g.text} tone={g.tone} />
+        {(row.longrun_ad_count ?? 0) > 0 && (
+          <div className="font-mono nums" style={{ fontSize: "var(--fs-xs)", color: "var(--muted)", marginTop: 2 }}>
+            {row.longrun_ad_count} running 30+ days
+          </div>
+        )}
       </div>
     </Link>
   );

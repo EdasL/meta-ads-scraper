@@ -11,6 +11,24 @@ import type { Growth, ScalingPoint } from "@/types/contracts";
 
 export type TrendTone = "up" | "down" | "flat";
 
+/** Percents (and multiples) from a base smaller than this are noise — a 2→25
+ * launch ramp is real growth but "+1150%" reads as fake. Never render them. */
+export const MIN_PCT_BASE = 5;
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** "since Mar" (current year) or "since Mar 2025" from an ISO date.
+ * String-parsed so a date-only value never shifts a month across timezones.
+ * Returns null on garbage input so callers fall back to the weeks copy. */
+function sinceLabel(iso: string, nowMs: number): string | null {
+  const m = /^(\d{4})-(\d{2})/.exec(iso);
+  if (!m) return null;
+  const month = MONTHS[Number(m[2]) - 1];
+  if (!month) return null;
+  const year = Number(m[1]);
+  return year === new Date(nowMs).getFullYear() ? `since ${month}` : `since ${month} ${year}`;
+}
+
 /** Whole-number percent with an explicit sign: 166.6999 → "+167%", -3.2 →
  * "-3%", 0.2 → "0%". Raw API floats are never rendered. */
 export function signedPercent(pct: number): string {
@@ -21,26 +39,36 @@ export function signedPercent(pct: number): string {
 
 /**
  * The card's growth line, built only from observed ad counts. With a usable
- * `growth` series it quantifies the move ("↗ +267% · 3→11 ads in 4wk"; when
- * pct_change can't be computed honestly it shows the count delta alone). With
- * no usable series (`kind: "count"`) it falls back to the one real fact the
- * row carries — the live ad count — with no glyph and no invented trend word.
+ * `growth` series it quantifies the move, anchored on the first stored ad
+ * when the row carries `first_ad_at` ("↗ 2→25 ads since Mar"), else on the
+ * series window ("↗ 3→11 ads in 4 weeks"). A percent renders only when the
+ * base is at least MIN_PCT_BASE ads AND pct_change exists — tiny bases make
+ * giant fake-looking percents. With no usable series (`kind: "count"`) it
+ * falls back to the one real fact the row carries — the live ad count —
+ * with no glyph and no invented trend word.
+ *
+ * `nowMs` only decides whether the "since" month needs a year; tests pin it.
  */
 export function growthLine(
   growth: Growth | null | undefined,
-  fallback: { active_ad_count: number },
+  fallback: { active_ad_count: number; first_ad_at?: string | null },
+  nowMs: number = Date.now(),
 ): { glyph: "↗" | "→" | "↘" | null; text: string; tone: TrendTone; kind: "growth" | "count" } {
   if (growth && growth.weeks >= 2) {
     const { first_count, latest_count, weeks, pct_change } = growth;
-    const counts = `${first_count}→${latest_count} ads in ${weeks} ${weeks === 1 ? "week" : "weeks"}`;
-    if (pct_change != null) {
+    const since = fallback.first_ad_at ? sinceLabel(fallback.first_ad_at, nowMs) : null;
+    const counts = since
+      ? `${first_count}→${latest_count} ads ${since}`
+      : `${first_count}→${latest_count} ads in ${weeks} ${weeks === 1 ? "week" : "weeks"}`;
+    if (pct_change != null && first_count >= MIN_PCT_BASE) {
       // Round before deriving tone so the glyph always matches the shown %.
       const rounded = Math.round(pct_change);
       const tone: TrendTone = rounded > 0 ? "up" : rounded < 0 ? "down" : "flat";
       const glyph = tone === "up" ? "↗" : tone === "down" ? "↘" : "→";
       return { glyph, text: `${signedPercent(pct_change)} · ${counts}`, tone, kind: "growth" };
     }
-    // pct_change null (e.g. grew from zero) but we still have honest counts.
+    // No honest percent (tiny base, or pct_change missing) — counts alone,
+    // with the glyph from the count delta.
     const tone: TrendTone = latest_count > first_count ? "up" : latest_count < first_count ? "down" : "flat";
     const glyph = tone === "up" ? "↗" : tone === "down" ? "↘" : "→";
     return { glyph, text: counts, tone, kind: "growth" };
@@ -58,12 +86,15 @@ export interface Trend {
   dir: "up" | "flat" | "down";
 }
 
-/** Real trend from the weekly scaling array (detail page only). */
+/** Real trend from the weekly scaling array (detail page only). Bases under
+ * MIN_PCT_BASE get no pct/multiple — direction only — same floor as the cards. */
 export function trendFromScaling(points: ScalingPoint[]): Trend {
   if (points.length < 2) return { pct: null, multiple: null, dir: "flat" };
   const first = points[0].active_ad_count;
   const last = points[points.length - 1].active_ad_count;
-  if (first <= 0) return { pct: null, multiple: null, dir: last > 0 ? "up" : "flat" };
+  if (first < MIN_PCT_BASE) {
+    return { pct: null, multiple: null, dir: last > first ? "up" : last < first ? "down" : "flat" };
+  }
   const pct = Math.round(((last - first) / first) * 100);
   const multiple = Math.round((last / first) * 10) / 10;
   const dir = pct > 8 ? "up" : pct < -8 ? "down" : "flat";

@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { SketchLineChart, type ChartPoint, type ChartTooltipItem } from "@/components/sketch";
 import { trendFromScaling } from "@/lib/why";
-import { adRunLine, creativeMetaLine, monthDayLabel } from "@/lib/format";
+import { adRunLine, creativeMetaLine, monthDayLabel, monthYearLabel } from "@/lib/format";
 import { adLibraryAdUrl, bareDomain, externalHref } from "@/lib/links";
 import type { Creative, GemDossier } from "@/types/contracts";
 
@@ -190,8 +190,9 @@ function adLabel(c: Creative): string {
   return c.type === "video" ? "Video ad (no text)" : c.type === "image" ? "Image ad (no text)" : "Text ad";
 }
 
-/** The ad-count curve. Hovering a week shows mini previews of the exact ads
- * that launched in it. */
+/** The ad-activity chart: ads running each week (including ended ones), with
+ * thin bars for launches. Hovering a week shows mini previews of the exact
+ * ads that launched in it, plus how many ended. */
 export function AdGrowth({ gem }: { gem: GemDossier }) {
   const weekMs = 7 * 24 * 3600 * 1000;
   const chart: ChartPoint[] = gem.scaling.map((s) => {
@@ -206,6 +207,7 @@ export function AdGrowth({ gem }: { gem: GemDossier }) {
       mediaUrl: c.snapshot_image_url,
       mediaType: c.type === "video" ? "video" : "image",
     }));
+    const ended = s.ended_count ?? 0;
     return {
       label: fmtWeek(s.week_start),
       value: s.active_ad_count,
@@ -215,24 +217,55 @@ export function AdGrowth({ gem }: { gem: GemDossier }) {
           ? `${launched.length} ${launched.length === 1 ? "ad" : "ads"} launched this week`
           : undefined,
         items,
+        note: ended > 0 ? `${ended} ended this week` : undefined,
       },
     };
   });
-  const t = trendFromScaling(gem.scaling);
-  // The count line is honest even when a zero start makes the multiple
-  // uncomputable — only a genuinely short series is "early".
-  const caption =
-    gem.scaling.length < 2
-      ? "Early — not many weeks of data yet."
-      : `${gem.scaling[0]?.active_ad_count} → ${gem.scaling[gem.scaling.length - 1]?.active_ad_count} ads over ${gem.scaling.length} weeks${t.multiple != null ? ` · ${t.multiple}x` : ""}`;
+  const launchedBars = gem.scaling.map((s) => s.launched_count ?? 0);
+  const hasBars = launchedBars.some((v) => v > 0);
+
+  // Lifecycle caption: counts and dates from the full ad record. Clauses with
+  // no data are omitted; older API builds (no lifecycle) fall back to the
+  // window counts (trendFromScaling already withholds multiples on tiny bases).
+  const lc = gem.ad_lifecycle;
+  const endedTotal = lc ? lc.ads_seen - lc.active_now : 0;
+  let caption: string;
+  if (lc) {
+    caption = [
+      lc.first_ad_at ? `First ad ${monthYearLabel(lc.first_ad_at)}` : null,
+      lc.ads_seen > 0 ? `${lc.ads_seen} ads seen` : null,
+      `${lc.running_30d_plus} running 30+ days`,
+      lc.median_run_days != null && endedTotal >= 5 ? `median ad runs ${lc.median_run_days} days` : null,
+    ]
+      .filter(Boolean)
+      .join(" · ");
+  } else {
+    const t = trendFromScaling(gem.scaling);
+    caption =
+      gem.scaling.length < 2
+        ? "Early — not many weeks of data yet."
+        : `${gem.scaling[0]?.active_ad_count} → ${gem.scaling[gem.scaling.length - 1]?.active_ad_count} ads over ${gem.scaling.length} weeks${t.multiple != null ? ` · ${t.multiple}x` : ""}`;
+  }
+  const chartNote =
+    lc && lc.ads_seen > 0
+      ? `Ads running each week, from ${lc.ads_seen} ads in the Ad Library record, including ended ones.`
+      : "Ads running each week, including ended ones.";
 
   return (
     <section>
-      <SectionTitle>Ad growth</SectionTitle>
+      <SectionTitle>Ad activity</SectionTitle>
       <p className="t-xs" style={{ color: "var(--muted)", margin: "0 0 10px" }}>
-        Active ads per week. Hover a point to see the ads launched that week.
+        {chartNote}
+        {hasBars && " Bars mark ads launched."}
+        {" Hover a point to see the ads launched that week."}
       </p>
-      <SketchLineChart points={chart} height={210} highlightLast valueLabel={(v) => `${v} ads live`} />
+      <SketchLineChart
+        points={chart}
+        bars={hasBars ? launchedBars : undefined}
+        height={210}
+        highlightLast
+        valueLabel={(v) => `${v} ads running`}
+      />
       <p className="font-mono nums" style={{ fontSize: "var(--fs-xs)", color: "var(--muted)", marginTop: 8 }}>{caption}</p>
     </section>
   );

@@ -44,7 +44,6 @@ export function GemHeader({ gem }: { gem: GemDossier }) {
   const app = richestApp(gem.apps);
   const name = gem.app_name ?? gem.page_name;
   const links = buildGemLinks(gem);
-  const latest = gem.scaling.length ? gem.scaling[gem.scaling.length - 1] : undefined;
   const adsInLibrary =
     gem.meta_active_ads != null
       ? `${gem.meta_active_ads.toLocaleString()}${gem.meta_active_ads_capped ? "+" : ""}`
@@ -105,7 +104,7 @@ export function GemHeader({ gem }: { gem: GemDossier }) {
       >
         <div style={{ display: "flex", gap: 28, flexWrap: "wrap" }}>
           <Stat label="Ads in library" value={adsInLibrary} />
-          <Stat label="Ads this week" value={latest?.distinct_creative_count ? latest.distinct_creative_count.toLocaleString() : undefined} />
+          <Stat label="Launched last 4 weeks" value={gem.ad_lifecycle ? gem.ad_lifecycle.launched_4w.toLocaleString() : undefined} />
           <Stat label="Page likes" value={gem.page_like_count?.toLocaleString()} />
         </div>
         {links.length > 0 && (

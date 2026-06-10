@@ -14,8 +14,9 @@ export type ChartPoint = {
   label: string;
   value: number;
   /** Optional hover detail: a title line plus the exact items (e.g. ads
-   * launched that week) as mini thumbnails. `linesLabel` introduces them. */
-  tooltip?: { title: string; items?: ChartTooltipItem[]; linesLabel?: string };
+   * launched that week) as mini thumbnails. `linesLabel` introduces them;
+   * `note` is one extra muted line (e.g. "2 ended this week"). */
+  tooltip?: { title: string; items?: ChartTooltipItem[]; linesLabel?: string; note?: string };
 };
 
 const INK = "var(--ink)";
@@ -57,13 +58,16 @@ function TooltipThumb({ item }: { item: ChartTooltipItem }) {
  * A crisp line chart with readable point markers and hover tooltips.
  * Monochrome line on the theme's ink; dots get a paper ring so they read
  * against the line. Hovering snaps to the nearest point and shows its
- * label, value, and any caller-supplied detail lines.
+ * label, value, and any caller-supplied detail lines. An optional `bars`
+ * series renders as thin muted bars along the bottom (its own scale) —
+ * e.g. ads launched per week under the active-ads line.
  */
 export function SketchLineChart({
   points,
   height = 180,
   highlightLast = false,
   valueLabel = (v: number) => String(v),
+  bars,
   className,
 }: {
   points: ChartPoint[];
@@ -71,6 +75,9 @@ export function SketchLineChart({
   highlightLast?: boolean;
   /** Formats the hovered value line, e.g. (v) => `${v} ads live`. */
   valueLabel?: (v: number) => string;
+  /** Per-point bar values (same order as `points`), drawn muted at the
+   * bottom on their own scale. Omit for a plain line chart. */
+  bars?: number[];
   className?: string;
 }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -105,6 +112,12 @@ export function SketchLineChart({
   const ys = points.map((p) => padT + plotH - ((p.value - min) / range) * plotH);
   const poly = xs.map((x, i) => `${x},${ys[i]}`).join(" ");
 
+  // Bottom bars: own scale, capped to the lower third so they stay subordinate
+  // to the line. Thin, centered on each point's x.
+  const barMax = bars && bars.length ? Math.max(...bars, 1) : 1;
+  const barMaxH = plotH * 0.32;
+  const barW = Math.max(2, Math.min(8, points.length > 0 ? (plotW / points.length) * 0.4 : 8));
+
   // Thin the x labels so they never collide: cap at ~7, always keep the ends.
   const labelStep = Math.max(1, Math.ceil(points.length / 7));
   const showLabel = (i: number) => i === 0 || i === points.length - 1 || i % labelStep === 0;
@@ -136,6 +149,24 @@ export function SketchLineChart({
           <line x1={padL} y1={padT + plotH} x2={padL + plotW} y2={padT + plotH} stroke={MUTED} strokeWidth={1} />
           {/* hover guide */}
           {h !== null && <line x1={xs[h]} y1={padT} x2={xs[h]} y2={padT + plotH} stroke={MUTED} strokeWidth={1} strokeDasharray="3 3" />}
+          {/* bottom bars (own scale), under the line so the line stays primary */}
+          {bars &&
+            xs.map((x, i) => {
+              const v = bars[i] ?? 0;
+              if (v <= 0) return null;
+              const bh = Math.max(2, (v / barMax) * barMaxH);
+              return (
+                <rect
+                  key={`bar-${i}`}
+                  x={x - barW / 2}
+                  y={padT + plotH - bh}
+                  width={barW}
+                  height={bh}
+                  fill={MUTED}
+                  opacity={0.35}
+                />
+              );
+            })}
           {/* the line */}
           <polyline points={poly} fill="none" stroke={INK} strokeWidth={2.5} strokeLinejoin="round" strokeLinecap="round" />
           {/* point markers — paper ring so each dot reads against the line */}
@@ -202,6 +233,9 @@ export function SketchLineChart({
                 <div className="t-xs" style={{ color: "var(--faint)", marginTop: 4 }}>+{hiddenCount} more</div>
               )}
             </div>
+          )}
+          {tip.tooltip?.note && (
+            <div className="t-xs nums" style={{ color: "var(--muted)", marginTop: 4 }}>{tip.tooltip.note}</div>
           )}
         </div>
       )}

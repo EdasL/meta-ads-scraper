@@ -51,6 +51,11 @@ export interface ApiShortlistRow {
   explainer?: ApiExplainer | null;
   growth?: ApiGrowth | null;
   hero_creative?: ApiHeroCreative | null;
+  // Ad-lifecycle card fields (matview migration 114); absent on older builds.
+  first_ad_at?: string | null;
+  longrun_ad_count?: number | null;
+  new_ads_4w?: number | null;
+  ads_seen?: number | null;
 }
 
 /** `AppReview` (backend models.go) — one recent store review for the app. */
@@ -128,14 +133,30 @@ export interface ApiGemDossier {
   meta_active_ads?: number | null; // true ad-library count (bounded pagination)
   meta_active_ads_capped?: boolean | null; // true when the count hit the cap
   meta_active_ads_checked_at?: string | null;
+  ad_lifecycle?: ApiAdLifecycle | null; // absent/null on older builds
 }
 
 /** `ScalingPoint` (schemas.py) — one weekly snapshot. Note `total_eu_reach`. */
 export interface ApiScalingPoint {
   week_start: string;
   active_ad_count: number | null;
+  /** @deprecated The read-time series serves 0; kept for contract compatibility. */
   distinct_creative_count: number | null;
   total_eu_reach: number | null;
+  // Launched/ended decomposition (read-time reconstruction); absent on older builds.
+  launched_count?: number | null;
+  ended_count?: number | null;
+}
+
+/** `AdLifecycle` (backend models.go) — lifecycle summary over all stored ads. */
+export interface ApiAdLifecycle {
+  ads_seen: number | null;
+  active_now: number | null;
+  running_30d_plus: number | null;
+  median_run_days: number | null; // null when fewer than 5 ads have ended
+  first_ad_at: string | null;
+  launched_4w: number | null;
+  ended_4w: number | null;
 }
 
 /** `AppMetricPoint` (backend models.go) — one daily app-store snapshot from

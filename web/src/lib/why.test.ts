@@ -7,12 +7,61 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { signedPercent, growthLine, trendFromScaling } from "./why.ts";
 
-test("growthLine prefers real growth numbers", () => {
-  const g = growthLine({ first_count: 3, latest_count: 11, weeks: 4, pct_change: 267 }, { active_ad_count: 40 });
+test("growthLine prefers real growth numbers (base >= 5 keeps the percent)", () => {
+  const g = growthLine({ first_count: 5, latest_count: 20, weeks: 4, pct_change: 300 }, { active_ad_count: 40 });
   assert.equal(g.glyph, "↗");
   assert.equal(g.tone, "up");
   assert.equal(g.kind, "growth");
-  assert.match(g.text, /\+267% · 3→11 ads in 4 weeks/);
+  assert.match(g.text, /\+300% · 5→20 ads in 4 weeks/);
+});
+
+test("growthLine never renders a percent from a base under 5 ads", () => {
+  // 3→11 with pct_change present: tiny base → counts only, no %
+  const g = growthLine({ first_count: 3, latest_count: 11, weeks: 4, pct_change: 267 }, { active_ad_count: 40 });
+  assert.equal(g.kind, "growth");
+  assert.equal(g.glyph, "↗");
+  assert.equal(g.tone, "up");
+  assert.equal(g.text, "3→11 ads in 4 weeks");
+  assert.ok(!g.text.includes("%"));
+  // shrinking from a tiny base → counts only, down glyph
+  const down = growthLine({ first_count: 4, latest_count: 1, weeks: 6, pct_change: -75 }, { active_ad_count: 1 });
+  assert.equal(down.glyph, "↘");
+  assert.equal(down.tone, "down");
+  assert.equal(down.text, "4→1 ads in 6 weeks");
+});
+
+test("growthLine anchors on the first-ad month when the row carries first_ad_at", () => {
+  const now = Date.parse("2026-06-10T12:00:00Z");
+  // same year → month only
+  const g = growthLine(
+    { first_count: 2, latest_count: 25, weeks: 16, pct_change: 1150 },
+    { active_ad_count: 25, first_ad_at: "2026-03-02" },
+    now,
+  );
+  assert.equal(g.text, "2→25 ads since Mar");
+  assert.equal(g.glyph, "↗");
+  assert.ok(!g.text.includes("%")); // tiny base: no percent even with first_ad_at
+  // earlier year → month + year
+  const old = growthLine(
+    { first_count: 2, latest_count: 8, weeks: 16, pct_change: null },
+    { active_ad_count: 8, first_ad_at: "2025-07-10" },
+    now,
+  );
+  assert.equal(old.text, "2→8 ads since Jul 2025");
+  // base >= 5: percent + the since copy together
+  const pct = growthLine(
+    { first_count: 10, latest_count: 25, weeks: 12, pct_change: 150 },
+    { active_ad_count: 25, first_ad_at: "2026-03-02" },
+    now,
+  );
+  assert.equal(pct.text, "+150% · 10→25 ads since Mar");
+  // garbage first_ad_at → weeks fallback, never a broken label
+  const bad = growthLine(
+    { first_count: 2, latest_count: 8, weeks: 3, pct_change: null },
+    { active_ad_count: 8, first_ad_at: "not-a-date" },
+    now,
+  );
+  assert.equal(bad.text, "2→8 ads in 3 weeks");
 });
 
 test("signedPercent: whole percent with sign, raw API floats never leak", () => {
@@ -75,4 +124,17 @@ test("trendFromScaling computes real pct/multiple/dir", () => {
 test("trendFromScaling handles sparse/zero safely", () => {
   assert.deepEqual(trendFromScaling([]), { pct: null, multiple: null, dir: "flat" });
   assert.equal(trendFromScaling([{ week_start: "a", active_ad_count: 0, distinct_creative_count: 0 }, { week_start: "b", active_ad_count: 5, distinct_creative_count: 1 }]).dir, "up");
+});
+
+test("trendFromScaling withholds pct/multiple from bases under 5 ads", () => {
+  const ramp = trendFromScaling([
+    { week_start: "2026-02-23", active_ad_count: 2, distinct_creative_count: 0 },
+    { week_start: "2026-06-01", active_ad_count: 25, distinct_creative_count: 0 },
+  ]);
+  assert.deepEqual(ramp, { pct: null, multiple: null, dir: "up" });
+  const cull = trendFromScaling([
+    { week_start: "2026-02-23", active_ad_count: 4, distinct_creative_count: 0 },
+    { week_start: "2026-06-01", active_ad_count: 1, distinct_creative_count: 0 },
+  ]);
+  assert.deepEqual(cull, { pct: null, multiple: null, dir: "down" });
 });

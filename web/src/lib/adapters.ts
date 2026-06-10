@@ -24,6 +24,7 @@ import type {
   ApiExplainer,
   ApiGrowth,
   ApiHeroCreative,
+  ApiAdLifecycle,
 } from "@/types/api";
 import type {
   ShortlistRow,
@@ -40,6 +41,7 @@ import type {
   Explainer,
   Growth,
   HeroCreative,
+  AdLifecycle,
 } from "@/types/contracts";
 
 /** Null/undefined numeric → default (UI types axes as non-null; bars do value×100). */
@@ -114,6 +116,11 @@ export function adaptShortlistRow(r: ApiShortlistRow, mediaUrl: MediaUrl): Short
     explainer: adaptExplainer(r.explainer),
     growth: adaptGrowth(r.growth),
     hero_creative: adaptHeroCreative(r.hero_creative, mediaUrl),
+    // lifecycle card fields — absent on older builds; counts default to 0
+    first_ad_at: r.first_ad_at ?? undefined,
+    longrun_ad_count: num(r.longrun_ad_count),
+    new_ads_4w: num(r.new_ads_4w),
+    ads_seen: num(r.ads_seen),
   };
 }
 
@@ -123,6 +130,22 @@ export function adaptScalingPoint(p: ApiScalingPoint): ScalingPoint {
     active_ad_count: num(p.active_ad_count),
     distinct_creative_count: num(p.distinct_creative_count),
     eu_total_reach: p.total_eu_reach ?? undefined, // API: total_eu_reach → UI: eu_total_reach
+    launched_count: num(p.launched_count), // absent on older builds → 0
+    ended_count: num(p.ended_count),
+  };
+}
+
+/** Lifecycle summary → null when the API doesn't send it (older builds). */
+export function adaptAdLifecycle(l: ApiAdLifecycle | null | undefined): AdLifecycle | null {
+  if (!l) return null;
+  return {
+    ads_seen: num(l.ads_seen),
+    active_now: num(l.active_now),
+    running_30d_plus: num(l.running_30d_plus),
+    median_run_days: l.median_run_days ?? null, // honest null: fewer than 5 ended ads
+    first_ad_at: l.first_ad_at ?? null,
+    launched_4w: num(l.launched_4w),
+    ended_4w: num(l.ended_4w),
   };
 }
 
@@ -263,5 +286,6 @@ export function adaptDossier(
     meta_active_ads: d.meta_active_ads ?? undefined,
     meta_active_ads_capped: d.meta_active_ads_capped ?? undefined,
     meta_active_ads_checked_at: d.meta_active_ads_checked_at ?? undefined,
+    ad_lifecycle: adaptAdLifecycle(d.ad_lifecycle),
   };
 }
