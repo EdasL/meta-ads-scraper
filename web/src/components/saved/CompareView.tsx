@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import type { SavedGem } from "@/lib/saved";
+import { STAGES, type SavedGem } from "@/lib/saved";
 
 const cellHead: React.CSSProperties = { padding: "8px 10px", borderBottom: "1.5px solid var(--ink)", textAlign: "left", verticalAlign: "bottom" };
 const cellLabel: React.CSSProperties = { padding: "8px 10px", borderBottom: "1px solid var(--line)", whiteSpace: "nowrap", color: "var(--ink)" };
@@ -12,13 +12,13 @@ type Row = { label: string; get: (g: SavedGem) => string };
 const pct = (v: number) => `${Math.round(v * 100)}`;
 
 const ROWS: Row[] = [
-  { label: "gemscore", get: (g) => `${Math.round(g.scoreSnapshot.gemScore)}` },
-  { label: "scaling", get: (g) => pct(g.scoreSnapshot.scalingVelocity) },
-  { label: "under radar", get: (g) => pct(g.scoreSnapshot.underRadar) },
-  { label: "funnel", get: (g) => pct(g.scoreSnapshot.funnelIntent) },
-  { label: "ads at save", get: (g) => `${g.scoreSnapshot.activeAdCount}` },
-  { label: "kind", get: (g) => g.cohort },
-  { label: "stage", get: (g) => g.stage.replace(/_/g, " ") },
+  { label: "GemScore", get: (g) => `${Math.round(g.scoreSnapshot.gemScore)}` },
+  { label: "Scaling", get: (g) => pct(g.scoreSnapshot.scalingVelocity) },
+  { label: "Under radar", get: (g) => pct(g.scoreSnapshot.underRadar) },
+  { label: "Funnel", get: (g) => pct(g.scoreSnapshot.funnelIntent) },
+  { label: "Ads at save", get: (g) => `${g.scoreSnapshot.activeAdCount}` },
+  { label: "Kind", get: (g) => g.cohort },
+  { label: "Stage", get: (g) => STAGES.find((s) => s.id === g.stage)?.label ?? g.stage.replace(/_/g, " ") },
 ];
 
 /** Line up 2-5 saved gems side by side on the snapshot signals. Does the
@@ -43,10 +43,10 @@ export function CompareView({ gems }: { gems: SavedGem[] }) {
   };
 
   const highlightRow: Record<string, number | null> = {
-    gemscore: bestBy("gemScore"),
-    scaling: bestBy("scaling_velocity"),
-    "under radar": bestBy("under_radar"),
-    funnel: bestBy("funnel_intent"),
+    GemScore: bestBy("gemScore"),
+    Scaling: bestBy("scaling_velocity"),
+    "Under radar": bestBy("under_radar"),
+    Funnel: bestBy("funnel_intent"),
   };
 
   return (
@@ -57,7 +57,7 @@ export function CompareView({ gems }: { gems: SavedGem[] }) {
             <th style={cellHead} />
             {gems.map((g) => (
               <th key={g.advertiserId} style={cellHead}>
-                <Link href={`/gems/${g.advertiserId}`} className="t-sm w-strong caps" style={{ color: "var(--ink)", textDecoration: "none" }}>
+                <Link href={`/gems/${g.advertiserId}`} className="t-sm w-strong" style={{ color: "var(--ink)", textDecoration: "none" }}>
                   {g.appName ?? g.pageName}
                 </Link>
               </th>
@@ -73,7 +73,7 @@ export function CompareView({ gems }: { gems: SavedGem[] }) {
                 {gems.map((g, i) => (
                   <td key={g.advertiserId} className="font-mono nums t-sm" style={{ ...cell, color: hi === i ? "var(--ink)" : "var(--ink-soft)", fontWeight: hi === i ? 700 : 400 }}>
                     {r.get(g)}
-                    {hi === i && <span className="eyebrow" style={{ marginLeft: 6 }}>best</span>}
+                    {hi === i && <span className="eyebrow" style={{ marginLeft: 6, color: "var(--up)" }}>Best</span>}
                   </td>
                 ))}
               </tr>

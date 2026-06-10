@@ -19,6 +19,8 @@ const selectStyle: React.CSSProperties = {
   padding: "5px 8px",
 };
 
+const VIEW_LABEL: Record<View, string> = { list: "List", board: "Board", compare: "Compare" };
+
 function ViewSwitch({ view, onChange }: { view: View; onChange: (v: View) => void }) {
   const VIEWS: View[] = ["list", "board", "compare"];
   return (
@@ -28,18 +30,17 @@ function ViewSwitch({ view, onChange }: { view: View; onChange: (v: View) => voi
           key={v}
           type="button"
           onClick={() => onChange(v)}
-          className="font-mono caps"
+          className="font-mono"
           style={{
             cursor: "pointer",
             border: "none",
             padding: "6px 12px",
             fontSize: "var(--fs-xs)",
-            letterSpacing: "0.08em",
             background: view === v ? "var(--ink)" : "transparent",
             color: view === v ? "var(--bg)" : "var(--ink)",
           }}
         >
-          {v}
+          {VIEW_LABEL[v]}
         </button>
       ))}
     </div>
@@ -62,11 +63,11 @@ export function SavedGems() {
   if (saved.length === 0) {
     return (
       <main style={page}>
-        <h1 className="t-2xl w-heavy caps" style={{ margin: 0 }}>my gems</h1>
+        <h1 className="t-2xl w-heavy" style={{ margin: 0 }}>My gems</h1>
         <EmptyState
           title="No gems saved yet"
-          hint="Save a gem from the board and it shows up here with your notes."
-          ctaLabel="find a gem"
+          hint="Save a gem from Discover and it shows up here with your notes."
+          ctaLabel="Find a gem"
           ctaHref="/discover"
         />
       </main>
@@ -76,7 +77,7 @@ export function SavedGems() {
   return (
     <main style={page}>
       <header style={{ marginBottom: 18 }}>
-        <h1 className="t-2xl w-heavy caps" style={{ margin: 0 }}>my gems</h1>
+        <h1 className="t-2xl w-heavy" style={{ margin: 0 }}>My gems</h1>
         <p className="t-sm" style={{ color: "var(--muted)", marginTop: 6 }}>{saved.length} saved.</p>
       </header>
 
@@ -84,13 +85,13 @@ export function SavedGems() {
         <ViewSwitch view={view} onChange={setView} />
         <div style={{ display: "flex", gap: 14, alignItems: "center" }}>
           {selected.length > 0 && (
-            <span className="eyebrow">{selected.length} picked{view !== "compare" ? " — open compare" : ""}</span>
+            <span className="eyebrow">{selected.length} selected{view !== "compare" ? " — open Compare" : ""}</span>
           )}
           {tags.length > 0 && view !== "compare" && (
             <label className="eyebrow" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-              tag
+              Tag
               <select value={tag} onChange={(e) => setTag(e.target.value)} style={selectStyle}>
-                <option value="">all</option>
+                <option value="">All</option>
                 {tags.map((t) => (
                   <option key={t} value={t}>#{t}</option>
                 ))}
@@ -117,7 +118,7 @@ export function SavedGems() {
           <EmptyState
             title="Pick 2 gems to compare"
             hint="In the list view, tick the box on 2 to 5 gems, then come back here."
-            ctaLabel="to list"
+            ctaLabel="Back to list"
             onCta={() => setView("list")}
           />
         ))}

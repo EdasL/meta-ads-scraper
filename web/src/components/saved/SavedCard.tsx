@@ -7,8 +7,7 @@ import { setStage, unsave } from "@/lib/useSaved";
 import { AppIcon, Trend } from "@/components/ui";
 
 function fmtDate(iso: string) {
-  const d = new Date(iso);
-  return `${d.getMonth() + 1}/${d.getDate()}`;
+  return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
 const selectStyle: React.CSSProperties = {
@@ -58,7 +57,7 @@ export function SavedCard({ gem, selected, onToggleSelect }: { gem: SavedGem; se
       </div>
 
       <div>
-        <div className="eyebrow" style={{ marginBottom: 2 }}>ads at save</div>
+        <div className="eyebrow" style={{ marginBottom: 2 }}>Ads at save</div>
         <Trend glyph={null} label={`${snap.activeAdCount} ads live`} tone="flat" />
       </div>
 
@@ -78,14 +77,14 @@ export function SavedCard({ gem, selected, onToggleSelect }: { gem: SavedGem; se
 
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginTop: "auto", paddingTop: 8, borderTop: "1px solid var(--line)" }}>
         <label className="eyebrow" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-          stage
+          Stage
           <select value={gem.stage} onChange={(e) => setStage(gem.advertiserId, e.target.value as Stage)} style={selectStyle}>
             {STAGES.map((s) => (
               <option key={s.id} value={s.id}>{s.label}</option>
             ))}
           </select>
         </label>
-        <span className="font-mono nums" style={{ fontSize: "var(--fs-xs)", color: "var(--muted)" }}>saved {fmtDate(gem.savedAt)}</span>
+        <span className="font-mono nums" style={{ fontSize: "var(--fs-xs)", color: "var(--muted)", whiteSpace: "nowrap" }}>Saved {fmtDate(gem.savedAt)}</span>
       </div>
     </div>
   );
