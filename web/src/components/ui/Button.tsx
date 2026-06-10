@@ -4,8 +4,8 @@ import Link from "next/link";
 import type { CSSProperties, ReactNode } from "react";
 
 /**
- * Brutalist button: inverted (primary) or outlined (ghost). Mono + uppercase,
- * 1.5px ink border. Hard offset shadow on primary for the editorial feel.
+ * Brutalist button: inverted (primary) or outlined (ghost). Mono, sentence
+ * case, 1.5px ink border. Hard offset shadow on primary for the editorial feel.
  */
 type Variant = "primary" | "ghost";
 type Size = "sm" | "md";
@@ -20,8 +20,7 @@ function styleFor(variant: Variant, size: Size): CSSProperties {
     textDecoration: "none",
     fontFamily: "var(--font-mono), monospace",
     fontSize: "var(--fs-xs)",
-    letterSpacing: "0.1em",
-    textTransform: "uppercase",
+    letterSpacing: "0.04em",
     padding: size === "sm" ? "5px 10px" : "9px 16px",
     border: "1.5px solid var(--ink)",
     background: variant === "primary" ? "var(--ink)" : "transparent",
