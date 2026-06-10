@@ -24,7 +24,7 @@ import (
 	"github.com/edaslakavicius/emerging-app-finder/backend/routers"
 )
 
-var advID, adv2ID int
+var advID, adv2ID, adv3ID int
 
 func TestMain(m *testing.M) {
 	dsn := os.Getenv("AGF_IT_DB_URL")
@@ -65,7 +65,7 @@ func TestShortlist(t *testing.T) {
 
 	var rows []map[string]any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &rows))
-	require.Len(t, rows, 2, "two seeded gems, ordered by gem_score DESC")
+	require.Len(t, rows, 3, "three seeded gems, ordered by gem_score DESC")
 
 	top := rows[0]
 	require.EqualValues(t, advID, top["advertiser_id"])
@@ -367,7 +367,7 @@ func TestReadyz(t *testing.T) {
 func seed(g *gorm.DB) {
 	must(g.Exec(`TRUNCATE frontend.review_decisions, adtech.app_advertiser_metrics,
 		adtech.ad_metrics, adtech.app_metrics, adtech.advertiser_scores,
-		public.app_reviews, public.creatives, public.funnels,
+		adtech.advertiser_growth, public.app_reviews, public.creatives, public.funnels,
 		public.ads, public.apps, public.advertisers, public.domains, logging.crawl_log
 		RESTART IDENTITY CASCADE`).Error)
 
@@ -456,6 +456,28 @@ func seed(g *gorm.DB) {
 		VALUES ('AD2', ?) RETURNING id`, adv2ID).Scan(&ad2ID).Error)
 	must(g.Exec(`INSERT INTO public.creatives (ad_id, type, s3_key)
 		VALUES (?, 'image', 'creatives/ad2.jpg')`, ad2ID).Error)
+
+	// A third gem exercising the filter axes: a Health & Fitness app, fast
+	// velocity, young ads (12 days), weak funnel intent, and a FALLING growth
+	// series (10 → 4) so `rising=true` hides it.
+	must(g.Raw(`INSERT INTO public.advertisers (page_id, page_name)
+		VALUES ('PAGE3', 'Walkly') RETURNING id`).Scan(&adv3ID).Error)
+	var app3ID int
+	must(g.Raw(`INSERT INTO public.apps (store, store_id, name, genre, is_emerging)
+		VALUES ('android', 'com.walk', 'Walk Tracker', 'Health & Fitness', true)
+		RETURNING id`).Scan(&app3ID).Error)
+	var ad4ID int
+	must(g.Raw(`INSERT INTO public.ads (external_ad_id, advertiser_id, app_id)
+		VALUES ('AD4', ?, ?) RETURNING id`, adv3ID, app3ID).Scan(&ad4ID).Error)
+	must(g.Exec(`INSERT INTO public.creatives (ad_id, type, s3_key)
+		VALUES (?, 'image', 'creatives/ad4.jpg')`, ad4ID).Error)
+	must(g.Exec(`INSERT INTO adtech.advertiser_scores
+		(advertiser_id, cohort, gem_score, scaling_velocity, funnel_intent,
+		 active_ad_count, max_longevity_days, alert)
+		VALUES (?, 'Health & Fitness×US', 72, 0.9, 0.2, 5, 12, false)`, adv3ID).Error)
+	must(g.Exec(`INSERT INTO adtech.advertiser_growth
+		(advertiser_id, first_count, latest_count, weeks_observed, pct_change)
+		VALUES (?, 10, 4, 3, -60)`, adv3ID).Error)
 
 	// crawl_log: 6 doc_id failures (last hour) → doc_id_rotation alert; plus ok rows.
 	for i := 0; i < 6; i++ {

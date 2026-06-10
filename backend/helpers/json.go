@@ -39,6 +39,16 @@ func QueryInt(ctx *gin.Context, key string, def int) (int, error) {
 	return strconv.Atoi(v)
 }
 
+// QueryBool returns the bool query param (strconv.ParseBool forms: true/false,
+// 1/0, t/f…), def when absent/empty, and an error when present-but-unparseable.
+func QueryBool(ctx *gin.Context, key string, def bool) (bool, error) {
+	v, ok := ctx.GetQuery(key)
+	if !ok || v == "" {
+		return def, nil
+	}
+	return strconv.ParseBool(v)
+}
+
 // mediaKey is the media-proxy allowlist (mirrors src/agf/api/routers/media.py):
 // a key must start with a known prefix, no leading slash, and the caller also
 // rejects any ".." — together this is the whole authorization model.

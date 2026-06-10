@@ -87,6 +87,13 @@ type ShortlistRow struct {
 	HeroCreative *CreativeInfo  `json:"hero_creative" gorm:"-"`
 }
 
+// CategoryCount is one feed category (public.apps.genre) and how many visible
+// gems carry it — the rows behind GET /api/shortlist/categories.
+type CategoryCount struct {
+	Category string `json:"category" gorm:"column:category"`
+	Count    int    `json:"count" gorm:"column:count"`
+}
+
 // ExplainerInfo is the generated explainer for a gem (adtech.advertiser_explainers).
 type ExplainerInfo struct {
 	WhatItDoes    string `json:"what_it_does" gorm:"column:what_it_does"`

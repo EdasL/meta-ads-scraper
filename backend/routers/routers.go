@@ -29,6 +29,7 @@ func Init(r *gin.Engine) {
 	api := r.Group("/api")
 	{
 		api.GET("/shortlist", shortlist.List)
+		api.GET("/shortlist/categories", shortlist.Categories)
 		api.GET("/gems/:advertiser_id", gems.Get)
 		api.GET("/gems/:advertiser_id/scaling", gems.Scaling)
 		api.GET("/gems/:advertiser_id/app-metrics", gems.AppMetrics)

@@ -14,7 +14,8 @@ func CORS(origins []string) gin.HandlerFunc {
 		AllowOrigins:     origins,
 		AllowMethods:     []string{"GET", "POST", "OPTIONS"},
 		AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization", "X-Requested-With"},
-		ExposeHeaders:    []string{"Content-Length", "Content-Type"},
+		// X-Total-Count carries the shortlist's all-pages row count (pagination).
+		ExposeHeaders:    []string{"Content-Length", "Content-Type", "X-Total-Count"},
 		AllowCredentials: true,
 		MaxAge:           12 * 3600,
 	})
