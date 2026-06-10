@@ -48,6 +48,7 @@ from agf.discovery.taxonomy import sweep_entries
 from agf.discovery.triage import run_triage
 from agf.enrich_full.appstore import lookup_google_play, lookup_itunes_batch
 from agf.enrich_full.run_enrich import make_enrich_handler, EnrichDeps
+from agf.extract.errors import ExtractError
 from agf.scoring.run_scoring import run_scoring, ALERT_THRESHOLD
 from agf.tracker.snapshots import snapshot_advertiser_week
 from agf.workers.runner import run_worker
@@ -114,9 +115,16 @@ def prefetch_creative_urls(extractor, conn, advertiser_ids, max_pages: int = 10)
                                {"a": aid}).scalar()
         if not page_id:
             continue
-        ads = asyncio.run(extractor.search(query="", countries=["US"],
-                                           search_type="page", view_all_page_id=page_id,
-                                           max_pages=max_pages))
+        # Per-gem isolation: a page whose search exhausts the facade's retries (hard
+        # proxy timeout) costs that gem's media this pass, not the whole batch.
+        try:
+            ads = asyncio.run(extractor.search(query="", countries=["US"],
+                                               search_type="page", view_all_page_id=page_id,
+                                               max_pages=max_pages))
+        except ExtractError as exc:
+            print(f"[worker] creative prefetch failed for advertiser {aid}: {exc}",
+                  file=sys.stderr, flush=True)
+            continue
         per_ad = {}
         for ad in ads:
             urls = [("image", u) for u in (getattr(ad, "image_urls", None) or [])]
