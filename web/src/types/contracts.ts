@@ -42,6 +42,7 @@ export interface ShortlistRow {
   page_name: string;
   app_id: number | null; // NULL for web funnels
   app_name: string | null;
+  icon_url?: string; // app store icon; absent → initials tile in the UI
   gem_score: number; // 0-100
   scaling_velocity: number; // 0-1 axis
   under_radar: number; // 0-1 axis

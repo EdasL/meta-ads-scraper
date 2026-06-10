@@ -5,7 +5,7 @@ import { IconX } from "@tabler/icons-react";
 import { STAGES, type SavedGem, type Stage } from "@/lib/saved";
 import { setStage, unsave } from "@/lib/useSaved";
 import { signalChips } from "@/lib/why";
-import { ScoreBadge, SignalChips } from "@/components/ui";
+import { AppIcon, ScoreBadge, SignalChips } from "@/components/ui";
 
 function fmtDate(iso: string) {
   const d = new Date(iso);
@@ -32,6 +32,7 @@ export function SavedCard({ gem, selected, onToggleSelect }: { gem: SavedGem; se
       <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
         <input type="checkbox" checked={selected} onChange={onToggleSelect} aria-label="pick to compare" style={{ accentColor: "var(--ink)", marginTop: 4 }} />
         <ScoreBadge score={snap.gemScore} />
+        <AppIcon src={gem.iconUrl} name={gem.appName ?? gem.pageName} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <Link href={`/gems/${gem.advertiserId}`} className="t-lg w-heavy caps" style={{ color: "var(--ink)", textDecoration: "none", wordBreak: "break-word", display: "block" }}>
             {gem.appName ?? gem.pageName}

@@ -70,6 +70,7 @@ type ShortlistRow struct {
 	PageName         *string  `json:"page_name" gorm:"column:page_name"`
 	AppID            *int     `json:"app_id" gorm:"column:app_id"`
 	AppName          *string  `json:"app_name" gorm:"column:app_name"`
+	IconURL          *string  `json:"icon_url" gorm:"column:icon_url"`
 	GemScore         float64  `json:"gem_score" gorm:"column:gem_score"`
 	ScalingVelocity  *float64 `json:"scaling_velocity" gorm:"column:scaling_velocity"`
 	UnderRadar       *float64 `json:"under_radar" gorm:"column:under_radar"`

@@ -102,6 +102,7 @@ export function adaptShortlistRow(r: ApiShortlistRow, mediaUrl: MediaUrl): Short
     page_name: r.page_name ?? "",
     app_id: r.app_id ?? null,
     app_name: r.app_name ?? null,
+    icon_url: r.icon_url ?? undefined,
     gem_score: num(r.gem_score),
     scaling_velocity: num(r.scaling_velocity),
     under_radar: num(r.under_radar),

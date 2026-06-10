@@ -1,3 +1,4 @@
+export { AppIcon } from "./AppIcon";
 export { Button, ButtonLink } from "./Button";
 export { ScoreBadge } from "./ScoreBadge";
 export { StatusBadge } from "./StatusBadge";

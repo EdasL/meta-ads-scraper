@@ -6,7 +6,7 @@ import type { HeroCreative, ShortlistRow } from "@/types/contracts";
 import { growthLine } from "@/lib/why";
 import { markExpandedWhy } from "@/lib/onboarding";
 import { daysAgoLabel, timeAgo } from "@/lib/format";
-import { ScoreBadge, SaveToggle, Trend } from "@/components/ui";
+import { AppIcon, ScoreBadge, SaveToggle, Trend } from "@/components/ui";
 import { GrugExplainer } from "@/components/GrugExplainer";
 
 /**
@@ -147,9 +147,12 @@ export function GemCard({ row }: { row: ShortlistRow }) {
       </div>
 
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginTop: "auto", paddingTop: 4 }}>
-        <span className="font-mono" style={{ fontSize: "var(--fs-xs)", color: "var(--muted)", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          {footerName} · {row.cohort}
-          {row.app_id === null && " · web"}
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+          <AppIcon src={row.icon_url} name={footerName} />
+          <span className="font-mono" style={{ fontSize: "var(--fs-xs)", color: "var(--muted)", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {footerName} · {row.cohort}
+            {row.app_id === null && " · web"}
+          </span>
         </span>
         <SaveToggle row={row} size="sm" />
       </div>

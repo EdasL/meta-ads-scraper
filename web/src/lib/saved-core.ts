@@ -37,6 +37,9 @@ export interface SavedGem {
   advertiserId: number;
   pageName: string;
   appName: string | null;
+  /** Store icon captured at save time. Not persisted server-side yet, so it is
+   * absent after a backend rehydrate — the UI then shows the initials tile. */
+  iconUrl?: string;
   cohort: string;
   savedAt: string; // ISO
   scoreSnapshot: ScoreSnapshot;
@@ -73,6 +76,7 @@ export function makeSavedGem(row: ShortlistRow, savedAt: string): SavedGem {
     advertiserId: row.advertiser_id,
     pageName: row.page_name,
     appName: row.app_name,
+    iconUrl: row.icon_url,
     cohort: row.cohort,
     savedAt,
     scoreSnapshot: makeSnapshot(row, savedAt),

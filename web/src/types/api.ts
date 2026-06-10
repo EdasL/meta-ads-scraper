@@ -36,6 +36,8 @@ export interface ApiShortlistRow {
   page_name: string | null;
   app_id: number | null;
   app_name: string | null;
+  /** Store icon from the apps join (migration 113); optional for older builds. */
+  icon_url?: string | null;
   gem_score: number;
   scaling_velocity: number | null;
   under_radar: number | null;

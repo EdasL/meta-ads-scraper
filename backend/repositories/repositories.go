@@ -15,8 +15,8 @@ import (
 // (105_emerging_matview_growth.sql): first_count, latest_count, weeks_observed,
 // pct_change. They scan into mvScanRow's flat growth fields and are assembled
 // into ShortlistRow.Growth by toShortlistRows (nil when the whole group is NULL).
-const mvCols = `advertiser_id, cohort, page_name, app_id, app_name, gem_score, ` +
-	`scaling_velocity, under_radar, funnel_intent, active_ad_count, ` +
+const mvCols = `advertiser_id, cohort, page_name, app_id, app_name, icon_url, ` +
+	`gem_score, scaling_velocity, under_radar, funnel_intent, active_ad_count, ` +
 	`max_longevity_days, alert, first_count, latest_count, weeks_observed, ` +
 	`pct_change, refreshed_at`
 
