@@ -100,8 +100,8 @@ export function DiscoverFeed() {
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
-            gap: 16,
+            gridTemplateColumns: "repeat(auto-fill, minmax(230px, 1fr))",
+            gap: 12,
             alignItems: "stretch",
           }}
         >

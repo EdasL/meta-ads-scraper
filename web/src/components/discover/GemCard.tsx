@@ -30,13 +30,13 @@ function FallbackTile({ hero }: { hero: HeroCreative | null }) {
         alignItems: "center",
         justifyContent: "center",
         textAlign: "center",
-        padding: 14,
+        padding: 10,
         background: "var(--surface-3)",
       }}
     >
-      <div className="t-2xl w-heavy" aria-hidden style={{ color: "var(--faint)" }}>{glyph}</div>
+      <div className="t-lg w-heavy" aria-hidden style={{ color: "var(--faint)" }}>{glyph}</div>
       {text && (
-        <div className="font-mono" style={{ fontSize: "var(--fs-xs)", color: "var(--ink-soft)", marginTop: 8, display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
+        <div className="font-mono" style={{ fontSize: "var(--fs-xs)", color: "var(--ink-soft)", marginTop: 4, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
           {text}
         </div>
       )}
@@ -53,7 +53,9 @@ function CardHero({ hero, score }: { hero: HeroCreative | null; score: number })
       style={{
         position: "relative",
         width: "100%",
-        aspectRatio: "16 / 10",
+        // Fixed height (not aspect-ratio) so every card's hero is the same
+        // size regardless of column width — keeps rows comparable.
+        height: 96,
         border: "1.5px solid var(--ink)",
         background: "var(--bg)",
         overflow: "hidden",
@@ -102,19 +104,19 @@ export function GemCard({ row }: { row: ShortlistRow }) {
       style={{
         display: "flex",
         flexDirection: "column",
-        gap: 12,
+        gap: 8,
         textDecoration: "none",
         color: "var(--ink)",
         background: "var(--paper)",
         border: "1.5px solid var(--ink)",
         boxShadow: "var(--shadow-hard)",
-        padding: 16,
+        padding: 10,
       }}
     >
       <CardHero hero={row.hero_creative} score={row.gem_score} />
 
       <div
-        className="t-md w-strong"
+        className="t-sm w-strong"
         style={{
           margin: 0,
           display: "-webkit-box",
@@ -122,13 +124,16 @@ export function GemCard({ row }: { row: ShortlistRow }) {
           WebkitBoxOrient: "vertical",
           overflow: "hidden",
           wordBreak: "break-word",
+          // Always reserve two lines so the growth row sits at the same
+          // height on every card.
+          minHeight: "calc(2 * var(--lh-sm))",
         }}
       >
         {headline}
       </div>
 
       <div>
-        <div className="eyebrow" style={{ marginBottom: 4 }}>{g.kind === "growth" ? "ad growth" : "ads live"}</div>
+        <div className="eyebrow" style={{ marginBottom: 2 }}>{g.kind === "growth" ? "ad growth" : "ads live"}</div>
         <Trend glyph={g.glyph} label={g.text} tone={g.tone} />
       </div>
 
@@ -141,7 +146,7 @@ export function GemCard({ row }: { row: ShortlistRow }) {
         <span>updated {timeAgo(row.refreshed_at, nowMs)}</span>
       </div>
 
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginTop: "auto", paddingTop: 10, borderTop: "1px solid var(--line)" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginTop: "auto", paddingTop: 8, borderTop: "1px solid var(--line)" }}>
         <span style={{ display: "inline-flex", alignItems: "center", gap: 8, minWidth: 0 }}>
           <AppIcon src={row.icon_url} name={footerName} />
           <span className="font-mono" style={{ fontSize: "var(--fs-xs)", color: "var(--muted)", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
