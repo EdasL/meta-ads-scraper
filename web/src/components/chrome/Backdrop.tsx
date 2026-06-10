@@ -1,9 +1,35 @@
 /**
- * Page backdrop: an original generated full-bleed fingerprint texture (white
- * ridges glowing on dark charcoal grey, forensic evidence vibe). Fixed to the
- * viewport, behind all content. Pure decoration.
+ * Page backdrop, two variants of the same fingerprint texture:
+ *
+ * - "dark" (signed-out: landing, login) — white ridges on dark charcoal,
+ *   the forensic brand moment.
+ * - "light" (logged-in product) — the print inverted and faded to a pale
+ *   watermark on paper, so content stays readable.
+ *
+ * Fixed to the viewport, behind all content. Pure decoration.
  */
-export function Backdrop() {
+export function Backdrop({ variant = "dark" }: { variant?: "dark" | "light" }) {
+  if (variant === "light") {
+    return (
+      <div aria-hidden style={{ position: "fixed", inset: 0, zIndex: -1, backgroundColor: "var(--bg)" }}>
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            backgroundImage: "url('/field-desk-fingerprint.png')",
+            backgroundSize: "cover",
+            backgroundPosition: "center",
+            backgroundRepeat: "no-repeat",
+            // Invert the white-on-charcoal art into dark ridges on paper,
+            // then fade it to a watermark.
+            filter: "grayscale(1) invert(1)",
+            opacity: 0.16,
+          }}
+        />
+      </div>
+    );
+  }
+
   return (
     <div
       aria-hidden

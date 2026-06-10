@@ -1,11 +1,10 @@
-import { AppHeader } from "@/components/AppHeader";
+import { ProductShell } from "@/components/chrome";
 import { SavedGems } from "@/components/saved/SavedGems";
 
 export default function SavedPage() {
   return (
-    <>
-      <AppHeader />
+    <ProductShell>
       <SavedGems />
-    </>
+    </ProductShell>
   );
 }

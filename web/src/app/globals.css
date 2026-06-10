@@ -55,6 +55,47 @@
    * real trend direction only. */
   --up: #4ade80;      /* growth / positive trend */
   --down: #f87171;    /* decline / negative trend */
+  --warn: #fbbf24;    /* mid signal (e.g. middling score) */
+  --up-bg: rgba(74, 222, 128, 0.12);
+  --down-bg: rgba(248, 113, 113, 0.12);
+  --warn-bg: rgba(251, 191, 36, 0.12);
+}
+
+/*
+ * Light product theme — the logged-in surfaces (/discover, /saved, /gems/*).
+ * Paper canvas, near-black ink, the fingerprint reduced to a pale watermark.
+ * Same tokens, flipped values: every component that reads vars just works.
+ */
+.theme-light {
+  --bg: #f4f3ef; /* warm paper canvas */
+  --surface-1: #faf9f6; /* header */
+  --surface-2: #ffffff; /* cards */
+  --surface-3: #f3f2ed; /* hover / expanded */
+  --surface-4: #ffffff; /* drawer / popover */
+  /* Aliases must be re-declared: var() refs resolve where declared, so the
+   * :root aliases would otherwise carry the dark hexes into this scope. */
+  --paper: var(--surface-2);
+  --paper-2: var(--surface-3);
+
+  --ink: #1b1b1e;
+  --ink-soft: #44444a;
+  --muted: #63636b; /* ≥4.5:1 on white and on --bg */
+  --faint: #a8a8b0;
+
+  --line: #dedcd4;
+  --hair: rgba(27, 27, 30, 0.08);
+  --watermark: #eceae4;
+
+  --up: #15803d;
+  --down: #b91c1c;
+  --warn: #b45309;
+  --up-bg: #e7f4ec;
+  --down-bg: #fdecec;
+  --warn-bg: #faf0df;
+
+  --shadow-hard: 4px 4px 0 var(--ink);
+
+  color: var(--ink);
 }
 
 @theme inline {
@@ -111,7 +152,6 @@ body {
 .w-ui     { font-family: var(--font-sans), system-ui, sans-serif; font-weight: 510; }
 .w-strong { font-family: var(--font-sans), system-ui, sans-serif; font-weight: 590; }
 .w-heavy  { font-family: var(--font-sans), system-ui, sans-serif; font-weight: 700; }
-.caps     { text-transform: uppercase; }
 .nums     { font-variant-numeric: tabular-nums; }
 .measure  { max-width: 34em; } /* ~45-75ch prose cap */
 
@@ -127,18 +167,17 @@ body {
   font-weight: 800;
   letter-spacing: -0.045em;
   line-height: 0.88;
-  text-transform: uppercase;
 }
 .font-mono {
   font-family: var(--font-mono), ui-monospace, monospace;
 }
 
-/* Eyebrow — small technical mono label, tracked, uppercase. */
+/* Eyebrow — small technical mono label. Sentence case by policy: section
+ * labels read, they don't shout. */
 .eyebrow {
   font-family: var(--font-tech), monospace;
   font-size: var(--fs-xs);
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
+  letter-spacing: 0.04em;
   color: var(--muted);
 }
 
@@ -146,8 +185,7 @@ body {
 .hud {
   font-family: var(--font-tech), monospace;
   font-size: 0.6rem;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
+  letter-spacing: 0.05em;
   color: var(--ink-soft);
   line-height: 1.5;
 }

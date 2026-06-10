@@ -1,7 +1,10 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { INK, MUTED } from "@/components/sketch/palette";
+
+// Inline SVG resolves CSS vars, so the line follows the active theme.
+const INK = "var(--ink)";
+const MUTED = "var(--muted)";
 
 /**
  * Tiny monochrome line — the hockey-stick is the pitch. No axes or labels.

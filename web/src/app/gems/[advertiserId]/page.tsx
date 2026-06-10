@@ -1,4 +1,4 @@
-import { AppHeader } from "@/components/AppHeader";
+import { ProductShell } from "@/components/chrome";
 import { GemDetail } from "@/components/detail/GemDetail";
 
 export default async function GemPage({
@@ -8,9 +8,8 @@ export default async function GemPage({
 }) {
   const { advertiserId } = await params;
   return (
-    <>
-      <AppHeader />
+    <ProductShell>
       <GemDetail advertiserId={Number(advertiserId)} />
-    </>
+    </ProductShell>
   );
 }
