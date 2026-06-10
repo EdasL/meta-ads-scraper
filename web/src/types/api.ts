@@ -6,6 +6,29 @@
  * the server shape. Keep these aligned field-for-field with the Pydantic models.
  */
 
+/** `ExplainerInfo` (backend models.go) — grug explainer; null until generated. */
+export interface ApiExplainer {
+  what_it_does: string | null;
+  problem_solved: string | null;
+  why_working: string | null;
+}
+
+/** `GrowthInfo` (backend models.go) — ad-count growth; nullable pct_change. */
+export interface ApiGrowth {
+  first_count: number | null;
+  latest_count: number | null;
+  weeks: number | null;
+  pct_change: number | null;
+}
+
+/** `CreativeInfo` reused for the card hero — one real ad; `s3_key` is the key. */
+export interface ApiHeroCreative {
+  type: string | null;
+  s3_key: string | null;
+  body_text: string | null;
+  title: string | null;
+}
+
 /** `ShortlistRow` (schemas.py) — one matview row. Numeric axes are nullable. */
 export interface ApiShortlistRow {
   advertiser_id: number;
@@ -21,9 +44,25 @@ export interface ApiShortlistRow {
   max_longevity_days: number | null;
   alert: boolean;
   refreshed_at: string | null;
+  // New (Track B): embedded on the row so the card needs no second fetch.
+  // Absent/null when the explainer/growth/hero hasn't been computed yet.
+  explainer?: ApiExplainer | null;
+  growth?: ApiGrowth | null;
+  hero_creative?: ApiHeroCreative | null;
 }
 
-/** `AppInfo` (schemas.py) — store listing joined off the gem's ads. */
+/** `AppReview` (backend models.go) — one recent store review for the app. */
+export interface ApiAppReview {
+  author: string | null;
+  rating: number | null;
+  title: string | null;
+  content: string | null;
+  reviewed_at: string | null;
+}
+
+/** `AppInfo` (schemas.py / models.go) — store listing joined off the gem's ads.
+ * The store-preview fields (description…reviews) are optional so the client
+ * tolerates older API builds that don't return them yet. */
 export interface ApiAppInfo {
   store: string;
   store_id: string;
@@ -34,6 +73,13 @@ export interface ApiAppInfo {
   rating: number | null;
   rating_count: number | null;
   is_emerging: boolean | null;
+  description?: string | null;
+  icon_url?: string | null;
+  screenshots?: string[] | null;
+  price_label?: string | null;
+  installs?: number | null;
+  updated_at?: string | null;
+  reviews?: ApiAppReview[] | null;
 }
 
 /** `FunnelInfo` (schemas.py) — captured landing → redirect, screenshot key. */
@@ -43,17 +89,26 @@ export interface ApiFunnelInfo {
   screenshot_s3_key: string | null;
 }
 
-/** `CreativeInfo` (schemas.py) — ad creative; `s3_key` is the S3 object key. */
+/** `CreativeInfo` (schemas.py / models.go) — ad creative; `s3_key` is the S3
+ * object key. Per-ad meta fields are optional (older API builds omit them). */
 export interface ApiCreativeInfo {
   type: string | null;
   s3_key: string | null;
   body_text: string | null;
   title: string | null;
+  ad_started_on?: string | null;
+  ad_active?: boolean | null;
+  ad_days_running?: number | null;
+  publisher_platforms?: string[] | null;
+  eu_total_reach?: number | null;
 }
 
-/** `GemDossier` (schemas.py) — NESTED: the gem plus its joined enrichment. */
+/** `GemDossier` (schemas.py) — NESTED: the gem plus its joined enrichment.
+ * The ad-library fields (ads_last_seen…meta_active_ads_checked_at) are optional
+ * so the client tolerates older API builds that don't return them yet. */
 export interface ApiGemDossier {
   gem: ApiShortlistRow;
+  page_id: string | null; // Facebook page id — powers Profile / Ads Library links
   domain: string | null;
   page_category: string | null;
   ig_username: string | null;
@@ -62,6 +117,11 @@ export interface ApiGemDossier {
   apps: ApiAppInfo[];
   funnels: ApiFunnelInfo[];
   creatives: ApiCreativeInfo[];
+  ads_last_seen?: string | null; // advertisers.last_seen — freshness of the ad data
+  page_like_count?: number | null;
+  meta_active_ads?: number | null; // true ad-library count (bounded pagination)
+  meta_active_ads_capped?: boolean | null; // true when the count hit the cap
+  meta_active_ads_checked_at?: string | null;
 }
 
 /** `ScalingPoint` (schemas.py) — one weekly snapshot. Note `total_eu_reach`. */
@@ -70,6 +130,17 @@ export interface ApiScalingPoint {
   active_ad_count: number | null;
   distinct_creative_count: number | null;
   total_eu_reach: number | null;
+}
+
+/** `AppMetricPoint` (backend models.go) — one daily app-store snapshot from
+ * `GET /api/gems/{advertiser_id}/app-metrics`, ordered by snapshot_date ASC. */
+export interface ApiAppMetricPoint {
+  app_id: number;
+  store: string;
+  snapshot_date: string;
+  rating: number | null;
+  rating_count: number | null;
+  installs: number | null;
 }
 
 /**

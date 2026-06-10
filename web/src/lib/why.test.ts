@@ -9,9 +9,12 @@ import {
   scoreBand,
   statusChip,
   velocityTrend,
+  growthLine,
   dominantSignal,
   whyLine,
   becauseLine,
+  trueAdCount,
+  adsInLibraryLabel,
   signalTier,
   signalChips,
   pushPull,
@@ -55,11 +58,36 @@ test("statusChip: mid is steady, low is cooling", () => {
   assert.equal(statusChip({ scaling_velocity: 0.2, max_longevity_days: 30 }), "cooling");
 });
 
-test("velocityTrend glyphs", () => {
+test("velocityTrend glyphs + tone", () => {
   assert.equal(velocityTrend(0.9).glyph, "↗");
+  assert.equal(velocityTrend(0.9).tone, "up");
   assert.equal(velocityTrend(0.7).glyph, "↗");
   assert.equal(velocityTrend(0.5).glyph, "→");
+  assert.equal(velocityTrend(0.5).tone, "flat");
   assert.equal(velocityTrend(0.2).glyph, "↘");
+  assert.equal(velocityTrend(0.2).tone, "down");
+});
+
+test("growthLine prefers real growth numbers", () => {
+  const g = growthLine({ first_count: 3, latest_count: 11, weeks: 4, pct_change: 267 }, { scaling_velocity: 0.9 });
+  assert.equal(g.glyph, "↗");
+  assert.equal(g.tone, "up");
+  assert.match(g.text, /\+267% · 3→11 ads in 4wk/);
+});
+
+test("growthLine: null pct_change (grew from zero) shows honest counts, no %", () => {
+  const g = growthLine({ first_count: 0, latest_count: 8, weeks: 3, pct_change: null }, { scaling_velocity: 0.9 });
+  assert.equal(g.tone, "up");
+  assert.match(g.text, /0→8 ads in 3wk/);
+  assert.ok(!g.text.includes("%"));
+});
+
+test("growthLine: single-week / missing growth falls back to velocity word", () => {
+  const oneWeek = growthLine({ first_count: 5, latest_count: 5, weeks: 1, pct_change: null }, { scaling_velocity: 0.9 });
+  assert.equal(oneWeek.text, "Surging");
+  const none = growthLine(null, { scaling_velocity: 0.5 });
+  assert.equal(none.text, "Steady");
+  assert.equal(none.tone, "flat");
 });
 
 test("dominantSignal picks weighted max", () => {
@@ -69,12 +97,44 @@ test("dominantSignal picks weighted max", () => {
   assert.equal(dominantSignal({ scaling_velocity: 0.1, under_radar: 0.9, funnel_intent: 0.9 }), "under_radar");
 });
 
-test("whyLine + becauseLine name the dominant signal", () => {
-  assert.match(whyLine(row()), /spend climb fast/);
-  assert.match(becauseLine(row()), /grug think hot/);
+test("whyLine + becauseLine name the dominant signal (plain voice)", () => {
+  assert.match(whyLine(row()), /climbing fast/i);
+  assert.match(becauseLine(row()), /rising fast/i);
   const ur = row({ scaling_velocity: 0.1, under_radar: 0.95, funnel_intent: 0.2 });
-  assert.match(whyLine(ur), /hidden/);
-  assert.match(becauseLine(ur), /you early/);
+  assert.match(whyLine(ur), /radar/i);
+  assert.match(becauseLine(ur), /you're early/i);
+});
+
+test("trueAdCount prefers meta_active_ads, falls back to active_ad_count", () => {
+  assert.deepEqual(trueAdCount(row()), { count: 40, capped: false });
+  assert.deepEqual(trueAdCount(row({ meta_active_ads: 87 })), { count: 87, capped: false });
+  assert.deepEqual(
+    trueAdCount(row({ meta_active_ads: 250, meta_active_ads_capped: true })),
+    { count: 250, capped: true },
+  );
+  // explicit null (older API) → matview fallback
+  assert.deepEqual(trueAdCount(row({ meta_active_ads: null })), { count: 40, capped: false });
+  // meta count of 0 is a real value, not a missing one
+  assert.deepEqual(trueAdCount(row({ meta_active_ads: 0 })), { count: 0, capped: false });
+});
+
+test("adsInLibraryLabel renders the capped form with a plus", () => {
+  assert.equal(adsInLibraryLabel(row({ meta_active_ads: 87 })), "87 ads in library");
+  assert.equal(
+    adsInLibraryLabel(row({ meta_active_ads: 250, meta_active_ads_capped: true })),
+    "250+ ads in library",
+  );
+  assert.equal(adsInLibraryLabel(row()), "40 ads in library");
+});
+
+test("becauseLine uses the true ad-library count when present", () => {
+  assert.match(becauseLine(row({ meta_active_ads: 87 })), /87 ads in the library/);
+  assert.match(
+    becauseLine(row({ meta_active_ads: 250, meta_active_ads_capped: true })),
+    /250\+ ads in the library/,
+  );
+  // without it, the matview count still shows
+  assert.match(becauseLine(row()), /40 ads in the library/);
 });
 
 test("signalTier buckets", () => {
