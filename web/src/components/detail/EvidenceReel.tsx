@@ -235,7 +235,9 @@ export function AdGrowth({ gem }: { gem: GemDossier }) {
       lc.first_ad_at ? `First ad ${monthYearLabel(lc.first_ad_at)}` : null,
       lc.ads_seen > 0 ? `${lc.ads_seen} ads seen` : null,
       `${lc.running_30d_plus} running 30+ days`,
-      lc.median_run_days != null && endedTotal >= 5 ? `median ad runs ${lc.median_run_days} days` : null,
+      lc.median_run_days != null && endedTotal >= 5
+        ? `median ad runs ${lc.median_run_days} ${lc.median_run_days === 1 ? "day" : "days"}`
+        : null,
     ]
       .filter(Boolean)
       .join(" · ");
