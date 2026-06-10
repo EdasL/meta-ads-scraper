@@ -10,10 +10,10 @@ RELAUNCH_RATING_MAX = 100_000  # "emerging" + this many ratings == a relaunch, n
 _STL_PERIOD = 4          # weekly series, ~monthly seasonal cycle
 _REAL_GROWTH_EPS = 1e-6
 # quality vetoes (real-gems feed 2026-06-10); NULL/unknown always passes
-INCUMBENT_PAGE_LIKES_MAX = 500_000   # FB audience above this == incumbent
+INCUMBENT_PAGE_LIKES_MAX = 10_000    # FB audience above this == incumbent (user-set 2026-06-10)
 MAX_ACTIVE_ADS_FOR_GEM = 50          # an ad library bigger than this == funded growth team, not emerging
-ESTABLISHED_INSTALLS_MAX = 5_000_000   # store installs above this == established
-ESTABLISHED_RATINGS_MAX = 200_000      # rating base above this == established
+ESTABLISHED_INSTALLS_MAX = 100_000     # store installs above this == established (user-set 2026-06-10)
+ESTABLISHED_RATINGS_MAX = 5_000        # rating base above this == established (user-set 2026-06-10)
 
 
 @dataclass(frozen=True)

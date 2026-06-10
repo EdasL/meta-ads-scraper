@@ -88,10 +88,10 @@ def test_incumbent_ad_volume_fires_above_50_active_ads():
     assert incumbent_ad_volume(_fv(meta_active_ads=30, active_ad_count=80)) is False
 
 
-def test_incumbent_audience_fires_above_500k_likes():
-    assert incumbent_audience(_fv(page_like_count=500_001)) is True
-    assert apply_vetoes(_fv(page_like_count=500_001)).reason == "incumbent_audience"
-    assert incumbent_audience(_fv(page_like_count=500_000)) is False  # at threshold passes
+def test_incumbent_audience_fires_above_10k_likes():
+    assert incumbent_audience(_fv(page_like_count=10_001)) is True
+    assert apply_vetoes(_fv(page_like_count=10_001)).reason == "incumbent_audience"
+    assert incumbent_audience(_fv(page_like_count=10_000)) is False  # at threshold passes
     assert incumbent_audience(_fv(page_like_count=None)) is False     # unknown passes
 
 
@@ -103,10 +103,10 @@ def test_established_traction_sees_all_linked_listings():
 
 
 def test_established_traction_fires_on_installs_or_ratings():
-    assert established_traction(_fv(installs=5_000_001)) is True
-    assert established_traction(_fv(rating_count=200_001, is_emerging=False)) is True
-    assert apply_vetoes(_fv(installs=5_000_001)).reason == "established_traction"
-    assert established_traction(_fv(installs=5_000_000, rating_count=200_000)) is False
+    assert established_traction(_fv(installs=100_001)) is True
+    assert established_traction(_fv(rating_count=5_001, is_emerging=False)) is True
+    assert apply_vetoes(_fv(installs=100_001)).reason == "established_traction"
+    assert established_traction(_fv(installs=100_000, rating_count=5_000)) is False
     assert established_traction(_fv(installs=None, rating_count=None)) is False  # unknown passes
 
 
