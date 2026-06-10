@@ -51,3 +51,21 @@ func (c *GemsController) Scaling(ctx *gin.Context) {
 	}
 	ctx.JSON(http.StatusOK, pts)
 }
+
+// AppMetrics serves the app-side growth series (daily store snapshots) for the
+// advertiser's linked apps. Empty array when there are no linked apps yet.
+func (c *GemsController) AppMetrics(ctx *gin.Context) {
+	id, err := strconv.Atoi(ctx.Param("advertiser_id"))
+	if err != nil {
+		helpers.Detail(ctx, http.StatusUnprocessableEntity, "advertiser_id must be an integer.")
+		return
+	}
+	rctx, cancel := reqCtx(ctx)
+	defer cancel()
+	pts, err := repositories.AppMetrics(rctx, db.DB(), id)
+	if err != nil {
+		helpers.Detail(ctx, http.StatusInternalServerError, "grug board broke.")
+		return
+	}
+	ctx.JSON(http.StatusOK, pts)
+}

@@ -52,6 +52,89 @@ func TestGemDossier_EmptySlicesAreArrays(t *testing.T) {
 	}
 }
 
+// New nullable signal fields must serialize as literal null (present key), and
+// the list-shaped fields (screenshots, publisher_platforms) as [] when absent.
+func TestAppInfo_NewFieldsSerializeCleanly(t *testing.T) {
+	b, err := json.Marshal(AppInfo{Store: "ios", StoreID: "1", Reviews: make([]AppReview, 0)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range []string{"installs", "updated_at"} {
+		if v, ok := m[k]; !ok || string(v) != "null" {
+			t.Errorf("key %q = %s, want null", k, v)
+		}
+	}
+	for k, want := range map[string]string{
+		"description": `""`, "icon_url": `""`, "price_label": `""`,
+		"screenshots": "[]", "reviews": "[]",
+	} {
+		if string(m[k]) != want {
+			t.Errorf("key %q = %s, want %s", k, m[k], want)
+		}
+	}
+}
+
+func TestCreativeInfo_NewFieldsSerializeCleanly(t *testing.T) {
+	b, err := json.Marshal(CreativeInfo{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range []string{"ad_started_on", "ad_active", "ad_days_running", "eu_total_reach"} {
+		if v, ok := m[k]; !ok || string(v) != "null" {
+			t.Errorf("key %q = %s, want null", k, v)
+		}
+	}
+	if string(m["publisher_platforms"]) != "[]" {
+		t.Errorf("publisher_platforms = %s, want []", m["publisher_platforms"])
+	}
+}
+
+func TestGemDossier_MetaSignalsSerializeCleanly(t *testing.T) {
+	b, err := json.Marshal(GemDossier{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range []string{"ads_last_seen", "page_like_count", "meta_active_ads",
+		"meta_active_ads_checked_at"} {
+		if v, ok := m[k]; !ok || string(v) != "null" {
+			t.Errorf("key %q = %s, want null", k, v)
+		}
+	}
+	if string(m["meta_active_ads_capped"]) != "false" {
+		t.Errorf("meta_active_ads_capped = %s, want false", m["meta_active_ads_capped"])
+	}
+}
+
+func TestAppMetricPoint_Marshal(t *testing.T) {
+	rc := int64(100)
+	p := AppMetricPoint{
+		AppID:        3,
+		Store:        "ios",
+		SnapshotDate: APIDate(time.Date(2026, 6, 10, 0, 0, 0, 0, time.UTC)),
+		RatingCount:  &rc,
+	}
+	b, err := json.Marshal(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"app_id":3,"store":"ios","snapshot_date":"2026-06-10","rating":null,"rating_count":100,"installs":null}`
+	if string(b) != want {
+		t.Errorf("AppMetricPoint = %s, want %s", b, want)
+	}
+}
+
 func TestAPIDate_MarshalsDateOnly(t *testing.T) {
 	d := APIDate(time.Date(2026, 6, 5, 13, 30, 0, 0, time.UTC))
 	b, err := json.Marshal(d)

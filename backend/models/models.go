@@ -78,19 +78,64 @@ type ShortlistRow struct {
 	MaxLongevityDays *int     `json:"max_longevity_days" gorm:"column:max_longevity_days"`
 	Alert            bool     `json:"alert" gorm:"column:alert"`
 	RefreshedAt      *APITime `json:"refreshed_at" gorm:"column:refreshed_at"`
+	// Enriched in code after the base matview scan (not scanned directly):
+	// the grug explainer, the per-advertiser growth summary, and the hero ad
+	// creative for the card. All nullable → JSON null when absent.
+	Explainer    *ExplainerInfo `json:"explainer" gorm:"-"`
+	Growth       *GrowthInfo    `json:"growth" gorm:"-"`
+	HeroCreative *CreativeInfo  `json:"hero_creative" gorm:"-"`
 }
 
-// AppInfo mirrors a public.apps row joined through public.ads.
+// ExplainerInfo is the grug-voice explainer for a gem (adtech.advertiser_explainers).
+type ExplainerInfo struct {
+	WhatItDoes    string `json:"what_it_does" gorm:"column:what_it_does"`
+	ProblemSolved string `json:"problem_solved" gorm:"column:problem_solved"`
+	WhyWorking    string `json:"why_working" gorm:"column:why_working"`
+}
+
+// GrowthInfo is the per-advertiser ad-count growth summary, sourced from the
+// matview's growth columns (adtech.advertiser_growth). Weeks maps the DB column
+// weeks_observed. Each field is nullable (single-week series → pct_change NULL).
+type GrowthInfo struct {
+	FirstCount  *int     `json:"first_count" gorm:"column:first_count"`
+	LatestCount *int     `json:"latest_count" gorm:"column:latest_count"`
+	Weeks       *int     `json:"weeks" gorm:"column:weeks_observed"`
+	PctChange   *float64 `json:"pct_change" gorm:"column:pct_change"`
+}
+
+// AppInfo mirrors a public.apps row joined through public.ads. The store-preview
+// fields (description/icon_url/screenshots/price_label) are plain values, not
+// pointers: a NULL column scans to the zero value ("" / []), which the UI treats
+// the same as "absent". installs/updated_at stay nullable per the contract.
 type AppInfo struct {
-	Store       string   `json:"store" gorm:"column:store"`
-	StoreID     string   `json:"store_id" gorm:"column:store_id"`
-	Name        *string  `json:"name" gorm:"column:name"`
-	Developer   *string  `json:"developer" gorm:"column:developer"`
-	Genre       *string  `json:"genre" gorm:"column:genre"`
-	ReleaseDate *APIDate `json:"release_date" gorm:"column:release_date"`
-	Rating      *float64 `json:"rating" gorm:"column:rating"`
-	RatingCount *int     `json:"rating_count" gorm:"column:rating_count"`
-	IsEmerging  *bool    `json:"is_emerging" gorm:"column:is_emerging"`
+	Store       string     `json:"store" gorm:"column:store"`
+	StoreID     string     `json:"store_id" gorm:"column:store_id"`
+	Name        *string    `json:"name" gorm:"column:name"`
+	Developer   *string    `json:"developer" gorm:"column:developer"`
+	Genre       *string    `json:"genre" gorm:"column:genre"`
+	ReleaseDate *APIDate   `json:"release_date" gorm:"column:release_date"`
+	Rating      *float64   `json:"rating" gorm:"column:rating"`
+	RatingCount *int       `json:"rating_count" gorm:"column:rating_count"`
+	IsEmerging  *bool      `json:"is_emerging" gorm:"column:is_emerging"`
+	Description string     `json:"description" gorm:"column:description"`
+	IconURL     string     `json:"icon_url" gorm:"column:icon_url"`
+	Screenshots StringList `json:"screenshots" gorm:"column:screenshots"`
+	PriceLabel  string     `json:"price_label" gorm:"column:price_label"`
+	Installs    *int64     `json:"installs" gorm:"column:installs"`
+	UpdatedAt   *APITime   `json:"updated_at" gorm:"column:updated_at"`
+	// Reviews are attached in code (top 5 by reviewed_at DESC from
+	// public.app_reviews); always non-nil so an app with no reviews renders [].
+	Reviews []AppReview `json:"reviews" gorm:"-"`
+}
+
+// AppReview mirrors a public.app_reviews row (store reviews fetched by the
+// pipeline). author/title/content scan NULL to "" — the UI shows them verbatim.
+type AppReview struct {
+	Author     string   `json:"author" gorm:"column:author"`
+	Rating     *int     `json:"rating" gorm:"column:rating"`
+	Title      string   `json:"title" gorm:"column:title"`
+	Content    string   `json:"content" gorm:"column:content"`
+	ReviewedAt *APITime `json:"reviewed_at" gorm:"column:reviewed_at"`
 }
 
 // FunnelInfo mirrors a public.funnels row joined through public.ads.
@@ -100,25 +145,61 @@ type FunnelInfo struct {
 	ScreenshotS3Key       *string `json:"screenshot_s3_key" gorm:"column:screenshot_s3_key"`
 }
 
-// CreativeInfo mirrors a public.creatives row joined through public.ads.
+// CreativeInfo mirrors a public.creatives row joined through public.ads, plus
+// per-ad run metadata from the owning ads row:
+//   - ad_started_on / ad_active come straight from ads.start_date / ads.is_active.
+//   - ad_days_running is computed in SQL (active: today − start_date; ended:
+//     end_date − start_date; NULL when start_date is missing).
+//   - publisher_platforms is ads.publisher_platforms (a Postgres text[]) cast to
+//     JSON in the query so it scans via StringList; NULL renders [].
+//   - eu_total_reach is the latest non-NULL adtech.ad_metrics.eu_total_reach for
+//     the ad (US ads carry no reach → stays null).
 type CreativeInfo struct {
-	Type     *string `json:"type" gorm:"column:type"`
-	S3Key    *string `json:"s3_key" gorm:"column:s3_key"`
-	BodyText *string `json:"body_text" gorm:"column:body_text"`
-	Title    *string `json:"title" gorm:"column:title"`
+	Type               *string    `json:"type" gorm:"column:type"`
+	S3Key              *string    `json:"s3_key" gorm:"column:s3_key"`
+	BodyText           *string    `json:"body_text" gorm:"column:body_text"`
+	Title              *string    `json:"title" gorm:"column:title"`
+	AdStartedOn        *APIDate   `json:"ad_started_on" gorm:"column:ad_started_on"`
+	AdActive           *bool      `json:"ad_active" gorm:"column:ad_active"`
+	AdDaysRunning      *int       `json:"ad_days_running" gorm:"column:ad_days_running"`
+	PublisherPlatforms StringList `json:"publisher_platforms" gorm:"column:publisher_platforms"`
+	EuTotalReach       *int64     `json:"eu_total_reach" gorm:"column:eu_total_reach"`
 }
 
 // GemDossier is assembled in code from several reads (not scanned directly).
+// The Meta-signal block (ads_last_seen … meta_active_ads_checked_at) comes from
+// public.advertisers; counts are NULL until the count-ads job has run.
 type GemDossier struct {
-	Gem           ShortlistRow   `json:"gem"`
-	Domain        *string        `json:"domain"`
-	PageCategory  *string        `json:"page_category"`
-	IgUsername    *string        `json:"ig_username"`
-	IgFollowers   *int           `json:"ig_followers"`
-	ParentCompany *string        `json:"parent_company"`
-	Apps          []AppInfo      `json:"apps"`
-	Funnels       []FunnelInfo   `json:"funnels"`
-	Creatives     []CreativeInfo `json:"creatives"`
+	Gem                    ShortlistRow   `json:"gem"`
+	Domain                 *string        `json:"domain"`
+	PageID                 *string        `json:"page_id" gorm:"column:page_id"`
+	PageCategory           *string        `json:"page_category"`
+	IgUsername             *string        `json:"ig_username"`
+	IgFollowers            *int           `json:"ig_followers"`
+	ParentCompany          *string        `json:"parent_company"`
+	AdsLastSeen            *APITime       `json:"ads_last_seen"`
+	PageLikeCount          *int64         `json:"page_like_count"`
+	MetaActiveAds          *int           `json:"meta_active_ads"`
+	MetaActiveAdsCapped    bool           `json:"meta_active_ads_capped"`
+	MetaActiveAdsCheckedAt *APITime       `json:"meta_active_ads_checked_at"`
+	Apps                   []AppInfo      `json:"apps"`
+	Funnels                []FunnelInfo   `json:"funnels"`
+	Creatives              []CreativeInfo `json:"creatives"`
+	Explainer              *ExplainerInfo `json:"explainer"`
+	Growth                 *GrowthInfo    `json:"growth"`
+}
+
+// AppMetricPoint mirrors an adtech.app_metrics row joined to public.apps for
+// the store. snapshot_date is part of the PK (NOT NULL) → a value, not a
+// pointer. installs is Google Play's maxInstalls; NULL for iOS (Apple publishes
+// no download counts — rating_count delta is the iOS trend proxy).
+type AppMetricPoint struct {
+	AppID        int      `json:"app_id" gorm:"column:app_id"`
+	Store        string   `json:"store" gorm:"column:store"`
+	SnapshotDate APIDate  `json:"snapshot_date" gorm:"column:snapshot_date"`
+	Rating       *float64 `json:"rating" gorm:"column:rating"`
+	RatingCount  *int64   `json:"rating_count" gorm:"column:rating_count"`
+	Installs     *int64   `json:"installs" gorm:"column:installs"`
 }
 
 // ScalingPoint mirrors an adtech.app_advertiser_metrics row. week_start is NOT

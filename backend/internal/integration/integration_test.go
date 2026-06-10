@@ -8,6 +8,7 @@ package integration
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -136,11 +137,94 @@ func TestDossier(t *testing.T) {
 	require.EqualValues(t, 4.5, d.Apps[0]["rating"])
 	require.Equal(t, true, d.Apps[0]["is_emerging"])
 
+	// Store-preview fields (migration 107) + reviews (108).
+	require.Equal(t, "Splits bills.", d.Apps[0]["description"])
+	require.Equal(t, "https://cdn/icon.png", d.Apps[0]["icon_url"])
+	require.Equal(t, []any{"https://cdn/s1.png", "https://cdn/s2.png"}, d.Apps[0]["screenshots"])
+	require.Equal(t, "Free", d.Apps[0]["price_label"])
+	require.Nil(t, d.Apps[0]["installs"], "iOS app — no install counts")
+	require.NotNil(t, d.Apps[0]["updated_at"])
+	reviews, ok := d.Apps[0]["reviews"].([]any)
+	require.True(t, ok, "reviews is an array")
+	require.Len(t, reviews, 5, "top 5 of 6 seeded reviews")
+	top := reviews[0].(map[string]any)
+	require.Equal(t, "reviewer 6", top["author"], "most recent first")
+	require.EqualValues(t, (6%5)+1, top["rating"], "seeded as (i%5)+1")
+
 	require.Len(t, d.Funnels, 1)
 	require.Equal(t, "funnels/ad1.png", d.Funnels[0]["screenshot_s3_key"])
 	require.Len(t, d.Creatives, 1)
 	require.Equal(t, "creatives/ad1.jpg", d.Creatives[0]["s3_key"])
 	require.Equal(t, "image", d.Creatives[0]["type"])
+
+	// Per-ad run metadata: the seeded ad started 9 days ago and is active.
+	require.NotNil(t, d.Creatives[0]["ad_started_on"])
+	require.Equal(t, true, d.Creatives[0]["ad_active"])
+	require.EqualValues(t, 9, d.Creatives[0]["ad_days_running"])
+	require.Equal(t, []any{"facebook", "instagram"}, d.Creatives[0]["publisher_platforms"])
+	require.EqualValues(t, 75000, d.Creatives[0]["eu_total_reach"],
+		"latest non-NULL ad_metrics snapshot wins")
+}
+
+// The second advertiser has no app, no ad run metadata, and no Meta signals:
+// every new field must serialize as null/[]/false — never crash or omit keys.
+func TestDossierNullSignals(t *testing.T) {
+	r := router()
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/gems/"+strconv.Itoa(adv2ID), nil))
+	require.Equal(t, 200, w.Code)
+
+	var d map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &d))
+	for _, k := range []string{"page_like_count", "meta_active_ads", "meta_active_ads_checked_at"} {
+		v, ok := d[k]
+		require.True(t, ok, "key %s present", k)
+		require.Nil(t, v, "key %s is null", k)
+	}
+	require.Equal(t, false, d["meta_active_ads_capped"])
+	require.NotNil(t, d["ads_last_seen"], "advertisers.last_seen is NOT NULL")
+	require.Equal(t, []any{}, d["apps"])
+}
+
+func TestDossierMetaSignals(t *testing.T) {
+	r := router()
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/gems/"+strconv.Itoa(advID), nil))
+	require.Equal(t, 200, w.Code)
+
+	var d map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &d))
+	require.EqualValues(t, 3500, d["page_like_count"])
+	require.EqualValues(t, 12, d["meta_active_ads"])
+	require.Equal(t, false, d["meta_active_ads_capped"])
+	require.NotNil(t, d["meta_active_ads_checked_at"])
+	require.NotNil(t, d["ads_last_seen"])
+}
+
+func TestAppMetrics(t *testing.T) {
+	r := router()
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/gems/"+strconv.Itoa(advID)+"/app-metrics", nil))
+	require.Equal(t, 200, w.Code)
+
+	var pts []map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &pts))
+	require.Len(t, pts, 3)
+	require.Equal(t, "2026-06-08", pts[0]["snapshot_date"], "ordered by snapshot_date ASC")
+	require.Equal(t, "2026-06-10", pts[2]["snapshot_date"])
+	require.Equal(t, "ios", pts[0]["store"])
+	require.EqualValues(t, 100, pts[0]["rating_count"])
+	require.EqualValues(t, 130, pts[2]["rating_count"])
+	require.Nil(t, pts[0]["installs"], "iOS rows carry no installs")
+	require.InDelta(t, 4.5, pts[0]["rating"], 1e-6)
+}
+
+func TestAppMetricsEmpty(t *testing.T) {
+	r := router()
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/gems/"+strconv.Itoa(adv2ID)+"/app-metrics", nil))
+	require.Equal(t, 200, w.Code)
+	require.Equal(t, "[]", strings.TrimSpace(w.Body.String()), "no linked app → empty array, not null")
 }
 
 func TestDossierNotFound(t *testing.T) {
@@ -267,7 +351,8 @@ func TestReadyz(t *testing.T) {
 // seed loads a small, deterministic dataset and refreshes the product matview.
 func seed(g *gorm.DB) {
 	must(g.Exec(`TRUNCATE frontend.review_decisions, adtech.app_advertiser_metrics,
-		adtech.ad_metrics, adtech.advertiser_scores, public.creatives, public.funnels,
+		adtech.ad_metrics, adtech.app_metrics, adtech.advertiser_scores,
+		public.app_reviews, public.creatives, public.funnels,
 		public.ads, public.apps, public.advertisers, public.domains, logging.crawl_log
 		RESTART IDENTITY CASCADE`).Error)
 
@@ -278,20 +363,44 @@ func seed(g *gorm.DB) {
 	must(g.Raw(`INSERT INTO public.advertisers (page_id, page_name) VALUES ('PARENT1','BigCorp') RETURNING id`).Scan(&parentID).Error)
 
 	must(g.Raw(`INSERT INTO public.advertisers
-		(page_id, page_name, domain_id, parent_company_id, page_category, ig_username, ig_followers)
-		VALUES ('PAGE1','Acme Co',?,?,'Software','acme',1234) RETURNING id`,
+		(page_id, page_name, domain_id, parent_company_id, page_category, ig_username, ig_followers,
+		 page_like_count, meta_active_ads, meta_active_ads_capped, meta_active_ads_checked_at)
+		VALUES ('PAGE1','Acme Co',?,?,'Software','acme',1234, 3500, 12, false, now()) RETURNING id`,
 		domainID, parentID).Scan(&advID).Error)
 
 	must(g.Raw(`INSERT INTO public.advertisers (page_id, page_name) VALUES ('PAGE2', NULL) RETURNING id`).Scan(&adv2ID).Error)
 
 	var appID int
 	must(g.Raw(`INSERT INTO public.apps
-		(store, store_id, name, developer, genre, release_date, rating, rating_count, is_emerging)
-		VALUES ('ios','111','Acme App','Acme Inc','Productivity','2026-01-15',4.5,100,true) RETURNING id`).Scan(&appID).Error)
+		(store, store_id, name, developer, genre, release_date, rating, rating_count, is_emerging,
+		 description, icon_url, screenshots, price_label)
+		VALUES ('ios','111','Acme App','Acme Inc','Productivity','2026-01-15',4.5,100,true,
+		 'Splits bills.','https://cdn/icon.png',
+		 '["https://cdn/s1.png","https://cdn/s2.png"]'::jsonb,'Free') RETURNING id`).Scan(&appID).Error)
+
+	// 6 reviews → the dossier returns the 5 most recent (review 6 first).
+	for i := 1; i <= 6; i++ {
+		must(g.Exec(`INSERT INTO public.app_reviews
+			(app_id, review_id, author, rating, title, content, reviewed_at)
+			VALUES (?, ?, ?, ?, 'ok app', 'does the thing', now() - (? * interval '1 day'))`,
+			appID, fmt.Sprintf("r%d", i), fmt.Sprintf("reviewer %d", i), (i%5)+1, 6-i).Error)
+	}
+
+	// Daily app metric snapshots (iOS → installs NULL).
+	must(g.Exec(`INSERT INTO adtech.app_metrics (app_id, snapshot_date, rating, rating_count, installs)
+		VALUES (?, '2026-06-08', 4.5, 100, NULL), (?, '2026-06-09', 4.5, 110, NULL),
+		       (?, '2026-06-10', 4.6, 130, NULL)`, appID, appID, appID).Error)
 
 	var adID int
-	must(g.Raw(`INSERT INTO public.ads (external_ad_id, advertiser_id, app_id, last_seen)
-		VALUES ('AD1',?,?, now()) RETURNING id`, advID, appID).Scan(&adID).Error)
+	must(g.Raw(`INSERT INTO public.ads
+		(external_ad_id, advertiser_id, app_id, is_active, start_date, publisher_platforms, last_seen)
+		VALUES ('AD1',?,?, true, now() - interval '9 days', ARRAY['facebook','instagram'], now())
+		RETURNING id`, advID, appID).Scan(&adID).Error)
+
+	// Per-ad reach snapshots: the latest non-NULL value (75000) is the one served.
+	must(g.Exec(`INSERT INTO adtech.ad_metrics (ad_id, snapshot_date, eu_total_reach, active)
+		VALUES (?, '2026-06-08', 50000, true), (?, '2026-06-09', 75000, true),
+		       (?, '2026-06-10', NULL, true)`, adID, adID, adID).Error)
 
 	must(g.Exec(`INSERT INTO public.creatives (ad_id, type, s3_key, body_text, title)
 		VALUES (?, 'image','creatives/ad1.jpg','buy now','Great Ad')`, adID).Error)
@@ -309,6 +418,15 @@ func seed(g *gorm.DB) {
 	must(g.Exec(`INSERT INTO adtech.app_advertiser_metrics
 		(advertiser_id, week_start, active_ad_count, distinct_creative_count, total_eu_reach)
 		VALUES (?, '2026-05-25', 3, 2, 100000)`, advID).Error)
+
+	// The shortlist only surfaces advertisers with at least one downloaded
+	// creative — give the minimal advertiser a bare ad (no app, no run metadata)
+	// with one creative so it stays on the shortlist with all-null fields.
+	var ad2ID int
+	must(g.Raw(`INSERT INTO public.ads (external_ad_id, advertiser_id)
+		VALUES ('AD2', ?) RETURNING id`, adv2ID).Scan(&ad2ID).Error)
+	must(g.Exec(`INSERT INTO public.creatives (ad_id, type, s3_key)
+		VALUES (?, 'image', 'creatives/ad2.jpg')`, ad2ID).Error)
 
 	// crawl_log: 6 doc_id failures (last hour) → doc_id_rotation alert; plus ok rows.
 	for i := 0; i < 6; i++ {

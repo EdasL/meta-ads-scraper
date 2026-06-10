@@ -31,6 +31,7 @@ func Init(r *gin.Engine) {
 		api.GET("/shortlist", shortlist.List)
 		api.GET("/gems/:advertiser_id", gems.Get)
 		api.GET("/gems/:advertiser_id/scaling", gems.Scaling)
+		api.GET("/gems/:advertiser_id/app-metrics", gems.AppMetrics)
 		api.GET("/review/queue", review.Queue)
 		// The single write is guarded by an optional bearer token (no-op unless
 		// AGF_API_TOKEN is set), so production can require auth on mutations.
