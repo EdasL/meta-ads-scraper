@@ -73,7 +73,10 @@ def weekly_launch_counts(start_epochs, now_epoch: int):
     now_epoch, oldest -> newest. The zero weeks matter: the EWMA must see the
     gaps between launches, not just the launches. Empty -> []."""
     week = 7 * 86400
-    eps = [e for e in start_epochs if e and now_epoch - e <= _MAX_LAUNCH_AGE_S]
+    # drop garbage past dates AND future ones (Meta can schedule ads ahead;
+    # a not-yet-started ad is not a launch)
+    eps = [e for e in start_epochs
+           if e and 0 <= now_epoch - e <= _MAX_LAUNCH_AGE_S]
     if not eps:
         return []
     first = min(eps)

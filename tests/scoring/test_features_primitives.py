@@ -87,3 +87,11 @@ def test_weekly_launch_counts_empty_and_stale():
     assert weekly_launch_counts([], now_epoch=1_700_000_000) == []
     old = 1_700_000_000 - 6 * 365 * 86400               # garbage start_date (>5y)
     assert weekly_launch_counts([old], now_epoch=1_700_000_000) == []
+
+
+def test_weekly_launch_counts_ignores_future_launches():
+    # Meta can schedule ads with a future start_date — not yet a launch
+    wk = 7 * 86400
+    t0 = 1_700_000_000
+    assert weekly_launch_counts([t0, t0 + 5 * wk], now_epoch=t0 + 1 * wk) == [1, 0]
+    assert weekly_launch_counts([t0 + 2 * wk], now_epoch=t0) == []
