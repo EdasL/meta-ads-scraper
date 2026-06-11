@@ -27,6 +27,10 @@ def test_metrics_and_rotation_alerts(pg_conn):
 
 
 def test_no_alerts_when_clean(pg_conn):
+    # the shared scratch DB can hold other suites' committed error rows (the Go
+    # integration seed leaves crawl_log populated) — clear inside this
+    # rolled-back txn so "clean" is actually clean
+    pg_conn.execute(text("DELETE FROM logging.crawl_log"))
     pg_conn.execute(text("INSERT INTO logging.crawl_log (entity_type, entity_id, crawl_result) "
                          "VALUES ('advertiser', 1, 'ok')"))
     assert rotation_alerts(pg_conn, doc_id_threshold=3, rate_limit_threshold=5) == []
