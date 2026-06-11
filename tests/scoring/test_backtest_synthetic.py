@@ -6,7 +6,7 @@ RANK / THRESHOLD / VETO properties — never on exact scores.
 
 Sentinel prefix: BT (page_ids BT01…BT20). Never collides with e2e P5* or API P7*.
 Cohorts seeded: "Health & Fitness" (8 members) and "Education" (8 members).
-All series ≥ 8 weeks so pctile is non-degenerate and seasonal_spike veto can fire.
+All series ≥ 8 weeks so pctile is non-degenerate.
 
 Run:
     export AGF_TEST_DB_URL=postgresql://agf:agf@localhost:5433/agf
@@ -309,14 +309,12 @@ def test_flat_advertiser_does_not_alert(scored):
 
 
 # ---------------------------------------------------------------------------
-# 5. Seasonal-only → vetoed with reason 'seasonal_spike'
+# 5. Seasonal-only → no longer vetoed (GemScore v2 removed the STL check)
 # ---------------------------------------------------------------------------
 
-def test_seasonal_only_vetoed(scored):
+def test_seasonal_only_no_longer_vetoed(scored):
     r = _s(scored, "BT07")
-    assert r.vetoed is True, f"BT07 seasonal_only: expected vetoed, got gem_score={r.gem_score:.1f}"
-    assert r.veto_reason == "seasonal_spike", f"BT07 veto_reason={r.veto_reason!r}"
-    assert r.alert is False
+    assert r.vetoed is False, f"BT07 seasonal_only: veto removed in v2, got {r.veto_reason!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -333,15 +331,14 @@ def test_seasonal_with_trend_not_seasonal_spike_vetoed(scored):
 
 
 # ---------------------------------------------------------------------------
-# 7. Disguised incumbent → vetoed 'disguised_incumbent'
+# 7. Parent-owned → no longer vetoed (GemScore v2: ownership is irrelevant
+#    to copy-worthiness; the disguised_incumbent veto was removed)
 # ---------------------------------------------------------------------------
 
-def test_disguised_incumbent_vetoed(scored):
+def test_parent_owned_no_longer_vetoed(scored):
     for pid in ("BT05", "BT17"):
         r = _s(scored, pid)
-        assert r.vetoed is True, f"{pid}: expected vetoed"
-        assert r.veto_reason == "disguised_incumbent", f"{pid}: veto_reason={r.veto_reason!r}"
-        assert r.alert is False
+        assert r.vetoed is False, f"{pid}: parent ownership must not veto in v2, got {r.veto_reason!r}"
 
 
 # ---------------------------------------------------------------------------

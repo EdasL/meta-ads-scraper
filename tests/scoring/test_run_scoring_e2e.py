@@ -95,9 +95,10 @@ def test_score_all_flags_gem_not_brand_not_spike(_migrated_engine):
         assert rows[gem].alert is True                      # the gem alerts (>=70, not vetoed)
         assert scores[gem].vetoed is False
         assert rows[gem].gem_score > scores[brand].gem_score
-        assert scores[spike].vetoed is True                 # seasonal spike vetoed
-        assert scores[spike].veto_reason == "seasonal_spike"
-        assert spike not in rows                            # vetoed rows never reach the feed
+        # GemScore v2: the seasonal-spike veto is gone — a seasonal-looking series
+        # is no longer disqualifying, so the spike sentinel reaches the feed.
+        assert scores[spike].vetoed is False
+        assert spike in rows
         assert scores[brand].vetoed is True                 # 8M ratings == established, not a gem
         assert scores[brand].veto_reason == "established_traction"
         assert brand not in rows
