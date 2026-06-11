@@ -34,9 +34,10 @@ def test_under_radar_gem_is_high():
 
 
 def test_scaling_velocity_combines_with_weights():
-    sv = scaling_velocity({"wow": 1.0, "ramp": 1.0, "accel": 1.0, "ewma": 1.0, "longevity": 1.0})
+    sv = scaling_velocity({"wow": 1.0, "ramp": 1.0, "accel": 1.0, "ewma": 1.0,
+                           "longevity": 1.0, "iteration": 1.0})
     assert sv == 1.0
-    assert set(SV_WEIGHTS) == {"wow", "ramp", "accel", "ewma", "longevity"}
+    assert set(SV_WEIGHTS) == {"wow", "ramp", "accel", "ewma", "longevity", "iteration"}
     assert abs(sum(SV_WEIGHTS.values()) - 1.0) < 1e-9
 
 

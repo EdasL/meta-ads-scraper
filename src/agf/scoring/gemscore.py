@@ -1,6 +1,6 @@
-"""GemScore axes + multiplicative AND-gate (master-plan §2, §6 P5-T6/T7).
+"""GemScore axes + multiplicative AND-gate (v2: spec 2026-06-11).
 
-gem_score = 100 · clamp01(SV)^.5 · clamp01(UR)^.35 · clamp01(FI)^.15
+gem_score = 100 · SV^.40 · UR^.25 · FI^.05 · D^.20 · W^.10
 
 Each axis is a weighted sum of cohort-normalized components in [0,1]; missing
 components re-normalize the remaining weights. A fully-missing (sparse) axis is
@@ -10,9 +10,16 @@ gem — but a *present, genuinely low* axis (famous brand -> UR≈0) still gates
 # axis component weights (sum to 1 within each axis)
 # `ramp` (overall multi-week growth) is the dominant scaling signal: it credits a sustained
 # 30->80 / 0->40 climb even after it plateaus, where `wow` (last week only) would read flat.
-SV_WEIGHTS = {"wow": 0.20, "ramp": 0.35, "accel": 0.15, "ewma": 0.15, "longevity": 0.15}
+# `iteration` (new ad launches per week) is the reinvestment signal: an advertiser
+# shipping fresh creatives keeps paying because the ads convert.
+SV_WEIGHTS = {"wow": 0.15, "ramp": 0.30, "accel": 0.10, "ewma": 0.10,
+              "longevity": 0.15, "iteration": 0.20}
 UR_WEIGHTS = {"rating": 0.40, "followers": 0.20, "reach": 0.20, "newness": 0.20}
 FI_WEIGHTS = {"fingerprint": 0.50, "cta": 0.30, "monetize": 0.20}
+# demand: store-traction velocity (installs = Play maxInstalls delta; reviews =
+# rating_count delta, the iOS proxy). whitespace: inverted niche crowding.
+D_WEIGHTS = {"installs": 0.55, "reviews": 0.45}
+W_WEIGHTS = {"crowding": 1.0}
 
 
 def clamp01(x: float) -> float:
@@ -41,16 +48,27 @@ def funnel_intent(components: dict):
     return weighted_axis(components, FI_WEIGHTS)
 
 
-def gem_score(sv, ur, fi, floor: float = 0.5) -> float:
-    """Multiplicative AND-gate: 100 · clamp01(SV)^.5 · clamp01(UR)^.35 · clamp01(FI)^.15.
+def demand(components: dict):
+    return weighted_axis(components, D_WEIGHTS)
 
-    A None axis means NO DATA (e.g. a quiz funnel has no app rating / followers / EU reach,
-    so under-radar is uncomputable). It is imputed to the cohort-NEUTRAL `floor` (0.5) so a
-    data gap neither rewards nor punishes — the score is driven by the axes we DO have. A
-    *present* low axis is clamped as-is: a famous brand whose UR genuinely computes to ~0
-    still collapses the product to ~0 (the 'still unknown' hard gate). The earlier 0.05 floor
-    wrongly punished data-less funnels (0.05^.35≈0.35) — exactly the emerging gems we want."""
+
+def whitespace(components: dict):
+    return weighted_axis(components, W_WEIGHTS)
+
+
+def gem_score(sv, ur, fi, d=None, w=None, floor: float = 0.5) -> float:
+    """Multiplicative AND-gate: 100 · SV^.40 · UR^.25 · FI^.05 · D^.20 · W^.10.
+
+    A None axis means NO DATA (e.g. no app_metrics snapshots yet, no discovery
+    keyword lineage). It is imputed to the cohort-NEUTRAL `floor` (0.5) so a
+    data gap neither rewards nor punishes — the score is driven by the axes we
+    DO have. A *present* low axis is clamped as-is: a famous brand whose UR
+    genuinely computes to ~0 still collapses the product to ~0 (the 'still
+    unknown' hard gate). FI carries the smallest exponent: every feed app
+    already passed the app-link/install-CTA gates, so it barely discriminates."""
     a = floor if sv is None else clamp01(sv)
     b = floor if ur is None else clamp01(ur)
     c = floor if fi is None else clamp01(fi)
-    return 100.0 * (a ** 0.5) * (b ** 0.35) * (c ** 0.15)
+    e = floor if d is None else clamp01(d)
+    f = floor if w is None else clamp01(w)
+    return 100.0 * (a ** 0.40) * (b ** 0.25) * (c ** 0.05) * (e ** 0.20) * (f ** 0.10)
