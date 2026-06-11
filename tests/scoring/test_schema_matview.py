@@ -25,3 +25,21 @@ def test_matview_has_unique_index_on_advertiser_id(pg_conn):
         "SELECT indexdef FROM pg_indexes WHERE schemaname='frontend' "
         "AND tablename='emerging_scaling_apps'")).scalars().all()
     assert any("UNIQUE" in d.upper() and "advertiser_id" in d for d in defs), defs
+
+
+V2_COLUMNS = {
+    "demand", "whitespace", "niche_keyword", "niche_advertiser_count",
+    "installs_delta_28d", "rating_count_delta_28d",
+}
+
+
+def test_scores_table_has_v2_columns(pg_conn):
+    cols = set(pg_conn.execute(
+        text("SELECT * FROM adtech.advertiser_scores LIMIT 0")).keys())
+    assert V2_COLUMNS <= cols, V2_COLUMNS - cols
+
+
+def test_matview_exposes_v2_columns(pg_conn):
+    cols = set(pg_conn.execute(
+        text("SELECT * FROM frontend.emerging_scaling_apps LIMIT 0")).keys())
+    assert V2_COLUMNS <= cols, V2_COLUMNS - cols
