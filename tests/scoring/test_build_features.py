@@ -79,3 +79,61 @@ def test_build_features_quality_inputs_null_when_unknown(pg_conn):
     assert fv.page_like_count is None
     assert fv.meta_active_ads is None
     assert fv.meta_active_ads_capped is False   # column default; never vetoes
+
+
+def test_build_features_demand_velocity_and_iteration(pg_conn):
+    """GemScore v2: app_metrics deltas -> demand velocities; ad launches -> iteration."""
+    adv = repo.upsert_advertiser(pg_conn, _ad("F5", days_old=21))
+    app = repo.upsert_app(pg_conn, {"store": "ios", "store_id": "999",
+                                    "name": "Feet", "genre": "Health & Fitness",
+                                    "rating_count": 120, "release_date": "2026-05-20",
+                                    "is_emerging": True})
+    repo.upsert_ad(pg_conn, _ad("F5", days_old=21), adv, app)
+    repo.upsert_ad(pg_conn, _ad("F6", days_old=7), adv, app)
+    # 28-day window ending AS_OF: installs 1000 -> 1700, reviews 50 -> 78
+    repo.upsert_app_metric(pg_conn, app, "2026-05-07", 4.8, 50, 1000)
+    repo.upsert_app_metric(pg_conn, app, "2026-06-04", 4.8, 78, 1700)
+
+    fv = build_features(pg_conn, adv, AS_OF)
+
+    assert fv.installs_velocity == 25.0          # +700 / 28 days
+    assert fv.review_velocity == 1.0             # +28 / 28 days
+    assert fv.installs_delta_28d == 700
+    assert fv.rating_count_delta_28d == 28
+    # launches 21d and 7d ago -> weekly counts [1, 0, 1, 0] -> ewma 0.375
+    assert fv.iteration_rate == 0.375
+
+
+def test_build_features_demand_ios_null_installs(pg_conn):
+    """iOS apps have no installs: review velocity carries demand, installs stay None."""
+    adv = repo.upsert_advertiser(pg_conn, _ad("F7", days_old=20))
+    app = repo.upsert_app(pg_conn, {"store": "ios", "store_id": "999",
+                                    "name": "Feet", "genre": "Health & Fitness",
+                                    "rating_count": 120, "release_date": "2026-05-20",
+                                    "is_emerging": True})
+    repo.upsert_ad(pg_conn, _ad("F7", days_old=20), adv, app)
+    repo.upsert_app_metric(pg_conn, app, "2026-05-21", 4.8, 50, None)
+    repo.upsert_app_metric(pg_conn, app, "2026-06-04", 4.8, 64, None)
+
+    fv = build_features(pg_conn, adv, AS_OF)
+
+    assert fv.installs_velocity is None
+    assert fv.installs_delta_28d is None
+    assert fv.review_velocity == 1.0             # +14 / 14 days
+    assert fv.rating_count_delta_28d == 14
+
+
+def test_build_features_demand_none_without_snapshots(pg_conn):
+    """No app_metrics rows -> demand inputs stay None (axis floors later)."""
+    adv = repo.upsert_advertiser(pg_conn, _ad("F8", days_old=20))
+    app = repo.upsert_app(pg_conn, {"store": "ios", "store_id": "999",
+                                    "name": "Feet", "genre": "Health & Fitness",
+                                    "rating_count": 120, "release_date": "2026-05-20",
+                                    "is_emerging": True})
+    repo.upsert_ad(pg_conn, _ad("F8", days_old=20), adv, app)
+
+    fv = build_features(pg_conn, adv, AS_OF)
+
+    assert fv.installs_velocity is None and fv.review_velocity is None
+    assert fv.installs_delta_28d is None and fv.rating_count_delta_28d is None
+    assert fv.iteration_rate > 0                 # one launch still counts

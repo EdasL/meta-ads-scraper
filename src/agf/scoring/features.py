@@ -84,7 +84,7 @@ def weekly_launch_counts(start_epochs, now_epoch: int):
 
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from sqlalchemy import text
 from agf.scale import longevity_days
 from agf.scoring.cohorts import cohort_key
@@ -135,6 +135,14 @@ class FeatureVector:
     # miss e.g. a 10M-install Android listing when the newest ad links the iOS app)
     max_installs: int | None = None
     max_rating_count: int | None = None
+    # GemScore v2 (spec 2026-06-11): demand-velocity + iteration inputs.
+    # Velocities are per-day rates over the trailing 28d of adtech.app_metrics;
+    # the raw deltas are persisted for the UI (real numbers, never re-derived).
+    installs_velocity: float | None = None
+    review_velocity: float | None = None
+    installs_delta_28d: int | None = None
+    rating_count_delta_28d: int | None = None
+    iteration_rate: float = 0.0          # EWMA of weekly ad-launch counts
 
 
 def _as_of_epoch(as_of) -> int:
@@ -191,6 +199,21 @@ def build_features(conn, advertiser_id: int, as_of) -> FeatureVector:
     if app and app.release_date:
         release_age = (as_of - app.release_date).days
 
+    # demand velocity: store-traction deltas over the trailing 28 days
+    installs_vel = review_vel = installs_delta = reviews_delta = None
+    if app:
+        snaps = conn.execute(text(
+            "SELECT snapshot_date, rating_count, installs FROM adtech.app_metrics "
+            "WHERE app_id=:i AND snapshot_date >= :w0 AND snapshot_date <= :d "
+            "ORDER BY snapshot_date"),
+            {"i": app.id, "w0": as_of - timedelta(days=28), "d": as_of}).all()
+        inst = traction_delta([(r.snapshot_date, r.installs) for r in snaps])
+        revs = traction_delta([(r.snapshot_date, r.rating_count) for r in snaps])
+        if inst is not None:
+            installs_delta, installs_vel = inst
+        if revs is not None:
+            reviews_delta, review_vel = revs
+
     has_funnel = conn.execute(text(
         "SELECT count(*) FROM public.funnels f JOIN public.ads a ON a.id=f.ad_id "
         "WHERE a.advertiser_id=:a"), {"a": advertiser_id}).scalar() > 0
@@ -229,4 +252,12 @@ def build_features(conn, advertiser_id: int, as_of) -> FeatureVector:
         meta_active_ads_capped=adv.meta_active_ads_capped if adv else None,
         max_installs=int(traction.mi) if traction and traction.mi is not None else None,
         max_rating_count=int(traction.mr) if traction and traction.mr is not None else None,
+        installs_velocity=installs_vel,
+        review_velocity=review_vel,
+        installs_delta_28d=int(installs_delta) if installs_delta is not None else None,
+        rating_count_delta_28d=int(reviews_delta) if reviews_delta is not None else None,
+        # every stored ad counts as a launch (ended ones too): iteration is
+        # "how often do they ship new creatives", not "what is still running"
+        iteration_rate=ewma(weekly_launch_counts(
+            [r.start_epoch for r in ad_rows if r.start_epoch], now_epoch)),
     )
