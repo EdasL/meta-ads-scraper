@@ -121,6 +121,13 @@ export function adaptShortlistRow(r: ApiShortlistRow, mediaUrl: MediaUrl): Short
     longrun_ad_count: num(r.longrun_ad_count),
     new_ads_4w: num(r.new_ads_4w),
     ads_seen: num(r.ads_seen),
+    // GemScore v2 fields — unknown stays undefined (a 0 delta is real data)
+    demand: r.demand ?? undefined,
+    whitespace: r.whitespace ?? undefined,
+    niche_keyword: r.niche_keyword ?? undefined,
+    niche_advertiser_count: r.niche_advertiser_count ?? undefined,
+    installs_delta_28d: r.installs_delta_28d ?? undefined,
+    rating_count_delta_28d: r.rating_count_delta_28d ?? undefined,
   };
 }
 

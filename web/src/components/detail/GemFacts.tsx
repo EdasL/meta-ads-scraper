@@ -15,6 +15,12 @@ function Fact({ label, value }: { label: string; value: ReactNode }) {
   );
 }
 
+/** Signed count for a raw delta; undefined hides the row (unknown is not 0). */
+function signedCount(n: number | undefined): string | undefined {
+  if (n === undefined) return undefined;
+  return n > 0 ? `+${n.toLocaleString()}` : n.toLocaleString();
+}
+
 /** The long-tail maker facts: domain, age, category, Instagram, price, tech
  * stack, and data-freshness rows. The headline numbers (ads in library, page
  * likes, owner, store rating) live in GemHeader. */
@@ -54,6 +60,14 @@ export function GemFacts({ gem }: { gem: GemDossier }) {
         <Fact label="Instagram" value={igValue} />
         <Fact label="Instagram followers" value={c.ig_followers?.toLocaleString()} />
         <Fact label="Price" value={gem.pricing} />
+        <Fact label="Installs (4 weeks)" value={signedCount(gem.installs_delta_28d)} />
+        <Fact label="Reviews (4 weeks)" value={signedCount(gem.rating_count_delta_28d)} />
+        <Fact
+          label="Niche"
+          value={gem.niche_keyword && gem.niche_advertiser_count !== undefined
+            ? `${gem.niche_keyword} · ${gem.niche_advertiser_count} advertiser${gem.niche_advertiser_count === 1 ? "" : "s"}`
+            : undefined}
+        />
         <Fact label="Ads checked" value={gem.ads_last_seen ? timeAgo(gem.ads_last_seen, nowMs) : undefined} />
         <Fact label="Store checked" value={storeCheckedAt ? timeAgo(storeCheckedAt, nowMs) : undefined} />
         {c.tech && c.tech.length > 0 && (

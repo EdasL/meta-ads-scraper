@@ -60,6 +60,14 @@ export interface ShortlistRow {
   longrun_ad_count?: number; // active ads running 30+ days
   new_ads_4w?: number; // ads launched in the last 28 days
   ads_seen?: number; // all stored ads for the advertiser, including ended
+  // GemScore v2 fields (matview migration 117). Undefined when absent/null —
+  // unknown is NOT zero (a 0 delta is real data), so no defaulting here.
+  demand?: number; // 0-1 axis: store-traction velocity percentile
+  whitespace?: number; // 0-1 axis: inverted niche crowding
+  niche_keyword?: string; // discovery keyword that surfaced the advertiser
+  niche_advertiser_count?: number; // sustained advertisers in that niche
+  installs_delta_28d?: number; // raw Play installs delta, trailing 28 days
+  rating_count_delta_28d?: number; // raw review-count delta, trailing 28 days
 }
 
 export type CreativeType = "image" | "video" | "text";

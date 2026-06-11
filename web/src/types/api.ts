@@ -56,6 +56,14 @@ export interface ApiShortlistRow {
   longrun_ad_count?: number | null;
   new_ads_4w?: number | null;
   ads_seen?: number | null;
+  // GemScore v2 fields (matview migration 117); absent on older builds, null
+  // when the advertiser has no traction snapshots / discovery lineage.
+  demand?: number | null;
+  whitespace?: number | null;
+  niche_keyword?: string | null;
+  niche_advertiser_count?: number | null;
+  installs_delta_28d?: number | null;
+  rating_count_delta_28d?: number | null;
 }
 
 /** `AppReview` (backend models.go) — one recent store review for the app. */

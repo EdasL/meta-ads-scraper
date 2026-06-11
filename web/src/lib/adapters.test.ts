@@ -52,6 +52,30 @@ test("adaptShortlistRow coerces null axes to 0 and null page_name to ''", () => 
   assert.equal(row.explainer, null);
   assert.equal(row.growth, null);
   assert.equal(row.hero_creative, null);
+  // GemScore v2 fields absent on old builds → undefined, never 0 (a 0 delta is data)
+  assert.equal(row.installs_delta_28d, undefined);
+  assert.equal(row.rating_count_delta_28d, undefined);
+  assert.equal(row.niche_keyword, undefined);
+  assert.equal(row.demand, undefined);
+});
+
+test("adaptShortlistRow passes GemScore v2 fields through, keeping real zeros", () => {
+  const row = adaptShortlistRow({
+    advertiser_id: 2, cohort: "Education×US", page_name: "Beta",
+    app_id: 8, app_name: "BetaApp", gem_score: 61.2,
+    scaling_velocity: 0.6, under_radar: 0.7, funnel_intent: 0.5,
+    active_ad_count: 4, max_longevity_days: 21, alert: false,
+    refreshed_at: "2026-06-11T08:00:00Z",
+    demand: 0.8, whitespace: 0.9,
+    niche_keyword: "ai calorie tracker", niche_advertiser_count: 2,
+    installs_delta_28d: 4000, rating_count_delta_28d: 0,
+  }, media);
+  assert.equal(row.demand, 0.8);
+  assert.equal(row.whitespace, 0.9);
+  assert.equal(row.niche_keyword, "ai calorie tracker");
+  assert.equal(row.niche_advertiser_count, 2);
+  assert.equal(row.installs_delta_28d, 4000);
+  assert.equal(row.rating_count_delta_28d, 0);   // a real zero survives
 });
 
 test("adaptShortlistRow passes real values through unchanged", () => {
