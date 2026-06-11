@@ -44,9 +44,30 @@ def _to_record(node: dict) -> AdRecord:
         link_url=snap.get("link_url"),
         body_text=body.get("text"),
         page_like_count=snap.get("page_like_count"),
-        image_urls=[i["original_image_url"] for i in (snap.get("images") or []) if i.get("original_image_url")],
-        video_urls=[v["video_hd_url"] for v in (snap.get("videos") or []) if v.get("video_hd_url")],
+        image_urls=_image_urls(snap),
+        video_urls=_video_urls(snap),
     )
+
+
+def _image_urls(snap: dict) -> list[str]:
+    """original first, resized as fallback; carousel ads keep media in
+    snapshot.cards (live-probed 2026-06-11 — images/videos arrays empty there)."""
+    urls = [i.get("original_image_url") or i.get("resized_image_url")
+            for i in (snap.get("images") or [])]
+    for c in (snap.get("cards") or []):
+        if c.get("video_hd_url") or c.get("video_sd_url"):
+            continue                          # video card — counted in _video_urls
+        urls.append(c.get("original_image_url") or c.get("resized_image_url"))
+    return [u for u in urls if u]
+
+
+def _video_urls(snap: dict) -> list[str]:
+    """HD preferred, SD is common alone (11/60 ads in one live listing)."""
+    urls = [v.get("video_hd_url") or v.get("video_sd_url")
+            for v in (snap.get("videos") or [])]
+    urls += [c.get("video_hd_url") or c.get("video_sd_url")
+             for c in (snap.get("cards") or [])]
+    return [u for u in urls if u]
 
 
 def parse_search_response(data: dict) -> tuple[list[AdRecord], str | None, bool]:

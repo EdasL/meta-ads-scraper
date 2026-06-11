@@ -33,3 +33,44 @@ def test_record_fields():
 def test_parse_empty_response_is_safe():
     records, cursor, has_next = parse_search_response({"data": {}})
     assert records == [] and cursor is None and has_next is False
+
+
+def _node_with_snapshot(snap):
+    return {"data": {"ad_library_main": {"search_results_connection": {
+        "edges": [{"node": {"collated_results": [
+            {"ad_archive_id": "999", "page_id": "P9", "snapshot": snap}]}}],
+        "page_info": {"end_cursor": None, "has_next_page": False}}}}}
+
+
+def test_sd_only_video_is_extracted():
+    # Live-probed 2026-06-11: 11/60 ads in one listing carry ONLY video_sd_url.
+    rec = parse_search_response(_node_with_snapshot(
+        {"videos": [{"video_sd_url": "https://video.fbcdn.net/sd.mp4"}]}))[0][0]
+    assert rec.video_urls == ["https://video.fbcdn.net/sd.mp4"]
+
+
+def test_hd_video_preferred_over_sd():
+    rec = parse_search_response(_node_with_snapshot(
+        {"videos": [{"video_hd_url": "https://video.fbcdn.net/hd.mp4",
+                     "video_sd_url": "https://video.fbcdn.net/sd.mp4"}]}))[0][0]
+    assert rec.video_urls == ["https://video.fbcdn.net/hd.mp4"]
+
+
+def test_resized_image_fallback():
+    rec = parse_search_response(_node_with_snapshot(
+        {"images": [{"resized_image_url": "https://scontent.fbcdn.net/r.jpg"}]}))[0][0]
+    assert rec.image_urls == ["https://scontent.fbcdn.net/r.jpg"]
+
+
+def test_carousel_cards_media_is_extracted():
+    # Carousel ads keep media in snapshot.cards (images/videos arrays empty).
+    rec = parse_search_response(_node_with_snapshot(
+        {"cards": [
+            {"original_image_url": "https://scontent.fbcdn.net/c1.jpg"},
+            {"video_hd_url": "https://video.fbcdn.net/c2.mp4",
+             "video_preview_image_url": "https://scontent.fbcdn.net/c2p.jpg"},
+            {"resized_image_url": "https://scontent.fbcdn.net/c3.jpg"},
+        ]}))[0][0]
+    assert rec.image_urls == ["https://scontent.fbcdn.net/c1.jpg",
+                              "https://scontent.fbcdn.net/c3.jpg"]
+    assert rec.video_urls == ["https://video.fbcdn.net/c2.mp4"]
