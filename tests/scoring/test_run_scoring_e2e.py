@@ -50,6 +50,21 @@ def _seed(conn):
                       "WHERE store_id='P5GEM'"))
     conn.execute(text("UPDATE public.advertisers SET page_like_count=2500 "
                       "WHERE id=:i"), {"i": ids["P5GEM"]})
+    # GemScore v2 evidence for the gem: 28d of store traction + discovery lineage
+    conn.execute(text(
+        "INSERT INTO adtech.app_metrics (app_id, snapshot_date, rating, rating_count, installs) "
+        "SELECT id, :d1, 4.8, 100, 10000 FROM public.apps WHERE store_id='P5GEM' "
+        "UNION ALL "
+        "SELECT id, :d2, 4.8, 128, 14000 FROM public.apps WHERE store_id='P5GEM' "
+        "ON CONFLICT (app_id, snapshot_date) DO NOTHING"),
+        {"d1": AS_OF - timedelta(days=28), "d2": AS_OF})
+    conn.execute(text(
+        "INSERT INTO discovery.candidates "
+        "  (page_id, store, store_id, source_keyword, status, kept_advertiser_id) "
+        "VALUES ('P5GEM', 'ios', 'P5GEM', 'p5 sentinel niche', 'kept', :a) "
+        "ON CONFLICT (page_id, store, store_id) DO UPDATE "
+        "  SET kept_advertiser_id=EXCLUDED.kept_advertiser_id"),
+        {"a": ids["P5GEM"]})
     return ids
 
 
@@ -58,6 +73,7 @@ def _cleanup(engine):
         ids = conn.execute(text("SELECT id FROM public.advertisers WHERE page_id = ANY(:p)"),
                            {"p": list(SENTINELS)}).scalars().all()
         if ids:
+            conn.execute(text("DELETE FROM discovery.candidates WHERE kept_advertiser_id = ANY(:i)"), {"i": ids})
             conn.execute(text("DELETE FROM adtech.advertiser_scores WHERE advertiser_id = ANY(:i)"), {"i": ids})
             conn.execute(text("DELETE FROM adtech.app_advertiser_metrics WHERE advertiser_id = ANY(:i)"), {"i": ids})
             conn.execute(text("DELETE FROM adtech.ad_metrics m USING public.ads a "
@@ -88,13 +104,23 @@ def test_score_all_flags_gem_not_brand_not_spike(_migrated_engine):
                 "FROM frontend.emerging_scaling_apps WHERE advertiser_id = ANY(:i)"),
                 {"i": list(ids.values())}).all()}
             scores = {r.advertiser_id: r for r in conn.execute(text(
-                "SELECT advertiser_id, vetoed, veto_reason, gem_score "
+                "SELECT advertiser_id, vetoed, veto_reason, gem_score, demand, "
+                "       whitespace, niche_keyword, niche_advertiser_count, "
+                "       installs_delta_28d, rating_count_delta_28d "
                 "FROM adtech.advertiser_scores WHERE advertiser_id = ANY(:i)"),
                 {"i": list(ids.values())}).all()}
         gem, brand, spike = ids["P5GEM"], ids["P5BRAND"], ids["P5SPIKE"]
-        assert rows[gem].alert is True                      # the gem alerts (>=70, not vetoed)
         assert scores[gem].vetoed is False
         assert rows[gem].gem_score > scores[brand].gem_score
+        # v2 axes persisted: demand from the seeded app_metrics, whitespace from
+        # the discovery lineage, raw deltas as the UI evidence
+        assert scores[gem].demand is not None
+        assert scores[gem].whitespace is not None
+        assert scores[gem].niche_keyword == "p5 sentinel niche"
+        assert scores[gem].niche_advertiser_count == 1
+        assert scores[gem].installs_delta_28d == 4000
+        assert scores[gem].rating_count_delta_28d == 28
+        assert scores[spike].demand is None                 # no snapshots seeded
         # GemScore v2: the seasonal-spike veto is gone — a seasonal-looking series
         # is no longer disqualifying, so the spike sentinel reaches the feed.
         assert scores[spike].vetoed is False

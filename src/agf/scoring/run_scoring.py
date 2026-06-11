@@ -5,10 +5,17 @@ from collections import defaultdict
 from sqlalchemy import text
 from agf.scoring.cohorts import pctile
 from agf.scoring.features import build_features
-from agf.scoring.gemscore import (scaling_velocity, under_radar, funnel_intent, gem_score)
+from agf.scoring.gemscore import (scaling_velocity, under_radar, funnel_intent,
+                                  demand, whitespace, gem_score)
 from agf.scoring.vetoes import apply_vetoes
+from agf.scoring.whitespace import load_niche_crowding
 
-ALERT_THRESHOLD = 70.0           # master-plan §2: GemScore >= 70 -> review queue
+# GemScore >= threshold -> review queue. v2 recalibration: the two new axes
+# (demand, whitespace) floor to 0.5 when data is missing, which multiplies every
+# score by 0.5^(0.20+0.10) ~= 0.81 versus v1 — v1's 70 maps to ~57 on the v2
+# scale. 60 keeps the review queue alive while demand history accrues, and is
+# slightly stricter than the v1-equivalent bar.
+ALERT_THRESHOLD = 60.0
 
 
 def _eligible_advertiser_ids(conn):
@@ -30,6 +37,7 @@ def _sv_components(fv, members):
         "accel": pctile(fv.accel, _values(members, "accel")),
         "ewma": pctile(fv.ewma_velocity, _values(members, "ewma_velocity")),
         "longevity": pctile(fv.longevity_share, _values(members, "longevity_share")),
+        "iteration": pctile(fv.iteration_rate, _values(members, "iteration_rate")),
     }
 
 
@@ -53,6 +61,17 @@ def _fi_components(fv):
     }
 
 
+def _d_components(fv, members):
+    # store-traction velocity percentiles; None (no snapshots / iOS installs)
+    # passes through so the axis renormalizes or floors
+    def pc(attr, val):
+        return None if val is None else pctile(val, _values(members, attr))
+    return {
+        "installs": pc("installs_velocity", fv.installs_velocity),
+        "reviews": pc("review_velocity", fv.review_velocity),
+    }
+
+
 def score_all(conn, as_of, only_ids=None) -> int:
     """Build features, normalize within cohort, score, veto, write advertiser_scores.
     conn-first: no commit. Returns the number of advertisers scored.
@@ -70,6 +89,9 @@ def score_all(conn, as_of, only_ids=None) -> int:
     by_cohort = defaultdict(list)
     for fv in fvs:
         by_cohort[fv.cohort].append(fv)
+    # niche crowding is cross-advertiser, so it loads once per run (not per fv);
+    # an advertiser without keyword lineage gets None -> whitespace floors
+    niche_by_aid, niche_counts = load_niche_crowding(conn)
 
     n = 0
     for cohort, members in by_cohort.items():
@@ -77,25 +99,40 @@ def score_all(conn, as_of, only_ids=None) -> int:
             sv = scaling_velocity(_sv_components(fv, members))
             ur = under_radar(_ur_components(fv, members))
             fi = funnel_intent(_fi_components(fv))
-            gs = gem_score(sv, ur, fi)
+            d = demand(_d_components(fv, members))
+            niche = niche_by_aid.get(fv.advertiser_id)
+            w = whitespace({"crowding": None if niche is None
+                            else 1.0 - pctile(niche[1], niche_counts)})
+            gs = gem_score(sv, ur, fi, d, w)
             veto = apply_vetoes(fv)
             alert = (gs >= ALERT_THRESHOLD) and not veto.vetoed
             conn.execute(text("""
                 INSERT INTO adtech.advertiser_scores
                   (advertiser_id, cohort, gem_score, scaling_velocity, under_radar,
-                   funnel_intent, active_ad_count, max_longevity_days, alert,
+                   funnel_intent, demand, whitespace, niche_keyword,
+                   niche_advertiser_count, installs_delta_28d, rating_count_delta_28d,
+                   active_ad_count, max_longevity_days, alert,
                    vetoed, veto_reason, scored_at)
-                VALUES (:adv, :coh, :gs, :sv, :ur, :fi, :aac, :mld, :alert,
-                        :vetoed, :reason, clock_timestamp())
+                VALUES (:adv, :coh, :gs, :sv, :ur, :fi, :d, :w, :nk, :nc, :idelta,
+                        :rdelta, :aac, :mld, :alert, :vetoed, :reason, clock_timestamp())
                 ON CONFLICT (advertiser_id) DO UPDATE SET
                   cohort=EXCLUDED.cohort, gem_score=EXCLUDED.gem_score,
                   scaling_velocity=EXCLUDED.scaling_velocity, under_radar=EXCLUDED.under_radar,
-                  funnel_intent=EXCLUDED.funnel_intent, active_ad_count=EXCLUDED.active_ad_count,
+                  funnel_intent=EXCLUDED.funnel_intent, demand=EXCLUDED.demand,
+                  whitespace=EXCLUDED.whitespace, niche_keyword=EXCLUDED.niche_keyword,
+                  niche_advertiser_count=EXCLUDED.niche_advertiser_count,
+                  installs_delta_28d=EXCLUDED.installs_delta_28d,
+                  rating_count_delta_28d=EXCLUDED.rating_count_delta_28d,
+                  active_ad_count=EXCLUDED.active_ad_count,
                   max_longevity_days=EXCLUDED.max_longevity_days, alert=EXCLUDED.alert,
                   vetoed=EXCLUDED.vetoed, veto_reason=EXCLUDED.veto_reason,
                   scored_at=clock_timestamp()
             """), {"adv": fv.advertiser_id, "coh": cohort, "gs": gs, "sv": sv,
-                   "ur": ur, "fi": fi, "aac": fv.active_ad_count,
+                   "ur": ur, "fi": fi, "d": d, "w": w,
+                   "nk": niche[0] if niche else None,
+                   "nc": niche[1] if niche else None,
+                   "idelta": fv.installs_delta_28d, "rdelta": fv.rating_count_delta_28d,
+                   "aac": fv.active_ad_count,
                    "mld": fv.max_longevity_days, "alert": alert,
                    "vetoed": veto.vetoed, "reason": veto.reason})
             n += 1

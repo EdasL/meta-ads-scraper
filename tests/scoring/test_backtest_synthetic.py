@@ -22,7 +22,7 @@ from agf.db import repo
 from agf.db.engine import begin
 from agf.parse import AdRecord
 from agf.scoring.gemscore import gem_score
-from agf.scoring.run_scoring import score_all, refresh_emerging_matview
+from agf.scoring.run_scoring import ALERT_THRESHOLD, score_all, refresh_emerging_matview
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -270,11 +270,11 @@ def _s(scored, pid):
 # ---------------------------------------------------------------------------
 
 def test_breakout_alerts_and_high_score(scored):
-    """Both true-breakouts in each cohort must alert with gem_score >= 70."""
+    """Both true-breakouts in each cohort must alert at the review threshold."""
     for pid in ("BT01", "BT02", "BT11", "BT12"):
         r = _s(scored, pid)
         assert r.alert is True, f"{pid}: expected alert=True, got {r.gem_score:.1f} vetoed={r.vetoed}/{r.veto_reason}"
-        assert r.gem_score >= 70, f"{pid}: gem_score={r.gem_score:.1f} < 70"
+        assert r.gem_score >= ALERT_THRESHOLD, f"{pid}: gem_score={r.gem_score:.1f} < {ALERT_THRESHOLD}"
 
 
 # ---------------------------------------------------------------------------
