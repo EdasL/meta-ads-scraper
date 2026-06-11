@@ -51,7 +51,9 @@ def test_mark_kept_records_advertiser(pg_conn):
 
 
 def test_sweep_run_gate(pg_conn):
-    today = date(2026, 6, 10)
+    # open_sweep_run stamps started_at=now(), so the gate must be checked
+    # against the real current date — a pinned date breaks at midnight
+    today = date.today()
     assert cand.sweep_ran_today(pg_conn, today) is False
     run_id = cand.open_sweep_run(pg_conn)
     assert cand.sweep_ran_today(pg_conn, today) is False   # unfinished run doesn't gate
