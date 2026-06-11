@@ -84,9 +84,18 @@ func TestShortlist(t *testing.T) {
 	require.EqualValues(t, 0, top["longrun_ad_count"], "AD1 started 9 days ago")
 	require.EqualValues(t, 1, top["new_ads_4w"])
 
+	// GemScore v2 columns (migration 117) flow through on feed rows.
+	require.InDelta(t, 0.8, top["demand"], 1e-6)
+	require.InDelta(t, 0.9, top["whitespace"], 1e-6)
+	require.Equal(t, "ai calorie tracker", top["niche_keyword"])
+	require.EqualValues(t, 2, top["niche_advertiser_count"])
+	require.EqualValues(t, 4000, top["installs_delta_28d"])
+	require.EqualValues(t, 28, top["rating_count_delta_28d"])
+
 	// Null fidelity: the second gem has no app and null axes — keys present, null.
 	second := rows[1]
-	for _, k := range []string{"app_id", "app_name", "page_name", "scaling_velocity", "active_ad_count"} {
+	for _, k := range []string{"app_id", "app_name", "page_name", "scaling_velocity", "active_ad_count",
+		"demand", "whitespace", "niche_keyword", "installs_delta_28d"} {
 		v, ok := second[k]
 		require.True(t, ok, "key %s present", k)
 		require.Nil(t, v, "key %s is null", k)
@@ -515,8 +524,11 @@ func seed(g *gorm.DB) {
 	// adv: full scores, alerting. adv2: minimal, null axes, not alerting.
 	must(g.Exec(`INSERT INTO adtech.advertiser_scores
 		(advertiser_id, cohort, gem_score, scaling_velocity, under_radar, funnel_intent,
-		 active_ad_count, max_longevity_days, alert)
-		VALUES (?, 'ios', 88.5, 0.7, 0.6, 0.5, 3, 42, true)`, advID).Error)
+		 active_ad_count, max_longevity_days, alert,
+		 demand, whitespace, niche_keyword, niche_advertiser_count,
+		 installs_delta_28d, rating_count_delta_28d)
+		VALUES (?, 'ios', 88.5, 0.7, 0.6, 0.5, 3, 42, true,
+		        0.8, 0.9, 'ai calorie tracker', 2, 4000, 28)`, advID).Error)
 	must(g.Exec(`INSERT INTO adtech.advertiser_scores (advertiser_id, cohort, gem_score, alert)
 		VALUES (?, 'ios', 75, false)`, adv2ID).Error)
 

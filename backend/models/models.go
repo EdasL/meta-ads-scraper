@@ -87,6 +87,16 @@ type ShortlistRow struct {
 	LongrunAdCount *int     `json:"longrun_ad_count" gorm:"column:longrun_ad_count"`
 	NewAds4w       *int     `json:"new_ads_4w" gorm:"column:new_ads_4w"`
 	AdsSeen        *int     `json:"ads_seen" gorm:"column:ads_seen"`
+	// GemScore v2 columns (117_emerging_matview_v2.sql): the demand/whitespace
+	// axes, the niche lineage behind whitespace, and the raw 28-day traction
+	// deltas the UI shows verbatim. All nullable — older rows or missing data
+	// scan as NULL and the client omits the lines.
+	Demand               *float64 `json:"demand" gorm:"column:demand"`
+	Whitespace           *float64 `json:"whitespace" gorm:"column:whitespace"`
+	NicheKeyword         *string  `json:"niche_keyword" gorm:"column:niche_keyword"`
+	NicheAdvertiserCount *int     `json:"niche_advertiser_count" gorm:"column:niche_advertiser_count"`
+	InstallsDelta28d     *int64   `json:"installs_delta_28d" gorm:"column:installs_delta_28d"`
+	RatingCountDelta28d  *int64   `json:"rating_count_delta_28d" gorm:"column:rating_count_delta_28d"`
 	// Enriched in code after the base matview scan (not scanned directly):
 	// the explainer, the per-advertiser growth summary, and the hero ad
 	// creative for the card. All nullable → JSON null when absent.

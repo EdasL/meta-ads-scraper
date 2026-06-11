@@ -18,7 +18,9 @@ func TestShortlistRow_NullsArePresent(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, k := range []string{"page_name", "app_id", "app_name", "scaling_velocity",
-		"under_radar", "funnel_intent", "active_ad_count", "max_longevity_days", "refreshed_at"} {
+		"under_radar", "funnel_intent", "active_ad_count", "max_longevity_days", "refreshed_at",
+		"demand", "whitespace", "niche_keyword", "niche_advertiser_count",
+		"installs_delta_28d", "rating_count_delta_28d"} {
 		v, ok := m[k]
 		if !ok {
 			t.Errorf("key %q missing (must be present as null)", k)
