@@ -33,11 +33,16 @@ export function Dropdown({
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
   const ref = useRef<HTMLDivElement>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
+  // Typeahead buffer: recently typed printable chars + when the last landed.
+  const typed = useRef({ buf: "", at: 0 });
   const listboxId = useId();
 
-  const selectedIdx = Math.max(0, options.findIndex((o) => o.value === value));
-  const selected = options[selectedIdx];
+  const selectedIdx = options.findIndex((o) => o.value === value);
+  // An unknown value (e.g. stale URL param) shows itself rather than wearing
+  // the first option's label.
+  const selected = selectedIdx >= 0 ? options[selectedIdx] : undefined;
 
   useEffect(() => {
     if (!open) return;
@@ -45,7 +50,10 @@ export function Dropdown({
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
+      if (e.key === "Escape") {
+        setOpen(false);
+        btnRef.current?.focus();
+      }
     };
     document.addEventListener("mousedown", onDown);
     document.addEventListener("keydown", onKey);
@@ -56,9 +64,12 @@ export function Dropdown({
   }, [open]);
 
   // Opening highlights the current value and keeps it in view (the rAF runs
-  // after the panel has rendered).
+  // after the panel has rendered). The explicit focus() matters: Safari and
+  // Firefox don't focus a <button> on click, and the whole keyboard model
+  // lives on the trigger.
   const openPanel = () => {
-    setActive(selectedIdx);
+    btnRef.current?.focus();
+    setActive(Math.max(0, selectedIdx));
     setOpen(true);
     requestAnimationFrame(() => {
       listRef.current
@@ -71,6 +82,7 @@ export function Dropdown({
     const option = options[idx];
     if (option && option.value !== value) onChange(option.value);
     setOpen(false);
+    btnRef.current?.focus();
   };
 
   const move = (idx: number) => {
@@ -115,12 +127,30 @@ export function Dropdown({
       case "Tab":
         setOpen(false);
         break;
+      default:
+        // Typeahead: typed characters jump to the next matching option, like
+        // the native <select> this replaces.
+        if (e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey) {
+          e.preventDefault();
+          const now = Date.now();
+          const buf = (now - typed.current.at > 600 ? "" : typed.current.buf) + e.key.toLowerCase();
+          typed.current = { buf, at: now };
+          const from = buf.length === 1 ? active + 1 : active;
+          for (let step = 0; step < options.length; step++) {
+            const idx = (from + step) % options.length;
+            if (options[idx].label.toLowerCase().startsWith(buf)) {
+              move(idx);
+              break;
+            }
+          }
+        }
     }
   };
 
   return (
     <div ref={ref} style={{ position: "relative", display: "inline-flex", minWidth }}>
       <button
+        ref={btnRef}
         type="button"
         role="combobox"
         aria-expanded={open}

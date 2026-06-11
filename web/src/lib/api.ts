@@ -71,9 +71,11 @@ export async function getShortlist(
   return { rows, total: Number.isFinite(header) && header >= rows.length ? header : rows.length };
 }
 
-/** The feed's real categories (store genres) with visible-gem counts. */
-export async function getCategories(): Promise<CategoryCount[]> {
-  return live<CategoryCount[]>(`/shortlist/categories`);
+/** The feed's real categories (store genres) with gem counts under `query`'s
+ * filters — pass the active filter set (minus category) so each count matches
+ * what picking that category would yield. */
+export async function getCategories(query: ShortlistQuery = {}): Promise<CategoryCount[]> {
+  return live<CategoryCount[]>(`/shortlist/categories?${shortlistParams(query)}`);
 }
 
 export async function getGem(advertiserId: number): Promise<GemDossier | null> {

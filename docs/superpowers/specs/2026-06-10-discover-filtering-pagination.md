@@ -23,11 +23,15 @@ default 50, `offset` default 0). New, all optional:
 | `min_ad_age` | int    | when > 0: `max_longevity_days >= ?` (NULL excluded) |
 | `sort`       | enum   | `gemscore` (default) → `gem_score DESC`; `fastest` → `scaling_velocity DESC NULLS LAST`; `newest` → `max_longevity_days ASC NULLS LAST`; every order tie-broken by `advertiser_id` |
 
-Bool params accept `true/1/false/0`; bad bool, bad int, or unknown `sort` → 422
-`{"detail": ...}` (FastAPI style). Body stays a bare `ShortlistRow[]` (parity
-safe). New response header **`X-Total-Count`**: count over the same WHERE
-(including the has-creative EXISTS) without limit/offset — computed in the same
-READ ONLY tx. CORS: add `X-Total-Count` to `ExposeHeaders`.
+Bool params accept `true/1/false/0`; bad bool, bad int, non-finite float,
+negative limit/offset, or unknown `sort` → 422 `{"detail": ...}` (FastAPI
+style); a present-but-empty string param means "no filter"; `limit` clamps at
+500. Body stays a bare `ShortlistRow[]` (parity safe). New response header
+**`X-Total-Count`**: count over the same WHERE (including the has-creative
+EXISTS) without limit/offset — computed in the same READ ONLY tx (READ
+COMMITTED: a concurrent matview refresh between the two statements can skew
+the total transiently; self-corrects on the next fetch). CORS: add
+`X-Total-Count` to `ExposeHeaders`.
 
 Repo signature becomes `Shortlist(ctx, g, ShortlistParams) (rows, total, err)`
 with conditional WHERE building (drops the `CAST(? AS text) IS NULL` port
@@ -37,8 +41,11 @@ idiom for the new params).
 
 `[{"category": "Health & Fitness", "count": 12}, ...]` — distinct
 `public.apps.genre` over visible matview rows (same has-creative EXISTS), NULL
-genres skipped, `ORDER BY count DESC, category ASC`. Powers the dropdown; never
-hardcoded.
+genres skipped, `ORDER BY count DESC, category ASC`. Accepts the same filter
+axes as the list (minus `category` itself, which is ignored) so each count
+equals what picking that category would yield under the active filters — a
+dropdown number must never disagree with the click it invites. Powers the
+dropdown; never hardcoded.
 
 ### Tests (integration, agf_it)
 

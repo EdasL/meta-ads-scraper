@@ -32,12 +32,14 @@ function readUrl(sp: URLSearchParams): { filters: Filters; page: number } {
       view: sp.get("view") === "all" ? "all" : "rising",
       sort: sort === "fastest" || sort === "newest" ? sort : "gemscore",
       category: sp.get("category") ?? "",
-      q: sp.get("q") ?? "",
+      q: (sp.get("q") ?? "").trim(),
       minScore: Math.min(95, num("score")),
       hasFunnel: sp.get("funnel") === "1",
       minAdAge: [14, 21, 30].includes(age) ? age : 0,
     },
-    page: Math.max(1, num("page")),
+    // Capped so a hand-mangled page param can't overflow the offset the API
+    // accepts; anything past the real last page walks back after the fetch.
+    page: Math.min(Math.max(1, num("page")), 9999),
   };
 }
 
@@ -70,13 +72,15 @@ function SkeletonGrid() {
   );
 }
 
-/** One resolved /shortlist page, tagged with the query string that fetched it
- * — comparing the tag against the live query string derives the load phases
- * (no phase state machine to keep in sync). */
+/** One resolved /shortlist page, tagged with the query string and page that
+ * fetched it. Comparing the tag against the live query string derives the
+ * load phases, and the grid + pager render entirely from one result's epoch
+ * so stale rows never wear fresh numbers. */
 interface FeedResult {
   rows: ShortlistRow[];
   total: number;
   key: string;
+  page: number;
 }
 
 export function DiscoverFeed() {
@@ -110,7 +114,13 @@ export function DiscoverFeed() {
     const ctrl = new AbortController();
     getShortlist(query, ctrl.signal)
       .then(({ rows, total }) => {
-        setResult({ rows, total, key: shortlistParams(query).toString() });
+        if (ctrl.signal.aborted) return;
+        setResult({
+          rows,
+          total,
+          key: shortlistParams(query).toString(),
+          page: (query.offset ?? 0) / PAGE_SIZE + 1,
+        });
         setError(false);
       })
       .catch(() => {
@@ -119,11 +129,22 @@ export function DiscoverFeed() {
     return () => ctrl.abort();
   }, [query, reload]);
 
-  // The dropdown's option list is independent of the active filters: global
-  // feed categories with counts. A failure here only costs the options.
+  // Category options carry counts under the CURRENT filters (minus the
+  // category itself), so every number matches what picking it would yield.
+  // A failure here only costs the options.
+  const categoriesQuery: ShortlistQuery = useMemo(
+    () => ({
+      q: filters.q || undefined,
+      min_score: filters.minScore || undefined,
+      rising: filters.view === "rising",
+      has_funnel: filters.hasFunnel || undefined,
+      min_ad_age: filters.minAdAge || undefined,
+    }),
+    [filters],
+  );
   useEffect(() => {
     let alive = true;
-    getCategories()
+    getCategories(categoriesQuery)
       .then((c) => {
         if (alive) setCategories(c);
       })
@@ -131,7 +152,7 @@ export function DiscoverFeed() {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [categoriesQuery]);
 
   const navigate = useCallback(
     (f: Filters, p: number) => {
@@ -146,7 +167,8 @@ export function DiscoverFeed() {
   const setPage = useCallback(
     (p: number) => {
       navigate(filters, p);
-      window.scrollTo({ top: 0, behavior: "smooth" });
+      const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      window.scrollTo({ top: 0, behavior: still ? "auto" : "smooth" });
     },
     [navigate, filters],
   );
@@ -154,7 +176,6 @@ export function DiscoverFeed() {
   // Phases, derived: nothing yet → skeletons; a result for an older query →
   // stale grid dims while the new one is in flight; fresh result → ready.
   const fresh = result !== null && result.key === queryKey;
-  const first = !error && result === null;
   const refreshing = !error && result !== null && !fresh;
   const rows = result?.rows ?? [];
   const total = result?.total ?? 0;
@@ -173,15 +194,10 @@ export function DiscoverFeed() {
     setReload((n) => n + 1);
   };
 
-  const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
-  const hasActiveFilters =
-    filters.view !== DEFAULT_FILTERS.view ||
-    filters.sort !== DEFAULT_FILTERS.sort ||
-    !!filters.category ||
-    !!filters.q ||
-    filters.minScore > 0 ||
-    filters.hasFunnel ||
-    filters.minAdAge > 0;
+  // Only filters that can NARROW the result set (view=all is broader than the
+  // rising default, and sort never changes the count).
+  const narrowed =
+    !!filters.category || !!filters.q || filters.minScore > 0 || filters.hasFunnel || filters.minAdAge > 0;
 
   return (
     <main style={{ maxWidth: 1200, margin: "0 auto", padding: "24px 22px 80px" }}>
@@ -192,13 +208,15 @@ export function DiscoverFeed() {
         <p className="t-sm" aria-live="polite" style={{ color: "var(--muted)", marginTop: 6 }}>
           {error
             ? "The feed didn't load."
-            : first
+            : result === null
               ? "Loading…"
-              : `${total} ${total === 1 ? "gem" : "gems"} found.${filters.view === "rising" ? " Falling ad counts hidden." : ""}`}
+              : refreshing
+                ? "Updating…"
+                : `${total} ${total === 1 ? "gem" : "gems"} found.${filters.view === "rising" ? " Falling ad counts hidden." : ""}`}
         </p>
       </header>
 
-      {fresh && rows.length > 0 && <ActivationChecklist />}
+      {!error && result !== null && rows.length > 0 && <ActivationChecklist />}
 
       {!error && (
         <div style={{ marginBottom: 22 }}>
@@ -215,11 +233,18 @@ export function DiscoverFeed() {
 
       {error ? (
         <Fallback message="The feed didn't load. Check that the server is running, then try again." onRetry={retry} />
-      ) : first ? (
+      ) : result === null ? (
         <SkeletonGrid />
       ) : fresh && total === 0 ? (
-        hasActiveFilters ? (
+        narrowed ? (
           <EmptyState title="Nothing matches" hint="Filters are too tight. Loosen them." ctaLabel="Reset" onCta={() => setFilters(DEFAULT_FILTERS)} />
+        ) : filters.view === "rising" ? (
+          <EmptyState
+            title="Nothing rising right now"
+            hint="Falling ad counts are hidden in this view."
+            ctaLabel="Show all gems"
+            onCta={() => setFilters({ ...filters, view: "all" })}
+          />
         ) : (
           <EmptyState
             title="No gems yet"
@@ -229,23 +254,30 @@ export function DiscoverFeed() {
           />
         )
       ) : (
-        <>
-          <div key={result?.key} className={`feed-grid${refreshing ? " feed-stale" : ""}`} style={GRID}>
-            {rows.map((row, i) => (
-              <div key={row.advertiser_id} className="gem-enter" style={{ display: "grid", animationDelay: `${Math.min(i, 11) * 24}ms` }}>
-                <GemCard row={row} />
+        // The grid and pager render from the RESULT's epoch (its page/total),
+        // dimmed and inert while a newer query is in flight — stale rows never
+        // pose as the new answer, and keyboard/AT can't operate them.
+        <div className={`feed-grid${refreshing ? " feed-stale" : ""}`} inert={refreshing || undefined} aria-busy={refreshing}>
+          {rows.length > 0 && (
+            <>
+              <div key={result.key} style={GRID}>
+                {rows.map((row, i) => (
+                  <div key={row.advertiser_id} className="gem-enter" style={{ display: "grid", animationDelay: `${Math.min(i, 11) * 24}ms` }}>
+                    <GemCard row={row} />
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
-          <Pagination
-            page={page}
-            pageCount={pageCount}
-            total={total}
-            rangeStart={(page - 1) * PAGE_SIZE + 1}
-            rangeEnd={(page - 1) * PAGE_SIZE + rows.length}
-            onPage={setPage}
-          />
-        </>
+              <Pagination
+                page={result.page}
+                pageCount={Math.max(1, Math.ceil(result.total / PAGE_SIZE))}
+                total={result.total}
+                rangeStart={(result.page - 1) * PAGE_SIZE + 1}
+                rangeEnd={(result.page - 1) * PAGE_SIZE + rows.length}
+                onPage={setPage}
+              />
+            </>
+          )}
+        </div>
       )}
     </main>
   );

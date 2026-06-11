@@ -55,11 +55,14 @@ export function Pagination({
       </span>
 
       <div className="font-mono nums" style={{ display: "flex", alignItems: "center", gap: 4 }}>
+        {/* aria-disabled (not disabled) keeps the button focusable at the
+            boundary — a native disabled control silently drops keyboard focus
+            to <body> the moment the last/first page is reached. */}
         <button
           type="button"
           aria-label="Previous page"
-          disabled={page <= 1}
-          onClick={() => onPage(page - 1)}
+          aria-disabled={page <= 1}
+          onClick={() => page > 1 && onPage(page - 1)}
           style={box(false, page <= 1)}
         >
           ‹
@@ -85,8 +88,8 @@ export function Pagination({
         <button
           type="button"
           aria-label="Next page"
-          disabled={page >= pageCount}
-          onClick={() => onPage(page + 1)}
+          aria-disabled={page >= pageCount}
+          onClick={() => page < pageCount && onPage(page + 1)}
           style={box(false, page >= pageCount)}
         >
           ›

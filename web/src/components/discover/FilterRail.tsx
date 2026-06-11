@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { IconAdjustmentsHorizontal, IconSearch, IconX } from "@tabler/icons-react";
 import { Dropdown } from "@/components/ui";
 import type { CategoryCount, ShortlistSort } from "@/types/contracts";
@@ -88,20 +88,38 @@ function Segmented({ view, onChange }: { view: View; onChange: (v: View) => void
  */
 function SearchBox({ value, onCommit }: { value: string; onCommit: (q: string) => void }) {
   const [text, setText] = useState(value);
+  const inputRef = useRef<HTMLInputElement>(null);
 
-  // Follow outside changes (reset, back/forward nav) — the sanctioned
+  // What our own debounce last committed: its echo coming back through the
+  // URL round-trip must NOT clobber keystrokes typed in the meantime. State
+  // (not a ref) because the comparison runs during render.
+  const [lastCommit, setLastCommit] = useState(value);
+  // Latest onCommit without re-arming the debounce on every parent render.
+  const commitRef = useRef(onCommit);
+  useEffect(() => {
+    commitRef.current = onCommit;
+  });
+  const commitNow = (q: string) => {
+    setLastCommit(q);
+    commitRef.current(q);
+  };
+
+  // Follow OUTSIDE changes only (reset, back/forward nav) — the sanctioned
   // adjust-state-during-render pattern, not an effect.
   const [prevValue, setPrevValue] = useState(value);
   if (prevValue !== value) {
     setPrevValue(value);
-    setText(value);
+    if (value !== lastCommit) {
+      setLastCommit(value);
+      setText(value);
+    }
   }
 
   useEffect(() => {
     if (text.trim() === value) return;
-    const id = setTimeout(() => onCommit(text.trim()), 300);
+    const id = setTimeout(() => commitNow(text.trim()), 300);
     return () => clearTimeout(id);
-  }, [text, value, onCommit]);
+  }, [text, value]);
 
   return (
     <span style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
@@ -112,19 +130,22 @@ function SearchBox({ value, onCommit }: { value: string; onCommit: (q: string) =
         style={{ position: "absolute", left: 8, color: "var(--muted)", pointerEvents: "none" }}
       />
       <input
+        ref={inputRef}
         type="text"
         value={text}
         onChange={(e) => setText(e.target.value)}
         onKeyDown={(e) => {
-          if (e.key === "Enter") onCommit(text.trim());
+          if (e.key === "Enter") commitNow(text.trim());
           if (e.key === "Escape" && text) {
             setText("");
-            onCommit("");
+            commitNow("");
           }
         }}
-        placeholder="Search apps"
+        placeholder="Search apps and pages"
         aria-label="Search apps and pages"
-        style={{ ...control, width: 200, paddingLeft: 26, paddingRight: text ? 26 : 8 }}
+        // `control` carries outline:none for its original consumers; an inline
+        // outline would defeat the global :focus-visible ring (WCAG 2.4.7).
+        style={{ ...control, outline: undefined, width: 200, paddingLeft: 26, paddingRight: text ? 26 : 8 }}
       />
       {text && (
         <button
@@ -132,15 +153,18 @@ function SearchBox({ value, onCommit }: { value: string; onCommit: (q: string) =
           aria-label="Clear search"
           onClick={() => {
             setText("");
-            onCommit("");
+            commitNow("");
+            // The button unmounts on clear — hand focus back to the input so
+            // keyboard users aren't dropped to <body>.
+            inputRef.current?.focus();
           }}
           style={{
             position: "absolute",
-            right: 4,
+            right: 2,
             display: "inline-flex",
             background: "transparent",
             border: "none",
-            padding: 2,
+            padding: 4,
             cursor: "pointer",
             color: "var(--muted)",
           }}
