@@ -50,6 +50,39 @@ def ewma(series, alpha: float = 0.5) -> float:
     return acc
 
 
+def traction_delta(points, min_span_days: int = 7):
+    """(raw_delta, per_day_rate) between the earliest and latest non-None values
+    of an ordered [(date, value)] series, or None when <2 usable points or the
+    span is under min_span_days (too narrow to call a trend). Per-day
+    normalization keeps sparse snapshot histories from deflating the rate."""
+    vals = [(d, v) for d, v in points if v is not None]
+    if len(vals) < 2:
+        return None
+    (d0, v0), (d1, v1) = vals[0], vals[-1]
+    span = (d1 - d0).days
+    if span < min_span_days:
+        return None
+    return (v1 - v0, (v1 - v0) / span)
+
+
+_MAX_LAUNCH_AGE_S = 5 * 365 * 86400  # ignore garbage start_dates older than ~5y
+
+
+def weekly_launch_counts(start_epochs, now_epoch: int):
+    """Ad launches per week (zero-filled) from the earliest sane launch up to
+    now_epoch, oldest -> newest. The zero weeks matter: the EWMA must see the
+    gaps between launches, not just the launches. Empty -> []."""
+    week = 7 * 86400
+    eps = [e for e in start_epochs if e and now_epoch - e <= _MAX_LAUNCH_AGE_S]
+    if not eps:
+        return []
+    first = min(eps)
+    counts = [0] * (int((now_epoch - first) // week) + 1)
+    for e in eps:
+        counts[int((e - first) // week)] += 1
+    return counts
+
+
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from sqlalchemy import text

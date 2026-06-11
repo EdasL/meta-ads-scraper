@@ -49,3 +49,41 @@ def test_ewma_weights_recent_more():
     # alpha=0.5: acc=1 -> 0.5*5+0.5*1=3
     assert ewma([1, 5], alpha=0.5) == 3.0
     assert ewma([], alpha=0.5) == 0.0
+
+
+# --- GemScore v2 primitives (spec 2026-06-11) ---------------------------------
+from datetime import date
+from agf.scoring.features import traction_delta, weekly_launch_counts
+
+
+def test_traction_delta_per_day_rate_and_raw():
+    pts = [(date(2026, 5, 14), 1000), (date(2026, 5, 28), 1700)]
+    assert traction_delta(pts) == (700, 50.0)            # +700 over 14 days
+
+
+def test_traction_delta_none_on_sparse_or_narrow():
+    assert traction_delta([]) is None
+    assert traction_delta([(date(2026, 5, 1), 10)]) is None
+    # span under 7 days is too narrow to call a trend
+    assert traction_delta([(date(2026, 5, 1), 10), (date(2026, 5, 4), 60)]) is None
+    # None values don't count as points
+    assert traction_delta([(date(2026, 5, 1), None), (date(2026, 5, 20), 5)]) is None
+
+
+def test_traction_delta_negative_kept():
+    # shrinking demand must score low, not be hidden
+    pts = [(date(2026, 5, 1), 500), (date(2026, 5, 11), 400)]
+    assert traction_delta(pts) == (-100, -10.0)
+
+
+def test_weekly_launch_counts_zero_filled():
+    wk = 7 * 86400
+    t0 = 1_700_000_000
+    eps = [t0, t0 + 1, t0 + 2 * wk]
+    assert weekly_launch_counts(eps, now_epoch=t0 + 3 * wk) == [2, 0, 1, 0]
+
+
+def test_weekly_launch_counts_empty_and_stale():
+    assert weekly_launch_counts([], now_epoch=1_700_000_000) == []
+    old = 1_700_000_000 - 6 * 365 * 86400               # garbage start_date (>5y)
+    assert weekly_launch_counts([old], now_epoch=1_700_000_000) == []
