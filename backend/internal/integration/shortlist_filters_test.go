@@ -106,6 +106,13 @@ func TestShortlistBadParams(t *testing.T) {
 		{"rising": {"banana"}},
 		{"has_funnel": {"2"}},
 		{"min_ad_age": {"abc"}},
+		// Negative paging must be a deliberate 422, not a Postgres error → 500.
+		{"limit": {"-1"}},
+		{"offset": {"-1"}},
+		// Non-finite floats parse but poison the SQL comparison (NaN > everything
+		// in Postgres → silently empty feed) — reject them up front.
+		{"min_score": {"NaN"}},
+		{"min_score": {"Inf"}},
 	} {
 		r := router()
 		w := httptest.NewRecorder()
@@ -115,14 +122,34 @@ func TestShortlistBadParams(t *testing.T) {
 	}
 }
 
-func TestShortlistCategories(t *testing.T) {
+// Present-but-empty string params mean "no filter", exactly like absent ones —
+// truncated/hand-edited share URLs must not silently empty the feed or 422.
+func TestShortlistEmptyParamsAreNoFilter(t *testing.T) {
+	w, ids := listGems(t, url.Values{"category": {""}, "cohort": {""}, "sort": {""}})
+	require.Equal(t, 200, w.Code)
+	require.Len(t, ids, 3, "empty params filter nothing")
+}
+
+// An oversized limit is clamped, never an error (and never a full-table dump).
+func TestShortlistLimitClamped(t *testing.T) {
+	w, ids := listGems(t, url.Values{"limit": {"99999"}})
+	require.Equal(t, 200, w.Code)
+	require.Len(t, ids, 3)
+}
+
+func listCategories(t *testing.T, params url.Values) []map[string]any {
+	t.Helper()
 	r := router()
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/shortlist/categories", nil))
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/shortlist/categories?"+params.Encode(), nil))
 	require.Equal(t, 200, w.Code)
-
 	var cats []map[string]any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &cats))
+	return cats
+}
+
+func TestShortlistCategories(t *testing.T) {
+	cats := listCategories(t, url.Values{})
 	// One visible gem per genre; the NULL-genre gem (adv2) is skipped. Equal
 	// counts tie-break alphabetically.
 	require.Len(t, cats, 2)
@@ -130,4 +157,28 @@ func TestShortlistCategories(t *testing.T) {
 	require.EqualValues(t, 1, cats[0]["count"])
 	require.Equal(t, "Productivity", cats[1]["category"])
 	require.EqualValues(t, 1, cats[1]["count"])
+}
+
+// Counts answer "what would the feed hold if I picked this category?" under
+// the CURRENT filters — a dropdown number must match what clicking it yields.
+func TestShortlistCategoriesHonorFilters(t *testing.T) {
+	// rising hides the falling Health & Fitness gem → only Productivity remains.
+	cats := listCategories(t, url.Values{"rising": {"true"}})
+	require.Len(t, cats, 1)
+	require.Equal(t, "Productivity", cats[0]["category"])
+	require.EqualValues(t, 1, cats[0]["count"])
+
+	// q=walk matches only the Health & Fitness gem.
+	cats = listCategories(t, url.Values{"q": {"walk"}})
+	require.Len(t, cats, 1)
+	require.Equal(t, "Health & Fitness", cats[0]["category"])
+
+	// min_score=80 keeps only the Productivity gem.
+	cats = listCategories(t, url.Values{"min_score": {"80"}})
+	require.Len(t, cats, 1)
+	require.Equal(t, "Productivity", cats[0]["category"])
+
+	// The category param itself is ignored — counts are for switching.
+	cats = listCategories(t, url.Values{"category": {"Productivity"}})
+	require.Len(t, cats, 2)
 }

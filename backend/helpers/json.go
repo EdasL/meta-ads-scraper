@@ -7,6 +7,8 @@
 package helpers
 
 import (
+	"fmt"
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
@@ -21,12 +23,21 @@ func Detail(ctx *gin.Context, status int, msg string) {
 
 // QueryFloat returns the float query param, def when absent/empty, and an error
 // when present-but-unparseable (so the caller can mirror FastAPI's 422).
+// NaN/±Inf parse but poison SQL comparisons (NaN sorts above every real in
+// Postgres), so non-finite values are rejected too.
 func QueryFloat(ctx *gin.Context, key string, def float64) (float64, error) {
 	v, ok := ctx.GetQuery(key)
 	if !ok || v == "" {
 		return def, nil
 	}
-	return strconv.ParseFloat(v, 64)
+	f, err := strconv.ParseFloat(v, 64)
+	if err != nil {
+		return 0, err
+	}
+	if math.IsNaN(f) || math.IsInf(f, 0) {
+		return 0, fmt.Errorf("non-finite %s", key)
+	}
+	return f, nil
 }
 
 // QueryInt returns the int query param, def when absent/empty, and an error when

@@ -95,8 +95,10 @@ func shortlistConds(p ShortlistParams) ([]string, []any) {
 }
 
 // Shortlist returns one page of the gems feed plus the total row count across
-// all pages of the same filter set. Both queries run in one READ ONLY tx so
-// the page and its total see the same snapshot.
+// all pages of the same filter set. Both queries run in one READ ONLY tx —
+// note that's READ COMMITTED, so a concurrent matview refresh landing between
+// the two statements can skew the total by one refresh generation; that's
+// transient and self-corrects on the client's next fetch.
 func Shortlist(ctx context.Context, g *gorm.DB, p ShortlistParams) ([]models.ShortlistRow, int, error) {
 	conds, args := shortlistConds(p)
 	where := strings.Join(conds, "\n   AND ")
@@ -133,10 +135,14 @@ func Shortlist(ctx context.Context, g *gorm.DB, p ShortlistParams) ([]models.Sho
 }
 
 // ShortlistCategories returns the distinct app categories (public.apps.genre)
-// across the visible feed with per-category gem counts — the category dropdown
-// is grounded in what the feed actually holds. NULL genres are skipped: those
+// of the feed under p's filters, with per-category gem counts — each dropdown
+// number must equal what picking that category would yield, so every active
+// filter EXCEPT the category itself applies. NULL genres are skipped: those
 // gems are only reachable without a category filter.
-func ShortlistCategories(ctx context.Context, g *gorm.DB) ([]models.CategoryCount, error) {
+func ShortlistCategories(ctx context.Context, g *gorm.DB, p ShortlistParams) ([]models.CategoryCount, error) {
+	p.Category = nil // counts are for switching categories
+	conds, args := shortlistConds(p)
+	where := strings.Join(conds, "\n   AND ")
 	cats := make([]models.CategoryCount, 0)
 	err := db.WithReadTx(ctx, g, func(tx *gorm.DB) error {
 		return tx.Raw(
@@ -144,9 +150,9 @@ func ShortlistCategories(ctx context.Context, g *gorm.DB) ([]models.CategoryCoun
 			 FROM frontend.emerging_scaling_apps
 			 JOIN public.apps ON public.apps.id = frontend.emerging_scaling_apps.app_id
 			 WHERE public.apps.genre IS NOT NULL
-			   AND ` + hasDownloadedCreative + `
+			   AND `+where+`
 			 GROUP BY public.apps.genre
-			 ORDER BY count DESC, category ASC`,
+			 ORDER BY count DESC, category ASC`, args...,
 		).Scan(&cats).Error
 	})
 	if cats == nil {
