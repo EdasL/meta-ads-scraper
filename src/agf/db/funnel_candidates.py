@@ -35,6 +35,19 @@ def new_funnel_candidates(conn, limit: int | None = None):
     return conn.execute(text(q)).all()
 
 
+def mark_funnel_confirmed(conn, candidate_id: int, *, kind: str, status: str,
+                          store: str | None = None, store_id: str | None = None,
+                          drop_reason: str | None = None) -> None:
+    """Write the confirm-stage verdict onto a funnel candidate."""
+    conn.execute(text("""
+        UPDATE discovery.funnel_candidates
+           SET kind=:k, status=:s, store=:st, store_id=:sid,
+               drop_reason=:r, confirmed_at=now()
+         WHERE id=:i
+    """), {"k": kind, "s": status, "st": store, "sid": store_id,
+           "r": drop_reason, "i": candidate_id})
+
+
 def cluster_by_domain(conn, min_advertisers: int = 2):
     """Landing domains pushed by >= min_advertisers distinct pages — shared-funnel /
     affiliate-network clusters. Ordered by advertiser count desc."""

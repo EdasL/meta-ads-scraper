@@ -2,6 +2,8 @@
 domain = new row, shared-domain clustering. Rolled-back pg_conn; FUNTEST* sentinels only."""
 from datetime import date
 
+from sqlalchemy import text
+
 from agf.db import funnel_candidates as fcand
 
 ROW = dict(page_id="FUNTEST1", page_name="Funnel Test", page_like_count=900,
@@ -38,3 +40,14 @@ def test_cluster_by_domain(pg_conn):
     clusters = [c for c in fcand.cluster_by_domain(pg_conn, min_advertisers=2)
                 if c.landing_domain == "quiz.funtest.world"]
     assert clusters and clusters[0].n_advertisers >= 2
+
+
+def test_mark_funnel_confirmed(pg_conn):
+    cid, _ = fcand.upsert_funnel_candidate(pg_conn, {**ROW, "page_id": "FUNTESTC"})
+    fcand.mark_funnel_confirmed(pg_conn, cid, kind="install", status="confirmed",
+                                store="ios", store_id="555")
+    row = pg_conn.execute(text(
+        "SELECT kind, status, store, store_id, confirmed_at "
+        "FROM discovery.funnel_candidates WHERE id=:i"), {"i": cid}).one()
+    assert row.kind == "install" and row.status == "confirmed"
+    assert row.store == "ios" and row.store_id == "555" and row.confirmed_at is not None
