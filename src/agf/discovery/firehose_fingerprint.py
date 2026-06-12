@@ -3,26 +3,33 @@ source-code signatures: a paywall/web2app SDK ∩ a Meta Pixel (the paid-acquisi
 with an MMP smart-banner as a bonus signal. Source-code search via PublicWWW."""
 import re
 
+# Corrected by the 2026-06-12 live test (docs/research/2026-06-11-funnel-discovery-method.md §4):
+# web2app funnels use WEB-checkout SDKs (Solidgate dominant), not the app-side RevenueCat/
+# Superwall/Adapty. The Meta pixel loads via GTM behind a CMP, so GTM counts as the pixel tell.
 SIGNATURES = {
-    "paywall": ["api.revenuecat.com", "@revenuecat/purchases-js", "cdn.superwall.me",
-                "superwall", "fnlfx.com", "paywalls-", "adapty"],
-    "pixel":   ["connect.facebook.net", "fbevents.js", "fbq("],
-    "mmp":     ["cdn.branch.io", "branch-latest.min.js", ".app.link", "onelink.to",
-                "appsflyer", "adjust.com"],
+    "checkout": ["cdn.solidgate.com", "solid-form.js", "js.stripe.com", "stripe.com/v3",
+                 "primer.io", "cdn.paddle.com", "braintreegateway", "recurly",
+                 "paypalobjects", "fnlfx.com", "paywalls-"],
+    "pixel":    ["connect.facebook.net", "fbevents.js", "fbq(",
+                 "googletagmanager.com", "gtm.js"],
+    "mmp":      ["cdn.branch.io", "branch-latest.min.js", ".app.link", "onelink.me",
+                 "onelink.to", "appsflyer", "adjust.com", "app.adjust", "adj.st",
+                 "go.link", "sng.link"],
+    "store":    ["apps.apple.com", "itunes.apple.com", "play.google.com"],
 }
 
 
 def detect_signatures(html: str) -> set[str]:
-    """Which signature categories ('paywall'|'pixel'|'mmp') appear in the page source."""
+    """Which signature categories ('checkout'|'pixel'|'mmp'|'store') appear in the page source."""
     html = html or ""
     return {cat for cat, sigs in SIGNATURES.items() if any(s in html for s in sigs)}
 
 
 def classify_funnel_intent(html: str) -> bool:
-    """A page is a paid-acquisition funnel when it pairs a paywall SDK with a Meta Pixel.
-    (MMP presence is a strengthening bonus, not required.)"""
+    """A page is a paid-acquisition subscription funnel when it pairs a WEB-checkout SDK
+    with a Meta pixel (GTM counts). MMP/store presence is the install tell, handled separately."""
     found = detect_signatures(html)
-    return "paywall" in found and "pixel" in found
+    return "checkout" in found and "pixel" in found
 
 
 _DOMAIN_RE = re.compile(r'https?://([^/"\s]+)')
