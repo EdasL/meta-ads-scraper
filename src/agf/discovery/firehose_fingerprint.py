@@ -1,6 +1,6 @@
 """Firehose C — funnel-tech fingerprinting. Find web2app/subscription funnels by their
-source-code signatures: a paywall/web2app SDK ∩ a Meta Pixel (the paid-acquisition tell),
-with an MMP smart-banner as a bonus signal. Source-code search via PublicWWW."""
+source-code signatures: a web-checkout SDK (Solidgate/Stripe/Primer) ∩ a Meta Pixel (the
+paid-acquisition tell), with an MMP smart-banner as a bonus signal. Source-code search via PublicWWW."""
 import re
 
 # Corrected by the 2026-06-12 live test (docs/research/2026-06-11-funnel-discovery-method.md §4):
