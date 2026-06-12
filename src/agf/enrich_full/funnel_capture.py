@@ -155,10 +155,12 @@ def _run_capture(page, start_url, max_steps, put, s3):
 
 
 @contextmanager
-def _playwright_page(proxy=None, timeout_ms=30_000):
+def _playwright_page(proxy=None, timeout_ms=30_000, ua=None):
     from playwright.sync_api import sync_playwright   # lazy: optional dep
     with sync_playwright() as p:
         ctx_kw = {}
+        if ua:
+            ctx_kw["user_agent"] = ua
         if proxy:
             host = proxy.split("@")[-1]
             ctx_kw["proxy"] = {"server": f"http://{host}"}
@@ -186,19 +188,40 @@ def capture_funnel(start_url, *, max_steps=3, put=put_bytes, s3=None,
         return _run_capture(p, start_url, max_steps, put, s3)
 
 
-def render_landing_html(start_url, *, page=None, proxy=None, timeout_ms=30_000) -> str:
-    """Render a funnel landing page (headless, CMP dismissed) and return its DOM HTML —
-    the input to firehose_fingerprint.detect_signatures. v1 renders the landing page only
-    (install/MMP/checkout tells live there or resolve from it); answer-aware quiz-stepping
-    to the post-quiz paywall is v2. Pass `page` to drive an injected page (tests)."""
+# iOS UA so funnel pages serve the app smart-banner / store links / MMP deep-links (the
+# install tells are UA-gated — a desktop UA hides them). Verified live: betterme.world
+# rendered with this UA + settle surfaces mmp+store+pixel; without it, nothing.
+RENDER_UA = ("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 "
+             "(KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1")
+
+
+def render_landing_html(start_url, *, page=None, proxy=None, ua=RENDER_UA,
+                        settle_ms=2500, timeout_ms=30_000) -> str:
+    """Render a funnel landing page and return its settled DOM HTML — the input to
+    firehose_fingerprint.detect_signatures. Renders with an iOS UA (so the app
+    smart-banner/MMP/store tells appear), waits for network-idle + a short settle (so the
+    GTM-injected pixel/MMP land), and dismisses the CMP. Renders DIRECT by default — the
+    residential proxy is for Meta egress, not landing pages (it times these out). v1 renders
+    the landing page only; answer-aware quiz-stepping to the post-quiz paywall is v2. Pass
+    `page` to drive an injected page (tests)."""
     def _go(p):
         p.goto(start_url)
+        if hasattr(p, "wait_for_load_state"):
+            try:
+                p.wait_for_load_state("networkidle", timeout=8_000)
+            except Exception:
+                pass
         autoconsent_cmp(p)
+        if hasattr(p, "wait_for_timeout"):
+            try:
+                p.wait_for_timeout(settle_ms)
+            except Exception:
+                pass
         try:
             return p.content()
         except Exception:
             return ""
     if page is not None:
         return _go(page)
-    with _playwright_page(proxy, timeout_ms) as p:
+    with _playwright_page(proxy, timeout_ms, ua=ua) as p:
         return _go(p)
