@@ -5,7 +5,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { signedPercent, growthLine, trendFromScaling } from "./why.ts";
+import { signedPercent, growthLine, trendFromScaling, monthLabel } from "./why.ts";
 
 test("growthLine prefers real growth numbers (base >= 5 keeps the percent)", () => {
   const g = growthLine({ first_count: 5, latest_count: 20, weeks: 4, pct_change: 300 }, { active_ad_count: 40 });
@@ -137,4 +137,13 @@ test("trendFromScaling withholds pct/multiple from bases under 5 ads", () => {
     { week_start: "2026-06-01", active_ad_count: 1, distinct_creative_count: 0 },
   ]);
   assert.deepEqual(cull, { pct: null, multiple: null, dir: "down" });
+});
+
+test("monthLabel drops the year only for the current year", () => {
+  const now = Date.parse("2026-06-12T00:00:00Z");
+  assert.equal(monthLabel("2026-03-04", now), "Mar");
+  assert.equal(monthLabel("2025-11-20", now), "Nov 2025");
+  assert.equal(monthLabel("garbage", now), null);
+  assert.equal(monthLabel(null, now), null);
+  assert.equal(monthLabel(undefined, now), null);
 });

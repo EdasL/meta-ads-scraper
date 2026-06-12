@@ -1,22 +1,26 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { getCategories, getShortlist } from "@/lib/api";
 import { Fallback } from "@/components/Fallback";
 import { ActivationChecklist, EmptyState, Pagination } from "@/components/ui";
 import { PAGE_SIZE, clampPage } from "@/lib/pagination";
 import { shortlistParams } from "@/lib/query";
+import { clearReturnTo, loadReturnTo, saveReturnTo } from "@/lib/returnTo";
 import type { CategoryCount, ShortlistQuery, ShortlistRow } from "@/types/contracts";
-import { GemCard } from "./GemCard";
+import { GemTable } from "./GemTable";
 import { DEFAULT_FILTERS, FilterRail, type Filters } from "./FilterRail";
 
-const GRID: React.CSSProperties = {
-  display: "grid",
-  gridTemplateColumns: "repeat(auto-fill, minmax(230px, 1fr))",
-  gap: 12,
-  alignItems: "stretch",
-};
+function SkeletonTable() {
+  return (
+    <div role="status" aria-label="Loading gems" style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+      {Array.from({ length: 10 }, (_, i) => (
+        <div key={i} className="skel" style={{ height: 52 }} />
+      ))}
+    </div>
+  );
+}
 
 /** The whole filter set + page lives in the URL (shareable, back-button-able);
  * defaults are omitted so the bare /discover stays clean. */
@@ -54,22 +58,6 @@ function writeUrl(f: Filters, page: number): string {
   if (f.hasFunnel) sp.set("funnel", "1");
   if (page > 1) sp.set("page", String(page));
   return sp.toString();
-}
-
-function SkeletonGrid() {
-  return (
-    <div style={GRID} role="status" aria-label="Loading gems">
-      {Array.from({ length: 8 }, (_, i) => (
-        <div key={i} style={{ border: "1px solid var(--line)", background: "var(--paper)" }}>
-          <div className="skel" style={{ aspectRatio: "16 / 10" }} />
-          <div style={{ padding: 12, display: "flex", flexDirection: "column", gap: 8 }}>
-            <div className="skel" style={{ height: 14, width: "70%" }} />
-            <div className="skel" style={{ height: 10, width: "45%" }} />
-          </div>
-        </div>
-      ))}
-    </div>
-  );
 }
 
 /** One resolved /shortlist page, tagged with the query string and page that
@@ -199,6 +187,26 @@ export function DiscoverFeed() {
   const narrowed =
     !!filters.category || !!filters.q || filters.minScore > 0 || filters.hasFunnel || filters.minAdAge > 0;
 
+  // Where the user left off, saved when a row opens a dossier. The gem page's
+  // back link points at the remembered URL (page + filters survive), and the
+  // scroll offset is replayed below — but only once the SAME query's fresh
+  // rows have rendered, otherwise there is nothing that tall to scroll to.
+  const rememberPosition = useCallback(() => {
+    const url = searchParams.size > 0 ? `${pathname}?${searchParams}` : pathname;
+    saveReturnTo({ url, scrollY: window.scrollY }, window.sessionStorage);
+  }, [pathname, searchParams]);
+
+  const restoredScroll = useRef(false);
+  useEffect(() => {
+    if (restoredScroll.current || !fresh) return;
+    restoredScroll.current = true;
+    const stored = loadReturnTo(window.sessionStorage);
+    if (!stored) return;
+    clearReturnTo(window.sessionStorage);
+    const url = searchParams.size > 0 ? `${pathname}?${searchParams}` : pathname;
+    if (stored.url === url) window.scrollTo(0, stored.scrollY);
+  }, [fresh, pathname, searchParams]);
+
   return (
     <main style={{ maxWidth: 1200, margin: "0 auto", padding: "24px 22px 80px" }}>
       <header style={{ marginBottom: 20 }}>
@@ -234,7 +242,7 @@ export function DiscoverFeed() {
       {error ? (
         <Fallback message="The feed didn't load. Check that the server is running, then try again." onRetry={retry} />
       ) : result === null ? (
-        <SkeletonGrid />
+        <SkeletonTable />
       ) : fresh && total === 0 ? (
         narrowed ? (
           <EmptyState title="Nothing matches" hint="Filters are too tight. Loosen them." ctaLabel="Reset" onCta={() => setFilters(DEFAULT_FILTERS)} />
@@ -260,12 +268,13 @@ export function DiscoverFeed() {
         <div className={`feed-grid${refreshing ? " feed-stale" : ""}`} inert={refreshing || undefined} aria-busy={refreshing}>
           {rows.length > 0 && (
             <>
-              <div key={result.key} style={GRID}>
-                {rows.map((row, i) => (
-                  <div key={row.advertiser_id} className="gem-enter" style={{ display: "grid", animationDelay: `${Math.min(i, 11) * 24}ms` }}>
-                    <GemCard row={row} />
-                  </div>
-                ))}
+              <div key={result.key} className="gem-enter">
+                <GemTable
+                  rows={rows}
+                  sort={filters.sort}
+                  onSort={(sort) => setFilters({ ...filters, sort })}
+                  onOpen={rememberPosition}
+                />
               </div>
               <Pagination
                 page={result.page}

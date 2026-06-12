@@ -64,6 +64,11 @@ export interface ApiShortlistRow {
   niche_advertiser_count?: number | null;
   installs_delta_28d?: number | null;
   rating_count_delta_28d?: number | null;
+  // Store-traction absolutes (matview migration 118); installs is Play-only.
+  installs?: number | null;
+  rating_count?: number | null;
+  rating?: number | null;
+  tagline?: string | null;
 }
 
 /** `AppReview` (backend models.go) — one recent store review for the app. */

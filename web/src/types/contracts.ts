@@ -68,6 +68,10 @@ export interface ShortlistRow {
   niche_advertiser_count?: number; // sustained advertisers in that niche
   installs_delta_28d?: number; // raw Play installs delta, trailing 28 days
   rating_count_delta_28d?: number; // raw review-count delta, trailing 28 days
+  installs?: number; // Play total installs (iOS has no install figure)
+  rating_count?: number; // store review count
+  rating?: number; // store star rating, 0-5
+  tagline?: string; // first line of the store description, ≤200 chars
 }
 
 export type CreativeType = "image" | "video" | "text";

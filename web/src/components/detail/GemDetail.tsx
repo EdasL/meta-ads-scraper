@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { IconArrowLeft } from "@tabler/icons-react";
 import { getGem } from "@/lib/api";
 import { markVisitedGem } from "@/lib/onboarding";
+import { loadReturnTo } from "@/lib/returnTo";
 import { Fallback } from "@/components/Fallback";
 import { ButtonLink } from "@/components/ui";
 import type { GemDossier } from "@/types/contracts";
@@ -13,6 +14,9 @@ import { AdGrowth, AdsSection } from "./EvidenceReel";
 import { AppStorePreview } from "./AppStorePreview";
 import { GemFacts } from "./GemFacts";
 import { GemNotes } from "./GemNotes";
+
+// The stored return URL never changes while this page is mounted.
+const subscribeNever = () => () => {};
 
 const backLink: React.CSSProperties = {
   display: "inline-flex",
@@ -33,6 +37,14 @@ export function GemDetail({ advertiserId }: { advertiserId: number }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [reload, setReload] = useState(0);
+  // The exact Discover URL (page + filters) the user came from, if any.
+  // sessionStorage is client-only, so the server snapshot is the plain
+  // /discover and the stored URL takes over right after hydration.
+  const backHref = useSyncExternalStore(
+    subscribeNever,
+    () => loadReturnTo(window.sessionStorage)?.url ?? "/discover",
+    () => "/discover",
+  );
 
   useEffect(() => {
     markVisitedGem(); // activation: "Open a gem"
@@ -75,7 +87,9 @@ export function GemDetail({ advertiserId }: { advertiserId: number }) {
 
   return (
     <main style={{ maxWidth: 1140, margin: "0 auto", padding: "18px 22px 80px" }}>
-      <Link href="/discover" className="font-mono" style={backLink}>
+      {/* scroll={false}: DiscoverFeed restores the saved offset itself; Next's
+          default scroll-to-top races it and sometimes lands second. */}
+      <Link href={backHref} scroll={false} className="font-mono" style={backLink}>
         <IconArrowLeft size={14} stroke={2} /> Back to Discover
       </Link>
 

@@ -17,16 +17,22 @@ export const MIN_PCT_BASE = 5;
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-/** "since Mar" (current year) or "since Mar 2025" from an ISO date.
+/** "Mar" (current year) or "Mar 2025" from an ISO date.
  * String-parsed so a date-only value never shifts a month across timezones.
- * Returns null on garbage input so callers fall back to the weeks copy. */
-function sinceLabel(iso: string, nowMs: number): string | null {
+ * Returns null on garbage input so callers fall back or render a dash. */
+export function monthLabel(iso: string | null | undefined, nowMs: number = Date.now()): string | null {
+  if (!iso) return null;
   const m = /^(\d{4})-(\d{2})/.exec(iso);
   if (!m) return null;
   const month = MONTHS[Number(m[2]) - 1];
   if (!month) return null;
   const year = Number(m[1]);
-  return year === new Date(nowMs).getFullYear() ? `since ${month}` : `since ${month} ${year}`;
+  return year === new Date(nowMs).getFullYear() ? month : `${month} ${year}`;
+}
+
+function sinceLabel(iso: string, nowMs: number): string | null {
+  const label = monthLabel(iso, nowMs);
+  return label === null ? null : `since ${label}`;
 }
 
 /** Whole-number percent with an explicit sign: 166.6999 → "+167%", -3.2 →

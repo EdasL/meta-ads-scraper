@@ -281,3 +281,57 @@ body {
     transition: none;
   }
 }
+
+/* Discover comparison table. */
+.gem-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+.gem-table th,
+.gem-table td {
+  padding: 10px 12px;
+  text-align: left;
+  border-bottom: 1px solid var(--line);
+  vertical-align: middle;
+}
+.gem-table thead th {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.gem-table th.num,
+.gem-table td.num {
+  text-align: right;
+}
+.gem-table tbody tr {
+  cursor: pointer;
+}
+.gem-table tbody tr:hover {
+  background: var(--surface-3);
+}
+.gem-table-sort {
+  all: unset;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+  white-space: nowrap;
+}
+.gem-table-sort:hover,
+.gem-table-sort.is-active {
+  color: var(--ink);
+}
+.gem-table-sort:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+
+/* One-line store-description tagline under the app name. */
+.gem-table-tagline {
+  color: var(--muted);
+  max-width: 34ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
