@@ -44,7 +44,7 @@ def run_funnel_confirm(engine, *, resolve, render, ids=None, limit=None) -> dict
     resolve(landing_url) -> obj{kind,store_id}; render(landing_url) -> html str."""
     with engine.connect() as conn:
         rows = _new_rows(conn, ids)
-    if limit:
+    if limit is not None:
         rows = rows[:limit]
     stats = {"examined": len(rows), "confirmed": 0, "dropped": 0,
              "kinds": {"install": 0, "subscribe": 0, "unknown": 0}}

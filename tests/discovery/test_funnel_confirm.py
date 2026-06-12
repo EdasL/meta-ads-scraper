@@ -70,8 +70,9 @@ def test_run_funnel_confirm_labels_pool(_migrated_engine):
         stats = run_funnel_confirm(eng, resolve=fake_resolve, render=fake_render,
                                    ids=_ids(eng, "FCONF"))
         assert stats["confirmed"] >= 1 and stats["dropped"] >= 1
-        rows = {r.page_id: (r.kind, r.status) for r in eng.connect().execute(text(
-            "SELECT page_id, kind, status FROM discovery.funnel_candidates WHERE page_id LIKE 'FCONF%'")).all()}
+        with eng.connect() as c:
+            rows = {r.page_id: (r.kind, r.status) for r in c.execute(text(
+                "SELECT page_id, kind, status FROM discovery.funnel_candidates WHERE page_id LIKE 'FCONF%'")).all()}
         assert rows["FCONF_SUB"] == ("subscribe", "confirmed")
         assert rows["FCONF_DROP"][1] == "dropped"
     finally:
