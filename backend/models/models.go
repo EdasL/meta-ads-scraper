@@ -97,6 +97,14 @@ type ShortlistRow struct {
 	NicheAdvertiserCount *int     `json:"niche_advertiser_count" gorm:"column:niche_advertiser_count"`
 	InstallsDelta28d     *int64   `json:"installs_delta_28d" gorm:"column:installs_delta_28d"`
 	RatingCountDelta28d  *int64   `json:"rating_count_delta_28d" gorm:"column:rating_count_delta_28d"`
+	// Store-traction absolutes (118_emerging_matview_store_traction.sql), from
+	// the same public.apps row the icon comes from. installs is Play-only —
+	// iOS rows scan as NULL, never 0.
+	Installs    *int64   `json:"installs" gorm:"column:installs"`
+	RatingCount *int64   `json:"rating_count" gorm:"column:rating_count"`
+	Rating      *float64 `json:"rating" gorm:"column:rating"`
+	// First line of the store description, whitespace-collapsed, ≤200 chars.
+	Tagline *string `json:"tagline" gorm:"column:tagline"`
 	// Enriched in code after the base matview scan (not scanned directly):
 	// the explainer, the per-advertiser growth summary, and the hero ad
 	// creative for the card. All nullable → JSON null when absent.
