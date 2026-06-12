@@ -184,3 +184,21 @@ def capture_funnel(start_url, *, max_steps=3, put=put_bytes, s3=None,
         return _run_capture(page, start_url, max_steps, put, s3)
     with _playwright_page(proxy) as p:
         return _run_capture(p, start_url, max_steps, put, s3)
+
+
+def render_landing_html(start_url, *, page=None, proxy=None, timeout_ms=30_000) -> str:
+    """Render a funnel landing page (headless, CMP dismissed) and return its DOM HTML —
+    the input to firehose_fingerprint.detect_signatures. v1 renders the landing page only
+    (install/MMP/checkout tells live there or resolve from it); answer-aware quiz-stepping
+    to the post-quiz paywall is v2. Pass `page` to drive an injected page (tests)."""
+    def _go(p):
+        p.goto(start_url)
+        autoconsent_cmp(p)
+        try:
+            return p.content()
+        except Exception:
+            return ""
+    if page is not None:
+        return _go(page)
+    with _playwright_page(proxy, timeout_ms) as p:
+        return _go(p)
