@@ -1,6 +1,8 @@
 """Pure funnel-classification helpers, promoted from scripts/discover_experiment.py so the
 funnel pipeline can share them. No DB, no network. The app pipeline never imports this."""
-from urllib.parse import urlparse, parse_qs, unquote
+from urllib.parse import urlparse, parse_qs
+
+from agf.classify import unwrap_fb_shim
 
 # Destinations that are neither an app nor a funnel — a social page or ad redirect.
 SOCIAL_HOSTS = {"facebook.com", "fb.me", "m.facebook.com", "l.facebook.com", "lm.facebook.com",
@@ -15,18 +17,6 @@ FUNNEL_WORDS = ("quiz", "personalized", "plan", "your results", "based on your",
 LEADGEN_CTAS = {"SIGN_UP", "SUBSCRIBE", "GET_OFFER", "LEARN_MORE", "GET_QUOTE",
                 "BOOK_TRAVEL", "APPLY_NOW", "DOWNLOAD"}
 
-_FB_SHIMS = {"l.facebook.com", "lm.facebook.com"}
-
-
-def _unwrap(url: str) -> str:
-    """Unwrap an l.facebook.com/?u=<real> click-shim to the real destination."""
-    p = urlparse(url)
-    if p.netloc in _FB_SHIMS:
-        u = parse_qs(p.query).get("u", [None])[0]
-        if u:
-            return unquote(u)
-    return url
-
 
 def host_of(url: str | None) -> str:
     if not url:
@@ -38,21 +28,21 @@ def landing_domain(url: str | None) -> str | None:
     """Host of the true destination (FB shim unwrapped, www stripped). None if empty."""
     if not url:
         return None
-    host = urlparse(_unwrap(url)).netloc.lower().replace("www.", "")
+    host = urlparse(unwrap_fb_shim(url)).netloc.lower().replace("www.", "")
     return host or None
 
 
 def parse_utms(url: str | None) -> dict:
     """{'utm_source','utm_medium','utm_campaign','utm_content'} from the destination query
     (FB shim unwrapped); missing keys -> None."""
-    q = parse_qs(urlparse(_unwrap(url or "")).query)
+    q = parse_qs(urlparse(unwrap_fb_shim(url or "")).query)
     return {k: q.get(k, [None])[0]
             for k in ("utm_source", "utm_medium", "utm_campaign", "utm_content")}
 
 
 def matched_funnel_host(url: str | None) -> str | None:
     """The first FUNNEL_HOST_HINT present in the (unwrapped) host, or None."""
-    host = host_of(_unwrap(url or ""))
+    host = host_of(unwrap_fb_shim(url or ""))
     return next((h for h in FUNNEL_HOST_HINTS if h in host), None)
 
 

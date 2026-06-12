@@ -14,7 +14,7 @@ def test_landing_domain_unwraps_fb_shim_and_strips_www():
 
 
 def test_parse_utms():
-    got = fc.parse_utms("https://quiz.x.com/?utm_source=fb&utm_campaign=wallpilates_es")
+    got = fc.parse_utms("https://quiz.example.com/?utm_source=fb&utm_campaign=wallpilates_es")
     assert got["utm_source"] == "fb"
     assert got["utm_campaign"] == "wallpilates_es"
     assert got["utm_medium"] is None and got["utm_content"] is None

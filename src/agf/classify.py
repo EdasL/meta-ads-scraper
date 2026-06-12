@@ -21,6 +21,11 @@ def _unwrap(url: str) -> str:
     return url
 
 
+def unwrap_fb_shim(url: str) -> str:
+    """Public alias for unwrapping an l.facebook.com/?u=<real> click-shim."""
+    return _unwrap(url)
+
+
 def classify_url(url: str | None) -> AppIntent:
     """Classify a destination URL as ios/android/web/none and extract store id."""
     if not url:
