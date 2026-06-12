@@ -34,3 +34,34 @@ def test_funnel_drops():
     for record, expected in cases:
         d, row = classify_funnel_candidate(record, keyword="k", technique="niche_term")
         assert (d, row) == (expected, None)
+
+
+def test_run_funnel_sweep_persists(_migrated_engine):
+    eng = _migrated_engine
+    with eng.begin() as conn:
+        conn.execute(text("DELETE FROM discovery.funnel_candidates WHERE page_id LIKE 'FUNSWEEP%'"))
+    try:
+        ext = FakeExtractor(keyword_ads={
+            "take the quiz": [
+                ad("https://quiz.example.com/start"),
+                ad("https://apps.apple.com/us/app/x/id1", page_id="FUNSWEEP2"),  # app -> drop
+            ],
+            "personalized plan": [
+                ad("https://quiz.example.com/start"),    # same page+domain -> bump
+            ],
+        })
+        entries = [TaxonomyEntry("take the quiz", "funnel_phrase", "KEYWORD_EXACT_PHRASE", 3),
+                   TaxonomyEntry("personalized plan", "funnel_phrase", "KEYWORD_EXACT_PHRASE", 3)]
+        stats = asyncio.run(run_funnel_sweep(eng, ext, entries=entries, sleep=lambda s: None))
+        assert stats["keywords_swept"] == 2
+        assert stats["candidates_new"] == 1
+        assert stats["candidates_seen"] == 1          # the dup bumped
+        assert stats["drops"]["app"] == 1
+        with eng.connect() as conn:
+            row = conn.execute(text(
+                "SELECT times_seen, status, kind FROM discovery.funnel_candidates "
+                "WHERE page_id='FUNSWEEP1' AND landing_domain='quiz.example.com'")).one()
+        assert row.times_seen == 2 and row.status == "new" and row.kind == "unknown"
+    finally:
+        with eng.begin() as conn:
+            conn.execute(text("DELETE FROM discovery.funnel_candidates WHERE page_id LIKE 'FUNSWEEP%'"))
