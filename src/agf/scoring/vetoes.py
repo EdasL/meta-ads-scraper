@@ -7,6 +7,11 @@ LONGEVITY_FLOOR = 14     # days; mirrors the discovery 14-day scaling gate
 RELAUNCH_RATING_MAX = 100_000  # "emerging" + this many ratings == a relaunch, not new
 # quality vetoes (real-gems feed 2026-06-10); NULL/unknown always passes
 INCUMBENT_PAGE_LIKES_MAX = 10_000    # FB audience above this == incumbent (user-set 2026-06-10)
+# Funnels scale a large FB audience precisely BECAUSE they work — a proven web2app/quiz
+# funnel operator (The Farmer's Dog, Spoiled Child) has 100k–1M+ likes, so the emerging-app
+# 10k ceiling would discard the best funnels. Only veto true mega-brands here; size/quality
+# filtering is deferred to the funnel confirm stage + scoring.
+FUNNEL_INCUMBENT_PAGE_LIKES_MAX = 5_000_000
 MAX_ACTIVE_ADS_FOR_GEM = 80          # an ad library bigger than this == funded growth team, not emerging (user-set 2026-06-11)
 ESTABLISHED_INSTALLS_MAX = 100_000     # store installs above this == established (user-set 2026-06-10)
 ESTABLISHED_RATINGS_MAX = 5_000        # rating base above this == established (user-set 2026-06-10)

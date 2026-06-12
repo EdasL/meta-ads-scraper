@@ -14,7 +14,7 @@ from agf.db.funnel_candidates import upsert_funnel_candidate
 from agf.discovery import funnel_classify as fc
 from agf.discovery.taxonomy import all_entries
 from agf.extract.errors import ExtractError
-from agf.scoring.vetoes import INCUMBENT_PAGE_LIKES_MAX
+from agf.scoring.vetoes import FUNNEL_INCUMBENT_PAGE_LIKES_MAX
 
 
 def _start_date(epoch):
@@ -34,7 +34,7 @@ def classify_funnel_candidate(ad, *, keyword: str, technique: str) -> tuple[str,
     if fc.host_of(ad.link_url) in fc.SOCIAL_HOSTS:
         return "social", None
     likes = ad.page_like_count
-    if likes is not None and likes > INCUMBENT_PAGE_LIKES_MAX:
+    if likes is not None and likes > FUNNEL_INCUMBENT_PAGE_LIKES_MAX:
         return "incumbent_likes", None
     if classify_url(ad.link_url).kind in ("ios", "android"):
         return "app", None                       # store link -> the APP pipeline owns it

@@ -27,13 +27,21 @@ def test_funnel_drops():
     cases = [
         (ad("https://apps.apple.com/us/app/x/id12345"), "app"),           # store link -> app pipeline
         (ad("https://www.instagram.com/x"), "social"),
-        (ad("https://quiz.example.com/x", likes=10_001), "incumbent_likes"),
+        (ad("https://quiz.example.com/x", likes=5_000_001), "incumbent_likes"),  # only mega-brands
         (ad(None), "no_link"),
         (ad("https://plainsite.com/x", cta="NO", body="nothing"), "not_funnel"),
     ]
     for record, expected in cases:
         d, row = classify_funnel_candidate(record, keyword="k", technique="niche_term")
         assert (d, row) == (expected, None)
+
+
+def test_large_page_funnel_is_kept():
+    # funnels scale a big FB audience precisely because they WORK — a 50k-like funnel that
+    # the emerging-app 10k veto would kill must still be a candidate here.
+    d, row = classify_funnel_candidate(ad("https://quiz.example.com/x", likes=50_000),
+                                       keyword="take the quiz", technique="funnel_phrase")
+    assert d == "candidate" and row["landing_domain"] == "quiz.example.com"
 
 
 def test_run_funnel_sweep_persists(_migrated_engine):
