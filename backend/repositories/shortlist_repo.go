@@ -76,17 +76,6 @@ func orderClause(sort, dir string) string {
 	return clause + ", advertiser_id"
 }
 
-// hasDownloadedCreative only surfaces advertisers we can actually show an ad
-// for — i.e. with at least one downloaded creative. This hides incumbent/
-// firehose advertisers that have a score but no scraped ad media (empty hero
-// tiles, flat counts).
-const hasDownloadedCreative = `EXISTS (
-	SELECT 1 FROM public.creatives c
-	JOIN public.ads a ON a.id = c.ad_id
-	WHERE a.advertiser_id = frontend.emerging_scaling_apps.advertiser_id
-	  AND c.s3_key IS NOT NULL
-)`
-
 // likePattern wraps q for a substring ILIKE, escaping LIKE metacharacters so
 // user input matches literally.
 func likePattern(q string) string {
@@ -131,15 +120,16 @@ func shortlistConds(p ShortlistParams) ([]string, []any) {
 		conds = append(conds, "max_longevity_days >= ?")
 		args = append(args, p.MinAdAge)
 	}
-	// Default to the confirmed feed; the Fresh view opts into incubating=true.
-	// The confirmed feed also requires a downloaded creative (the comparison row
-	// leads with ad art). The Fresh view is intentionally pre-enrichment —
-	// just-discovered apps have no s3 creative yet, so it renders on store
-	// metadata (icon_url) alone; requiring media there would always show 0.
+	// The feed shows every scored, non-vetoed gem. We do NOT require a
+	// downloaded ad creative: the comparison row leads with the app's store
+	// icon, and gating on s3 media hid just-discovered apps that haven't been
+	// enriched yet (user 2026-06-13 — surface them all). incubating is always
+	// false in live data now that the 14-day longevity veto is gone; the param
+	// is kept dormant (the matview column still exists) for compatibility.
 	if p.Incubating != nil && *p.Incubating {
 		conds = append(conds, "incubating = true")
 	} else {
-		conds = append(conds, "incubating = false", hasDownloadedCreative)
+		conds = append(conds, "incubating = false")
 	}
 	return conds, args
 }

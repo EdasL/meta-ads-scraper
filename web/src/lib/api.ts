@@ -36,6 +36,10 @@ const mediaUrl = (key: string) => `${API_BASE}/media/${key}`;
 
 async function live<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
+    // no-store: the feed must reflect the live DB. Without it this Next version
+    // caches the GET and the UI shows a stale count after a re-score (the
+    // "stuck at ~300" symptom).
+    cache: "no-store",
     ...init,
     headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
   });
@@ -46,6 +50,7 @@ async function live<T>(path: string, init?: RequestInit): Promise<T> {
 /** Like `live` but maps a 404 to null (a missing gem is not an error). */
 async function liveOrNull<T>(path: string): Promise<T | null> {
   const res = await fetch(`${API_BASE}${path}`, {
+    cache: "no-store",
     headers: { "Content-Type": "application/json" },
   });
   if (res.status === 404) return null;
@@ -62,6 +67,7 @@ export async function getShortlist(
   // Callers page with limit/offset — the old fetch-the-full-pool limit=1000
   // workaround is gone.
   const res = await fetch(`${API_BASE}/shortlist?${shortlistParams(query)}`, {
+    cache: "no-store",
     headers: { "Content-Type": "application/json" },
     signal,
   });

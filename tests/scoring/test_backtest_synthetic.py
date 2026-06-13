@@ -367,16 +367,18 @@ def test_one_week_blip_vetoed(scored):
 
 
 # ---------------------------------------------------------------------------
-# 10. Short longevity → vetoed 'longevity_below_floor'
+# 10. Short longevity → NOT vetoed (14-day floor dropped, user 2026-06-13)
 # ---------------------------------------------------------------------------
 
-def test_short_longevity_vetoed(scored):
+def test_short_longevity_not_vetoed(scored):
     r = _s(scored, "BT16")
-    assert r.vetoed is True, "BT16 short_longevity: expected vetoed"
-    assert r.veto_reason == "longevity_below_floor", (
-        f"BT16 veto_reason={r.veto_reason!r}"
+    assert r.veto_reason != "longevity_below_floor", (
+        f"BT16 short_longevity must no longer be longevity-vetoed; got {r.veto_reason!r}"
     )
-    assert r.alert is False
+    assert r.vetoed is False, (
+        f"BT16 short_longevity: a 10-day clean gem must reach the feed now "
+        f"(veto_reason={r.veto_reason!r})"
+    )
 
 
 # ---------------------------------------------------------------------------

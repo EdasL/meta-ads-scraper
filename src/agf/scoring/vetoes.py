@@ -3,7 +3,6 @@ when it should KILL the gem. apply_vetoes returns the first that fires."""
 from dataclasses import dataclass
 
 MIN_WEEKS = 2            # persistence: a 1-week blip is not a trend
-LONGEVITY_FLOOR = 14     # days; mirrors the discovery 14-day scaling gate
 RELAUNCH_RATING_MAX = 100_000  # "emerging" + this many ratings == a relaunch, not new
 # quality vetoes (real-gems feed 2026-06-10); NULL/unknown always passes
 INCUMBENT_PAGE_LIKES_MAX = 10_000    # FB audience above this == incumbent (user-set 2026-06-10)
@@ -12,7 +11,7 @@ INCUMBENT_PAGE_LIKES_MAX = 10_000    # FB audience above this == incumbent (user
 # 10k ceiling would discard the best funnels. Only veto true mega-brands here; size/quality
 # filtering is deferred to the funnel confirm stage + scoring.
 FUNNEL_INCUMBENT_PAGE_LIKES_MAX = 5_000_000
-MAX_ACTIVE_ADS_FOR_GEM = 80          # an ad library bigger than this == funded growth team, not emerging (user-set 2026-06-11)
+MAX_ACTIVE_ADS_FOR_GEM = 200         # an ad library bigger than this == funded growth team, not emerging (user-set 2026-06-13, was 80)
 ESTABLISHED_INSTALLS_MAX = 100_000     # store installs above this == established (user-set 2026-06-10)
 ESTABLISHED_RATINGS_MAX = 5_000        # rating base above this == established (user-set 2026-06-10)
 
@@ -25,10 +24,6 @@ class VetoResult:
 
 def persistence_gate(fv) -> bool:
     return (fv.weeks_observed or 0) < MIN_WEEKS
-
-
-def longevity_floor(fv) -> bool:
-    return (fv.max_longevity_days or 0) < LONGEVITY_FLOOR
 
 
 def relaunch(fv) -> bool:
@@ -80,7 +75,6 @@ def established_traction(fv) -> bool:
 
 _VETOES = [
     (persistence_gate, "insufficient_persistence"),
-    (longevity_floor, "longevity_below_floor"),
     (relaunch, "relaunch"),
     (game_app, "game"),
     (no_app, "no_app"),

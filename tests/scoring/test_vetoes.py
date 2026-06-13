@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 from agf.scoring.vetoes import (
-    apply_vetoes, persistence_gate, longevity_floor,
+    apply_vetoes, persistence_gate,
     relaunch, game_app, no_app, unverified_app, incumbent_ad_volume,
     incumbent_audience, established_traction,
 )
@@ -29,9 +29,11 @@ def test_persistence_gate_fires_on_single_week():
     assert apply_vetoes(_fv(weeks_observed=1)).reason == "insufficient_persistence"
 
 
-def test_longevity_floor_fires_below_14d():
-    assert longevity_floor(_fv(max_longevity_days=10)) is True
-    assert apply_vetoes(_fv(max_longevity_days=10)).reason == "longevity_below_floor"
+def test_short_longevity_no_longer_vetoed():
+    # The 14-day longevity floor was dropped (user 2026-06-13): brand-new apps
+    # with very short ad histories must reach the feed, not be held back.
+    assert apply_vetoes(_fv(max_longevity_days=1)).vetoed is False
+    assert apply_vetoes(_fv(max_longevity_days=0)).vetoed is False
 
 
 def test_relaunch_fires_on_emerging_with_huge_rating_base():
@@ -68,16 +70,16 @@ def test_incumbent_ad_volume_fires_on_capped_true():
     assert incumbent_ad_volume(_fv(meta_active_ads_capped=None)) is False  # unknown passes
 
 
-def test_incumbent_ad_volume_fires_above_80_active_ads():
-    # true library count when measured (ceiling 80, user-set 2026-06-11)
-    assert incumbent_ad_volume(_fv(meta_active_ads=81)) is True
-    assert apply_vetoes(_fv(meta_active_ads=81)).reason == "incumbent_ad_volume"
-    assert incumbent_ad_volume(_fv(meta_active_ads=80)) is False
+def test_incumbent_ad_volume_fires_above_200_active_ads():
+    # true library count when measured (ceiling 200, user-set 2026-06-13)
+    assert incumbent_ad_volume(_fv(meta_active_ads=201)) is True
+    assert apply_vetoes(_fv(meta_active_ads=201)).reason == "incumbent_ad_volume"
+    assert incumbent_ad_volume(_fv(meta_active_ads=200)) is False
     # stored active-ad observation as fallback when meta count unmeasured
-    assert incumbent_ad_volume(_fv(meta_active_ads=None, active_ad_count=90)) is True
-    assert incumbent_ad_volume(_fv(meta_active_ads=None, active_ad_count=70)) is False
+    assert incumbent_ad_volume(_fv(meta_active_ads=None, active_ad_count=210)) is True
+    assert incumbent_ad_volume(_fv(meta_active_ads=None, active_ad_count=190)) is False
     # a measured-small library wins over a stale larger stored count
-    assert incumbent_ad_volume(_fv(meta_active_ads=30, active_ad_count=90)) is False
+    assert incumbent_ad_volume(_fv(meta_active_ads=30, active_ad_count=210)) is False
 
 
 def test_incumbent_audience_fires_above_10k_likes():
