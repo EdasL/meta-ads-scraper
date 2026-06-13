@@ -426,6 +426,7 @@ func TestHealthCoverage(t *testing.T) {
 		Incubating       int64 `json:"incubating"`
 		WithFunnel       int64 `json:"with_funnel"`
 		FunnelsConfirmed int64 `json:"funnels_confirmed"`
+		MediaTextless    int64 `json:"media_textless"`
 		Stalled          bool  `json:"stalled"`
 	}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &m))
@@ -434,6 +435,9 @@ func TestHealthCoverage(t *testing.T) {
 	require.EqualValues(t, 1, m.Incubating, "the longevity-floored gem")
 	require.EqualValues(t, 1, m.WithFunnel, "only advID has funnel_intent >= 0.7")
 	require.EqualValues(t, 3, m.FunnelsConfirmed, "FP1/FP2/FP3 confirmed funnels")
+	// advID's only active ad (AD1) carries an s3 creative, so no confirmed
+	// advertiser is fully textless on its active ads.
+	require.EqualValues(t, 0, m.MediaTextless, "no confirmed advertiser missing all active media")
 	require.True(t, m.Stalled, "3 confirmed < FeedStallFloor (50) → stalled")
 }
 

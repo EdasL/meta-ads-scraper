@@ -111,6 +111,21 @@ func Coverage(ctx context.Context, g *gorm.DB, now time.Time) (models.CoverageMe
 		).Scan(&out.FunnelsConfirmed).Error; err != nil {
 			return err
 		}
+		// Media-coverage gap: confirmed feed advertisers with active ads but no
+		// downloaded creative on any of them. The worker repair pass drains this;
+		// a rising value means new textless ads are outpacing repair.
+		if err := tx.Raw(
+			`SELECT count(*) FROM frontend.emerging_scaling_apps m
+			 WHERE NOT m.incubating
+			   AND EXISTS (SELECT 1 FROM public.ads a
+			               WHERE a.advertiser_id = m.advertiser_id AND a.is_active)
+			   AND NOT EXISTS (SELECT 1 FROM public.ads a
+			                   JOIN public.creatives c ON c.ad_id = a.id
+			                   WHERE a.advertiser_id = m.advertiser_id
+			                     AND a.is_active AND c.s3_key IS NOT NULL)`,
+		).Scan(&out.MediaTextless).Error; err != nil {
+			return err
+		}
 		out.Stalled = out.ConfirmedFeed < FeedStallFloor
 		return nil
 	})

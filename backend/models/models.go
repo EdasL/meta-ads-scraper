@@ -451,5 +451,9 @@ type CoverageMetrics struct {
 	Incubating       int64 `json:"incubating"`        // matview rows, incubating=true (Fresh)
 	WithFunnel       int64 `json:"with_funnel"`       // confirmed rows, funnel_intent >= 0.7
 	FunnelsConfirmed int64 `json:"funnels_confirmed"` // discovery.funnel_candidates, status=confirmed
-	Stalled          bool  `json:"stalled"`           // ConfirmedFeed < FeedStallFloor
+	// MediaTextless = confirmed feed advertisers that have active ads but NOT one
+	// downloaded creative. This is the media-coverage gap; the worker's repair
+	// pass drains it, so a rising number means the backlog is outpacing repair.
+	MediaTextless int64 `json:"media_textless"`
+	Stalled       bool  `json:"stalled"` // ConfirmedFeed < FeedStallFloor
 }

@@ -72,6 +72,8 @@ from agf.discovery.sweep import run_sweep
 from agf.discovery.taxonomy import TaxonomyEntry, all_entries, sweep_entries
 from agf.discovery.triage import run_triage
 from agf.enrich_full.appstore import lookup_google_play, lookup_itunes_batch
+from agf.enrich_full.media_repair import (repair_advertiser,
+                                          textless_feed_advertisers)
 from agf.enrich_full.run_enrich import make_enrich_handler, EnrichDeps
 from agf.extract.errors import ExtractError
 from agf.scoring.run_scoring import run_scoring, ALERT_THRESHOLD
@@ -315,7 +317,8 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
              min_score=ALERT_THRESHOLD, continuous_discovery=False,
              funnel_daily=True, funnel_pages=3, funnel_confirm_limit=50,
              flywheel_daily=True, flywheel_pages=2, flywheel_max_trials=40,
-             flywheel_min_advertisers=3, mine_min_score=40.0) -> dict:
+             flywheel_min_advertisers=3, mine_min_score=40.0,
+             media_repair_per_cycle=5) -> dict:
     """One sweep→triage→(score)→enrich pass. Returns a summary dict (no printing).
     http_client is the sweep-scoped httpx.Client for the production triage/enrich path
     (None in a dry-run, which uses offline lookups and the no-network fake deps)."""
@@ -494,10 +497,27 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
                                               media_cap=enrich_media_cap),
                           source=engine, candidate_ids=cand_ids,
                           due_before=due_before, limit=enrich_limit)
+    _touch_heartbeat()  # enrich is long; prove liveness before media repair
+
+    # 3.5) media repair — drain the textless-feed backlog a few advertisers per
+    #      cycle so a gem's active ads can't sit media-less forever (the enrich
+    #      pass only fetches the top-N of the ACTIVE listing). Bounded + isolated:
+    #      never in a dry run, failures don't abort the cycle. 0 disables.
+    media_repair = {}
+    if not dry_run and media_repair_per_cycle > 0:
+        try:
+            with engine.connect() as conn:
+                repair_ids = textless_feed_advertisers(conn, media_repair_per_cycle)
+            for aid in repair_ids:
+                repair_advertiser(engine, extractor, aid, media_repair)
+        except Exception as exc:  # noqa: BLE001 — repair must not kill the cycle
+            print(f"[worker] media repair failed: {exc!r}", file=sys.stderr, flush=True)
+            media_repair["error"] = repr(exc)
     return {"sweep": sweep_stats, "triage": triage_stats,
             "keeper_history": keeper_history, "funnel": funnel, "flywheel": flywheel,
             "snapshot_weeks": snapshot_weeks, "apps_refreshed": apps_refreshed,
-            "scored": scored, "enrich_candidates": cand_ids, "enriched": enriched}
+            "scored": scored, "enrich_candidates": cand_ids, "enriched": enriched,
+            "media_repair": media_repair}
 
 
 def _heartbeat_path() -> str:
@@ -545,6 +565,9 @@ def _summary_line(s: dict) -> str:
     line += (f" weekly_snapshots={s['snapshot_weeks']} "
             f"apps_refreshed={s.get('apps_refreshed', 0)} "
             f"enriched={len(s['enriched'])}/{len(s['enrich_candidates'])}")
+    mr = s.get("media_repair")
+    if mr and mr.get("downloaded"):
+        line += f" media_repair={mr.get('downloaded', 0)}"
     if s["scored"] is not None:
         line += f" scored={s['scored']}"
     return line
@@ -587,6 +610,7 @@ def main(argv=None) -> None:
         flywheel_max_trials=_env_int("AGF_FLYWHEEL_MAX_TRIALS", 40),
         flywheel_min_advertisers=_env_int("AGF_MINE_MIN_ADVERTISERS", 3),
         mine_min_score=_env_float("AGF_MINE_MIN_SCORE", 40.0),
+        media_repair_per_cycle=_env_int("AGF_MEDIA_REPAIR_PER_CYCLE", 5),
     )
     # In continuous mode a full taxonomy sweep already takes many minutes (kw_delay ×
     # 305 keywords), so the inter-sweep sleep is just a short breather, not an hour.
