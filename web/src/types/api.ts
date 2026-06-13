@@ -72,6 +72,8 @@ export interface ApiShortlistRow {
   // Linked app store + id (matview migration 123); picks the traction signal.
   store?: string | null;
   store_id?: string | null;
+  // Quiz/landing the app's ads drive to (matview migration 125); null when none.
+  funnel_url?: string | null;
 }
 
 /** `AppReview` (backend models.go) — one recent store review for the app. */

@@ -114,6 +114,10 @@ type ShortlistRow struct {
 	// a real linked app, healthy score, ads just too young to confirm. These rows
 	// are hidden from the default feed and surfaced by the Fresh cohort instead.
 	Incubating bool `json:"incubating" gorm:"column:incubating"`
+	// FunnelURL = the quiz/landing page this app's ads drive to, when one was
+	// captured (125_emerging_matview_funnel_url.sql). NULL when the app's ads go
+	// straight to the store or only to social profiles — there's no funnel to link.
+	FunnelURL *string `json:"funnel_url" gorm:"column:funnel_url"`
 	// Enriched in code after the base matview scan (not scanned directly):
 	// the explainer, the per-advertiser growth summary, and the hero ad
 	// creative for the card. All nullable → JSON null when absent.

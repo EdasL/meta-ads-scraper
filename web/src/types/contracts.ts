@@ -74,6 +74,7 @@ export interface ShortlistRow {
   tagline?: string; // first line of the store description, ≤200 chars
   store?: "ios" | "android"; // linked app's store; picks the traction signal
   store_id?: string; // linked app's store id (bundle / package)
+  funnel_url?: string; // quiz/landing page the app's ads drive to, if captured
 }
 
 export type CreativeType = "image" | "video" | "text";
@@ -266,46 +267,5 @@ export interface CategoryCount {
 /** One page of the feed plus the all-pages total (X-Total-Count header). */
 export interface ShortlistPage {
   rows: ShortlistRow[];
-  total: number;
-}
-
-/** Server-side sort keys for the funnels feed (validated by the API). */
-export type FunnelSort = "newest" | "advertisers" | "seen";
-
-/** One web-to-app funnel, grouped by landing domain — GET /api/funnels.
- * Many advertiser pages can drive the same destination, so the row is the
- * destination: `advertiser_count` is the distinct pages pointing at it, and
- * times_seen / first_seen / last_seen are aggregated across them. Confirmed
- * funnels only (a landing page that actually rendered). */
-export interface FunnelRow {
-  landing_domain: string;
-  advertiser_count: number;
-  sample_page_name: string | null;
-  cta_type: string | null;
-  has_quiz: boolean;
-  max_quiz_steps: number | null;
-  times_seen: number;
-  first_seen_at: string | null;
-  last_seen_at: string | null;
-  sample_landing_url: string | null;
-  store: string | null;
-  store_id: string | null;
-}
-
-/** Query params for GET /api/funnels — every filter runs in the backend. */
-export interface FunnelQuery {
-  /** Case-insensitive substring of the landing domain or page name. */
-  q?: string;
-  /** Only funnels with a detected quiz step. */
-  has_quiz?: boolean;
-  sort?: FunnelSort;
-  dir?: SortDir;
-  limit?: number;
-  offset?: number;
-}
-
-/** One page of funnels plus the all-pages total (X-Total-Count header). */
-export interface FunnelsPage {
-  rows: FunnelRow[];
   total: number;
 }

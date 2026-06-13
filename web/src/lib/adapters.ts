@@ -134,6 +134,7 @@ export function adaptShortlistRow(r: ApiShortlistRow, mediaUrl: MediaUrl): Short
     tagline: r.tagline ?? undefined,
     store: r.store === "ios" ? "ios" : r.store === "android" ? "android" : undefined,
     store_id: r.store_id ?? undefined,
+    funnel_url: r.funnel_url ?? undefined,
   };
 }
 

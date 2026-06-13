@@ -37,8 +37,8 @@ export function GemTable({
           <tr>
             <th>App</th>
             <th>Cohort</th>
-            <th title="The app's ads send traffic to a landing or quiz funnel before the store, detected on its live creatives">
-              Funnel
+            <th title="The quiz or landing page this app's ads drive traffic to before the store. Click to open it.">
+              Quiz
             </th>
             <SortHeader id="gemscore" label="GemScore" sort={sort} dir={dir} onSort={onSort} align="right" />
             <SortHeader id="fastest" label="Ads" sort={sort} dir={dir} onSort={onSort} align="right" />
@@ -134,7 +134,7 @@ function GemRow({ row, onOpen }: { row: ShortlistRow; onOpen?: (row: ShortlistRo
         {row.cohort}
       </td>
       <td>
-        <FunnelCell intent={row.funnel_intent} />
+        <FunnelCell url={row.funnel_url} />
       </td>
       <td className="num">
         <ScoreBadge score={row.gem_score} variant="card" />
@@ -158,32 +158,41 @@ function GemRow({ row, onOpen }: { row: ShortlistRow; onOpen?: (row: ShortlistRo
   );
 }
 
-/** Whether the app routes ad traffic through a funnel (landing/quiz page)
- * before the store. funnel_intent blends fingerprint(.50)+cta(.30)+monetize(.20):
- * a real funnel fingerprint puts it at >= 0.7, while 0.5 is the has-app-but-no-
- * funnel baseline that ~90% of the feed sits at. Threshold 0.7 so the badge means
- * a detected funnel, not "has an app". Plain yes/no — the axis feeds GemScore. */
-export const FUNNEL_BADGE_THRESHOLD = 0.7;
-function FunnelCell({ intent }: { intent: number }) {
-  if (intent >= FUNNEL_BADGE_THRESHOLD) {
-    return (
-      <span
-        className="t-xs"
-        style={{
-          display: "inline-flex",
-          alignItems: "center",
-          padding: "1px 7px",
-          borderRadius: 999,
-          background: "var(--accent-soft, var(--surface-2))",
-          color: "var(--accent-ink, var(--ink))",
-          whiteSpace: "nowrap",
-        }}
-      >
-        Funnel
-      </span>
-    );
+/** The quiz/landing page the app's ads drive to (funnel_url, matview migration
+ * 125). When captured, link straight to it; the click is isolated from the row's
+ * navigate-to-dossier handler. Most app ads go straight to the store, so this is
+ * blank for the majority — a populated cell means a real web2app funnel. */
+function FunnelCell({ url }: { url?: string }) {
+  if (!url) return <span className="t-xs" style={{ color: "var(--muted)" }}>—</span>;
+  let label = url;
+  try {
+    label = new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    /* keep the raw string if it isn't a parseable URL */
   }
-  return <span className="t-xs" style={{ color: "var(--muted)" }}>—</span>;
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer"
+      onClick={(e) => e.stopPropagation()}
+      className="t-xs"
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 3,
+        maxWidth: 160,
+        color: "var(--accent-ink, var(--link, var(--ink)))",
+        textDecoration: "underline",
+        whiteSpace: "nowrap",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+      }}
+      title={url}
+    >
+      {label}
+    </a>
+  );
 }
 
 /** Adaptive traction: Play exposes installs (near-exact), Apple never does, so
