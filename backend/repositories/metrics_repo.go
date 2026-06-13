@@ -22,6 +22,10 @@ const (
 	rateLimitThreshold = 10
 	// str(timedelta(hours=1)) in Python — used verbatim in the alert messages.
 	oneHourLabel = "1:00:00"
+	// FeedStallFloor: a confirmed feed smaller than this almost certainly means a
+	// regression (vetoes too aggressive, scoring/refresh broken), not real scarcity.
+	// The healthy feed sits in the low hundreds; 50 is well below any normal day.
+	FeedStallFloor = 50
 )
 
 type crawlCount struct {
@@ -78,6 +82,36 @@ func Metrics(ctx context.Context, g *gorm.DB, now time.Time) (models.HealthMetri
 			})
 		}
 		out.Degraded = len(out.Alerts) > 0
+		return nil
+	})
+	return out, err
+}
+
+// Coverage reports feed-health counts in one read-only pass: the confirmed feed
+// size, the incubating (Fresh) cohort, how many confirmed gems carry a real
+// funnel fingerprint, and how many web2app funnels are confirmed. Stalled flags
+// an implausibly small confirmed feed (< FeedStallFloor) — the signal that the
+// "stuck at ~300" plateau has degraded into an outright regression.
+func Coverage(ctx context.Context, g *gorm.DB, now time.Time) (models.CoverageMetrics, error) {
+	var out models.CoverageMetrics
+	err := db.WithReadTx(ctx, g, func(tx *gorm.DB) error {
+		// One pass over the matview: confirmed, incubating, and funnel-carrying.
+		if err := tx.Raw(
+			`SELECT
+			   count(*) FILTER (WHERE NOT incubating)                          AS confirmed_feed,
+			   count(*) FILTER (WHERE incubating)                              AS incubating,
+			   count(*) FILTER (WHERE NOT incubating AND funnel_intent >= 0.7) AS with_funnel
+			 FROM frontend.emerging_scaling_apps`,
+		).Scan(&out).Error; err != nil {
+			return err
+		}
+		// Confirmed web2app funnels live in their own discovery table.
+		if err := tx.Raw(
+			`SELECT count(*) FROM discovery.funnel_candidates WHERE status = 'confirmed'`,
+		).Scan(&out.FunnelsConfirmed).Error; err != nil {
+			return err
+		}
+		out.Stalled = out.ConfirmedFeed < FeedStallFloor
 		return nil
 	})
 	return out, err

@@ -417,6 +417,26 @@ func TestHealthMetrics(t *testing.T) {
 	require.Equal(t, "critical", m.Alerts[0].Severity)
 }
 
+func TestHealthCoverage(t *testing.T) {
+	r := router()
+	w, _ := get(t, r, "/api/health/coverage")
+	require.Equal(t, 200, w.Code)
+	var m struct {
+		ConfirmedFeed    int64 `json:"confirmed_feed"`
+		Incubating       int64 `json:"incubating"`
+		WithFunnel       int64 `json:"with_funnel"`
+		FunnelsConfirmed int64 `json:"funnels_confirmed"`
+		Stalled          bool  `json:"stalled"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &m))
+	// Seeded matview: advID, adv2ID, adv3ID confirmed; adv4ID incubating.
+	require.EqualValues(t, 3, m.ConfirmedFeed, "confirmed (incubating=false) rows")
+	require.EqualValues(t, 1, m.Incubating, "the longevity-floored gem")
+	require.EqualValues(t, 1, m.WithFunnel, "only advID has funnel_intent >= 0.7")
+	require.EqualValues(t, 3, m.FunnelsConfirmed, "FP1/FP2/FP3 confirmed funnels")
+	require.True(t, m.Stalled, "3 confirmed < FeedStallFloor (50) → stalled")
+}
+
 func TestMetricsEndpoint(t *testing.T) {
 	r := router()
 	w := httptest.NewRecorder()

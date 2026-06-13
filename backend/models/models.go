@@ -431,3 +431,21 @@ type HealthMetrics struct {
 	Alerts      []Alert `json:"alerts"`
 	Degraded    bool    `json:"degraded"`
 }
+
+// CoverageMetrics is the feed-health signal behind GET /api/health/coverage —
+// a Go-only diagnostic (not under Python parity) that makes the two failure
+// modes we hit visible without reading the DB by hand:
+//   - ConfirmedFeed collapsing toward 0 = discovery/scoring/veto regression
+//     (the "stuck at ~300" symptom is a drop here).
+//   - WithFunnel collapsing = funnel fingerprinting stopped (the threshold got
+//     reverted to the 0.5 no-op, or capture broke).
+//
+// Stalled is true when the confirmed feed is implausibly small — a cheap alarm
+// for "the feed died" that a dashboard or cron can poll.
+type CoverageMetrics struct {
+	ConfirmedFeed    int64 `json:"confirmed_feed"`    // matview rows, incubating=false
+	Incubating       int64 `json:"incubating"`        // matview rows, incubating=true (Fresh)
+	WithFunnel       int64 `json:"with_funnel"`       // confirmed rows, funnel_intent >= 0.7
+	FunnelsConfirmed int64 `json:"funnels_confirmed"` // discovery.funnel_candidates, status=confirmed
+	Stalled          bool  `json:"stalled"`           // ConfirmedFeed < FeedStallFloor
+}

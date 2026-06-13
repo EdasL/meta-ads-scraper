@@ -45,6 +45,7 @@ func Init(r *gin.Engine) {
 		api.POST("/saved-gems/:advertiser_id", middlewares.RequireToken(), saved.Save)
 		api.POST("/saved-gems/:advertiser_id/remove", middlewares.RequireToken(), saved.Remove)
 		api.GET("/health/metrics", health.Metrics)
+		api.GET("/health/coverage", health.Coverage)
 		api.GET("/media/*key", media.Get)
 	}
 

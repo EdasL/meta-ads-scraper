@@ -26,3 +26,17 @@ func (c *HealthController) Metrics(ctx *gin.Context) {
 	}
 	ctx.JSON(http.StatusOK, m)
 }
+
+// Coverage serves GET /api/health/coverage — the feed-health signal (confirmed
+// feed size, incubating cohort, funnel coverage) that surfaces a plateau or
+// funnel-capture regression without hand-querying the DB.
+func (c *HealthController) Coverage(ctx *gin.Context) {
+	rctx, cancel := reqCtx(ctx)
+	defer cancel()
+	m, err := repositories.Coverage(rctx, db.DB(), time.Now())
+	if err != nil {
+		helpers.Detail(ctx, http.StatusInternalServerError, "coverage broke.")
+		return
+	}
+	ctx.JSON(http.StatusOK, m)
+}
