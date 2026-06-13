@@ -1,6 +1,7 @@
 import re
 from dataclasses import dataclass
 from agf.bootstrap import extract_lsd  # reuse Plan 1 (raises ValueError if absent)
+from agf.extract.errors import ErrorKind, ExtractError
 
 # Known-good fallbacks, freshest first (master-plan §9). doc_id rotates ~2-4 weeks.
 # 24922295957467452 was harvested live from a JS bundle on 2026-06-04.
@@ -59,11 +60,20 @@ def heal_doc_id_from_bundles(session, html: str, *, max_bundles: int = 12) -> st
 
 
 def heal_from_html(html: str, session=None) -> SessionTokens:
-    """Build SessionTokens from a real (post-challenge) page. Raises ValueError if
-    the LSD token is absent (i.e. the page is still a challenge stub). When a
-    `session` is given, doc_id is healed via JS bundles (the reliable path)."""
+    """Build SessionTokens from a real (post-challenge) page. When a `session` is
+    given, doc_id is healed via JS bundles (the reliable path).
+
+    A missing LSD token means the page is still a challenge/block stub rather than
+    real HTML — that's a session problem, not a permanent failure. Raise it as a
+    SESSION-kind ExtractError so with_backoff retries and the facade rotates the
+    proxy/session, instead of letting a raw ValueError kill the whole sweep."""
+    try:
+        lsd = extract_lsd(html)              # raises ValueError if missing
+    except ValueError as exc:
+        raise ExtractError(f"LSD token not found in page HTML: {exc}",
+                           ErrorKind.SESSION) from exc
     return SessionTokens(
-        lsd=extract_lsd(html),               # raises ValueError if missing
+        lsd=lsd,
         fb_dtsg=extract_fb_dtsg(html),
         doc_id=heal_doc_id_from_bundles(session, html) if session is not None else heal_doc_id(html),
     )

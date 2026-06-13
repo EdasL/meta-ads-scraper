@@ -4,6 +4,7 @@ from agf.extract.token_heal import (
     SessionTokens, extract_fb_dtsg, heal_doc_id, heal_doc_id_from_bundles,
     heal_from_html, FALLBACK_DOC_IDS,
 )
+from agf.extract.errors import ErrorKind, ExtractError
 from agf.bootstrap import extract_lsd
 from tests.extract.conftest import FakeResponse, FakeSession
 
@@ -34,9 +35,12 @@ def test_heal_from_html_returns_full_tokens():
     assert tokens.doc_id == "25464068859919530"
 
 
-def test_heal_from_html_raises_without_lsd():
-    with pytest.raises(ValueError):
+def test_heal_from_html_raises_session_error_without_lsd():
+    # A missing LSD token means a challenge/block stub — a retryable SESSION
+    # error (triggers proxy rotation), not a raw ValueError that kills the sweep.
+    with pytest.raises(ExtractError) as exc_info:
         heal_from_html("<html>challenge stub, no lsd</html>")
+    assert exc_info.value.kind == ErrorKind.SESSION
 
 
 def test_heal_doc_id_from_bundles_fetches_when_not_inline():
