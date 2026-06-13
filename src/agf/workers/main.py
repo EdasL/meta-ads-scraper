@@ -2,13 +2,16 @@
 
 Composes the already-tested pieces behind ONE guarded loop —
     build extractor (warms lazily via SessionPool) →
-    breadth-first discovery (daily-gated keyword sweep → store-lookup triage →
+    breadth-first discovery (keyword sweep → store-lookup triage →
     keeper-history backfill: store keeper ads + reconstruct the weekly series) →
     app-store refresh (daily adtech.app_metrics snapshot + metadata + reviews) →
+    daily funnel stage (funnel_phrase sweep → confirm/label landing pages) →
+    daily keyword flywheel (mine gem ad copy → trial-sweep dynamic keywords) →
     [optional] run_scoring →
     enrich keepers + flagged gems via run_worker(make_enrich_handler(deps_factory))
-— then sleeps and repeats. The loop stays hourly, but the sweep+triage stage is
-gated to one finished discovery.sweep_runs row per day.
+— then sleeps briefly and repeats. By default (AGF_CONTINUOUS_DISCOVERY=1) the
+sweep+triage stage runs every tick so the brand DB grows continuously; set it to 0
+for the legacy cadence of one finished discovery.sweep_runs row per day.
 
 SAFE BY DEFAULT for dry-runs. With AGF_DRY_RUN=1 it swaps an in-process
 FakeExtractor (zero Meta traffic), runs exactly ONE sweep (2 keywords, offline
@@ -30,6 +33,13 @@ Env:
   AGF_SCORE_AFTER_SWEEP=1      run run_scoring after discovery       (default off; cron owns it)
   AGF_MIN_GEM_SCORE            enrich gems at/above this score       (default 70)
   AGF_SWEEP_INTERVAL_SEC       sleep between sweeps                  (default 3600; ignored if once)
+  AGF_FUNNEL_DAILY             run the daily funnel sweep+confirm    (default 1; 0 disables)
+  AGF_FUNNEL_MAX_PAGES         SERP pages per funnel keyword         (default 3)
+  AGF_FUNNEL_CONFIRM_LIMIT     funnel candidates confirmed per day   (default 50)
+  AGF_FLYWHEEL_DAILY           run the daily keyword flywheel        (default 1; 0 disables)
+  AGF_FLYWHEEL_MAX_PAGES       SERP pages per dynamic keyword        (default 2)
+  AGF_FLYWHEEL_MAX_TRIALS      trial keywords live at once           (default 20)
+  AGF_MINE_MIN_SCORE           mine ad copy of gems at/above score   (default 40)
 """
 import asyncio
 import os
@@ -43,9 +53,18 @@ from sqlalchemy import text
 from agf.db.engine import get_engine, begin
 from agf.db.candidates import (close_sweep_run, kept_advertiser_ids,
                                open_sweep_run, sweep_ran_today)
+from agf.db.dynamic_keywords import (add_trial_keywords, close_flywheel_run,
+                                     flywheel_ran_today, live_keywords,
+                                     open_flywheel_run, record_keyword_sweep,
+                                     tried_keywords, trial_count)
+from agf.db.funnel_candidates import (close_funnel_sweep_run, funnel_sweep_ran_today,
+                                      open_funnel_sweep_run)
+from agf.discovery.funnel_confirm import run_funnel_confirm
+from agf.discovery.keyword_mining import fetch_gem_copy, mine_phrases
+from agf.discovery.funnel_sweep import run_funnel_sweep
 from agf.discovery.keeper_history import pull_keeper_history
 from agf.discovery.sweep import run_sweep
-from agf.discovery.taxonomy import sweep_entries
+from agf.discovery.taxonomy import TaxonomyEntry, all_entries, sweep_entries
 from agf.discovery.triage import run_triage
 from agf.enrich_full.appstore import lookup_google_play, lookup_itunes_batch
 from agf.enrich_full.run_enrich import make_enrich_handler, EnrichDeps
@@ -70,8 +89,11 @@ def _env_float(name, default):
         return default
 
 
-def _env_bool(name):
-    return os.environ.get(name, "").lower() in ("1", "true", "yes", "on")
+def _env_bool(name, default=False):
+    v = os.environ.get(name)
+    if v is None:
+        return default
+    return v.lower() in ("1", "true", "yes", "on")
 
 
 # --- extractor + deps wiring -------------------------------------------------
@@ -174,6 +196,92 @@ def production_deps_factory(extractor, http_client, creative_urls_by_adv):
 
 
 # --- queries -----------------------------------------------------------------
+def discovery_due(conn, as_of, *, dry_run, continuous) -> bool:
+    """Whether this tick runs a discovery sweep. A dry-run always sweeps (offline,
+    no sweep_runs row). Continuous mode (AGF_CONTINUOUS_DISCOVERY) bypasses the
+    once-per-day gate so the brand DB keeps growing every tick. Otherwise gate on a
+    finished discovery.sweep_runs row for `as_of` (one real sweep per day)."""
+    return dry_run or continuous or not sweep_ran_today(conn, as_of)
+
+
+def funnel_due(conn, as_of, *, dry_run) -> bool:
+    """Whether this tick runs the funnel stage. Once per day (a FINISHED
+    discovery.funnel_sweep_runs row gates the rest of the day); never in a dry-run
+    (the confirm stage renders real landing pages — there is no offline fake)."""
+    return not dry_run and not funnel_sweep_ran_today(conn, as_of)
+
+
+# --- funnel stage --------------------------------------------------------------
+def run_funnel_stage(engine, extractor, *, max_pages=3, kw_delay=3.0,
+                     confirm_limit=50, resolve=None, probe=None) -> dict:
+    """One funnel sweep+confirm pass — the web2app sibling of the app discovery stage.
+    Sweep: the 28-keyword funnel_phrase layer -> discovery.funnel_candidates (Meta via
+    the proxied extractor). Confirm: render each new landing page DIRECT (no proxy,
+    iOS UA — see funnel_capture) + quiz click-probe + resolve the deeplink, write the
+    verdict. `resolve`/`probe` are injectable for tests; production wires the extractor's
+    deeplink resolver and the lazy-imported Playwright render_and_probe."""
+    if resolve is None:
+        def resolve(url):
+            return asyncio.run(extractor.resolve_deeplink(url)).intent
+    if probe is None:
+        from agf.enrich_full.funnel_capture import render_and_probe
+        probe = render_and_probe
+    sweep = asyncio.run(run_funnel_sweep(engine, extractor,
+                                         max_pages=max_pages, kw_delay=kw_delay))
+    confirm = run_funnel_confirm(engine, resolve=resolve, probe=probe,
+                                 limit=confirm_limit)
+    return {"sweep": sweep, "confirm": confirm}
+
+
+def flywheel_due(conn, as_of, *, dry_run) -> bool:
+    """Whether this tick runs the keyword flywheel. Once per day (a FINISHED
+    discovery.flywheel_runs row gates the rest of the day); never in a dry-run."""
+    return not dry_run and not flywheel_ran_today(conn, as_of)
+
+
+# --- keyword flywheel ------------------------------------------------------------
+def run_flywheel_stage(engine, extractor, *, max_pages=2, kw_delay=3.0,
+                       mine_min_score=40.0, max_trials=20,
+                       corpus_fn=fetch_gem_copy) -> dict:
+    """One mine+sweep pass of the keyword flywheel: phrases recurring across the ad
+    copy of scored gems become trial sweep keywords, every live (trial|active) dynamic
+    keyword gets one shallow exact-phrase sweep into the SAME app candidate pool the
+    static taxonomy feeds, and each trial's yield decides its fate (promote/retire —
+    policy constants in db/dynamic_keywords). A throttled keyword (search error)
+    doesn't burn trial budget. `corpus_fn` is injectable for tests."""
+    with engine.connect() as conn:
+        tried = tried_keywords(conn)
+        room = max_trials - trial_count(conn)
+        corpus = corpus_fn(conn, min_score=mine_min_score) if room > 0 else []
+    static = {e.keyword for e in all_entries()}
+    mined = mine_phrases(corpus, exclude=static | tried, limit=room) if corpus else []
+    if mined:
+        with begin(engine) as conn:
+            add_trial_keywords(conn, mined)
+    with engine.connect() as conn:
+        live = live_keywords(conn)
+    stats = {"mined": mined, "keywords_swept": 0, "errors": 0,
+             "candidates_new": 0, "candidates_seen": 0, "promoted": 0, "retired": 0}
+    for kw in live:
+        entry = TaxonomyEntry(kw.keyword, "flywheel", "KEYWORD_EXACT_PHRASE", max_pages)
+        s = asyncio.run(run_sweep(engine, extractor, entries=[entry],
+                                  max_pages=max_pages, kw_delay=kw_delay))
+        if s["keywords_swept"] != 1:                  # throttled — no verdict from this
+            stats["errors"] += 1
+            continue
+        with begin(engine) as conn:
+            status = record_keyword_sweep(conn, kw.id,
+                                          new_candidates=s["candidates_new"])
+        stats["keywords_swept"] += 1
+        stats["candidates_new"] += s["candidates_new"]
+        stats["candidates_seen"] += s["candidates_seen"]
+        if kw.status == "trial" and status == "active":
+            stats["promoted"] += 1
+        elif status == "retired":
+            stats["retired"] += 1
+    return stats
+
+
 def eligible_gem_ids(conn, min_score):
     """Flagged gems (alert + score≥min) — the human-review/enrich set (§3.7)."""
     return [r[0] for r in conn.execute(text(
@@ -186,15 +294,22 @@ def eligible_gem_ids(conn, min_score):
 def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
              sweep_pages=2, kw_delay=3.0, enrich_budget=600, enrich_top_n=5,
              enrich_media_cap=120, enrich_ttl_hours=168, score_after=False,
-             min_score=ALERT_THRESHOLD) -> dict:
+             min_score=ALERT_THRESHOLD, continuous_discovery=False,
+             funnel_daily=True, funnel_pages=3, funnel_confirm_limit=50,
+             flywheel_daily=True, flywheel_pages=2, flywheel_max_trials=20,
+             mine_min_score=40.0) -> dict:
     """One sweep→triage→(score)→enrich pass. Returns a summary dict (no printing).
     http_client is the sweep-scoped httpx.Client for the production triage/enrich path
     (None in a dry-run, which uses offline lookups and the no-network fake deps)."""
-    # 1) breadth-first discovery — daily-gated. Sweep commits per keyword; triage is
-    #    one txn. A dry-run always sweeps (offline) and never records a sweep_runs row.
+    # 1) breadth-first discovery. Default cadence is one finished sweep_runs row per day
+    #    (sweep_ran_today gate); continuous_discovery (AGF_CONTINUOUS_DISCOVERY) bypasses
+    #    that gate so a fresh sweep runs every loop tick — the production setting for
+    #    building out the brand DB. Sweep commits per keyword; triage is one txn. A
+    #    dry-run always sweeps (offline) and never records a sweep_runs row.
     sweep_stats, triage_stats = None, None
     with engine.connect() as conn:
-        sweep_due = dry_run or not sweep_ran_today(conn, as_of)
+        sweep_due = discovery_due(conn, as_of, dry_run=dry_run,
+                                  continuous=continuous_discovery)
     if sweep_due:
         run_id = None
         if not dry_run:
@@ -283,6 +398,56 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
             sleep=(lambda s: None) if dry_run else time.sleep,
             kw_delay=0.0 if dry_run else 2.0))
 
+    # 1.9) funnel pipeline — daily web2app-funnel accrual, sibling to the app sweep
+    #      (HANDOFF-funnel-pipeline roadmap §2). Gated to one finished
+    #      discovery.funnel_sweep_runs row per day, so the continuous loop still hits
+    #      the funnel_phrase keywords once daily. Failures are recorded on the run row
+    #      and must NOT cost the app pipeline the rest of this tick.
+    funnel = None
+    if funnel_daily:
+        with engine.connect() as conn:
+            f_due = funnel_due(conn, as_of, dry_run=dry_run)
+        if f_due:
+            with begin(engine) as conn:
+                f_run_id = open_funnel_sweep_run(conn)
+            try:
+                funnel = run_funnel_stage(engine, extractor, max_pages=funnel_pages,
+                                          kw_delay=kw_delay,
+                                          confirm_limit=funnel_confirm_limit)
+                with begin(engine) as conn:
+                    close_funnel_sweep_run(conn, f_run_id, stats=funnel)
+            except Exception as exc:
+                with begin(engine) as conn:
+                    close_funnel_sweep_run(conn, f_run_id, error=repr(exc))
+                print(f"[worker] funnel stage failed: {exc!r}", file=sys.stderr,
+                      flush=True)
+
+    # 1.95) keyword flywheel — daily self-expansion of the discovery surface: mine
+    #       recurring phrases from scored gems' ad copy into trial keywords, sweep
+    #       every live dynamic keyword shallow, promote earners / retire duds.
+    #       Same isolation contract as the funnel stage: failures land on the run
+    #       row, never on the rest of this tick.
+    flywheel = None
+    if flywheel_daily:
+        with engine.connect() as conn:
+            fw_due = flywheel_due(conn, as_of, dry_run=dry_run)
+        if fw_due:
+            with begin(engine) as conn:
+                fw_run_id = open_flywheel_run(conn)
+            try:
+                flywheel = run_flywheel_stage(engine, extractor,
+                                              max_pages=flywheel_pages,
+                                              kw_delay=kw_delay,
+                                              mine_min_score=mine_min_score,
+                                              max_trials=flywheel_max_trials)
+                with begin(engine) as conn:
+                    close_flywheel_run(conn, fw_run_id, stats=flywheel)
+            except Exception as exc:
+                with begin(engine) as conn:
+                    close_flywheel_run(conn, fw_run_id, error=repr(exc))
+                print(f"[worker] flywheel stage failed: {exc!r}", file=sys.stderr,
+                      flush=True)
+
     # 2) scoring — optional; its own committed txn + CONCURRENT matview refresh
     scored = run_scoring(engine, as_of) if score_after else None
 
@@ -309,7 +474,7 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
                           source=engine, candidate_ids=cand_ids,
                           due_before=due_before, limit=enrich_limit)
     return {"sweep": sweep_stats, "triage": triage_stats,
-            "keeper_history": keeper_history,
+            "keeper_history": keeper_history, "funnel": funnel, "flywheel": flywheel,
             "snapshot_weeks": snapshot_weeks, "apps_refreshed": apps_refreshed,
             "scored": scored, "enrich_candidates": cand_ids, "enriched": enriched}
 
@@ -344,6 +509,14 @@ def _summary_line(s: dict) -> str:
     line = f"[worker] sweep: {sweep_part} kept={kept}"
     if s.get("keeper_history") is not None:
         line += f" hist={s['keeper_history']['keepers_done']}"
+    if s.get("funnel") is not None:
+        fs, fco = s["funnel"]["sweep"], s["funnel"]["confirm"]
+        line += (f" funnel(new={fs['candidates_new']} seen={fs['candidates_seen']} "
+                 f"confirmed={fco['confirmed']}/{fco['examined']})")
+    if s.get("flywheel") is not None:
+        fw = s["flywheel"]
+        line += (f" flywheel(kw={fw['keywords_swept']} mined={len(fw['mined'])} "
+                 f"new={fw['candidates_new']})")
     line += (f" weekly_snapshots={s['snapshot_weeks']} "
             f"apps_refreshed={s.get('apps_refreshed', 0)} "
             f"enriched={len(s['enriched'])}/{len(s['enrich_candidates'])}")
@@ -359,6 +532,10 @@ def main(argv=None) -> None:
     dry_run = _env_bool("AGF_DRY_RUN") or "--dry-run" in argv
     once = dry_run or "--once" in argv
     engine = get_engine()
+    # Continuous discovery is the default: every loop tick runs a fresh keyword sweep
+    # (no once-per-day gate), so the brand DB keeps growing as long as this machine is
+    # awake. Set AGF_CONTINUOUS_DISCOVERY=0 to fall back to the daily-gated cadence.
+    continuous = _env_bool("AGF_CONTINUOUS_DISCOVERY", True)
     cfg = dict(
         sweep_pages=_env_int("AGF_SWEEP_PAGES", 2),
         kw_delay=_env_float("AGF_KW_DELAY", 3.0),
@@ -368,8 +545,18 @@ def main(argv=None) -> None:
         enrich_ttl_hours=_env_int("AGF_ENRICH_TTL_HOURS", 168),
         score_after=_env_bool("AGF_SCORE_AFTER_SWEEP"),
         min_score=_env_float("AGF_MIN_GEM_SCORE", ALERT_THRESHOLD),
+        continuous_discovery=continuous,
+        funnel_daily=_env_bool("AGF_FUNNEL_DAILY", True),
+        funnel_pages=_env_int("AGF_FUNNEL_MAX_PAGES", 3),
+        funnel_confirm_limit=_env_int("AGF_FUNNEL_CONFIRM_LIMIT", 50),
+        flywheel_daily=_env_bool("AGF_FLYWHEEL_DAILY", True),
+        flywheel_pages=_env_int("AGF_FLYWHEEL_MAX_PAGES", 2),
+        flywheel_max_trials=_env_int("AGF_FLYWHEEL_MAX_TRIALS", 20),
+        mine_min_score=_env_float("AGF_MINE_MIN_SCORE", 40.0),
     )
-    interval = _env_int("AGF_SWEEP_INTERVAL_SEC", 3600)
+    # In continuous mode a full taxonomy sweep already takes many minutes (kw_delay ×
+    # 305 keywords), so the inter-sweep sleep is just a short breather, not an hour.
+    interval = _env_int("AGF_SWEEP_INTERVAL_SEC", 60 if continuous else 3600)
     mode = "DRY-RUN (fake extractor, no Meta traffic)" if dry_run else "LIVE"
     print(f"[worker] starting — mode={mode} once={once} caps={cfg}", flush=True)
     _touch_heartbeat()                                # healthy before the first (slow) sweep

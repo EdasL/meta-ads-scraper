@@ -11,7 +11,7 @@ from datetime import date, timedelta
 from sqlalchemy import text
 
 from agf.db.engine import begin
-from agf.workers.main import run_once, build_extractor
+from agf.workers.main import run_once, build_extractor, discovery_due, _env_bool
 
 NOW = 1_749_000_000          # ~2026-06-04, matches tests/discovery/conftest
 FAKE_PAGES = ("FAKE1", "FAKE2")
@@ -106,6 +106,32 @@ def test_dry_run_sweep_triages_and_enriches(_migrated_engine):
         assert missing == 0
     finally:
         _clean_fake(eng)
+
+
+def test_continuous_discovery_is_default_on(monkeypatch):
+    """The brand-DB build setting: AGF_CONTINUOUS_DISCOVERY defaults ON, and an
+    explicit 0/false turns it off — so the worker sweeps every tick unless asked not to."""
+    monkeypatch.delenv("AGF_CONTINUOUS_DISCOVERY", raising=False)
+    assert _env_bool("AGF_CONTINUOUS_DISCOVERY", True) is True
+    monkeypatch.setenv("AGF_CONTINUOUS_DISCOVERY", "0")
+    assert _env_bool("AGF_CONTINUOUS_DISCOVERY", True) is False
+    monkeypatch.setenv("AGF_CONTINUOUS_DISCOVERY", "false")
+    assert _env_bool("AGF_CONTINUOUS_DISCOVERY", True) is False
+
+
+def test_continuous_bypasses_the_daily_gate(pg_conn):
+    """With a finished sweep_runs row for today, the daily gate would normally skip
+    discovery — continuous mode sweeps anyway. Rolled back by the pg_conn fixture."""
+    today = date(2026, 6, 4)
+    pg_conn.execute(text(
+        "INSERT INTO discovery.sweep_runs (started_at, finished_at) "
+        "VALUES (:d, now())"), {"d": today})
+    # daily-gate path: a finished run today suppresses the sweep
+    assert discovery_due(pg_conn, today, dry_run=False, continuous=False) is False
+    # continuous path: sweep runs regardless of the finished run
+    assert discovery_due(pg_conn, today, dry_run=False, continuous=True) is True
+    # dry-runs always sweep (offline)
+    assert discovery_due(pg_conn, today, dry_run=True, continuous=False) is True
 
 
 def test_dry_run_cli_runs_once_and_exits_zero(_migrated_engine):

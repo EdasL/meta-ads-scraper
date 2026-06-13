@@ -1,5 +1,6 @@
 # scripts/run_funnel_confirm.py
-"""Confirm + label the new funnel candidates (render landing -> fingerprint -> verdict).
+"""Confirm + label the new funnel candidates (render landing -> fingerprint + quiz
+probe -> verdict).
 Run (from repo root):
     set -a; . ops/.env; set +a   # AGF_PROXIES for the Meta-side deeplink resolve
     AGF_DATABASE_URL=postgresql://agf:agf@localhost:5433/agf AGF_CONFIRM_LIMIT=20 \
@@ -14,7 +15,7 @@ from sqlalchemy import text
 
 from agf.db.engine import get_engine
 from agf.discovery.funnel_confirm import run_funnel_confirm
-from agf.enrich_full.funnel_capture import render_landing_html
+from agf.enrich_full.funnel_capture import render_and_probe
 from agf.extract.facade import Extractor
 
 
@@ -25,11 +26,11 @@ def main() -> None:
     def resolve(url):
         return asyncio.run(extractor.resolve_deeplink(url)).intent  # -> AppIntent{kind,store_id}
 
-    def render(url):
-        return render_landing_html(url)            # direct; iOS UA + settle (see funnel_capture)
+    def probe(url):
+        return render_and_probe(url)               # direct; iOS UA + settle + quiz click-probe
 
     limit = int(os.environ.get("AGF_CONFIRM_LIMIT", "0")) or None
-    stats = run_funnel_confirm(engine, resolve=resolve, render=render, limit=limit)
+    stats = run_funnel_confirm(engine, resolve=resolve, probe=probe, limit=limit)
     print("confirm:", stats)
     with engine.connect() as conn:
         for r in conn.execute(text(

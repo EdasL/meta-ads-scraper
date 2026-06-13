@@ -9,6 +9,10 @@ def _resolved(kind, store_id=None):
     return SimpleNamespace(kind=kind, store_id=store_id)
 
 
+def _probed(html, quiz_steps=0):
+    return SimpleNamespace(landing_html=html, quiz_steps=quiz_steps)
+
+
 # --- pure classifier ---------------------------------------------------------
 def test_classify_install_from_resolved_store():
     k, s, store, sid, reason = classify_funnel("<html>x</html>", _resolved("ios", "999"))
@@ -25,16 +29,37 @@ def test_classify_subscribe_from_checkout():
     assert (k, s) == ("subscribe", "confirmed")
 
 
-def test_classify_unknown_kept_when_pixel_or_host():
-    k, s, *_ = classify_funnel("fbq('init')", _resolved("web"))
+def test_classify_verified_quiz_confirms_without_tech():
+    k, s, *_ = classify_funnel("<html>nothing</html>", _resolved("web"), quiz_steps=2)
     assert (k, s) == ("unknown", "confirmed")
-    k2, s2, *_ = classify_funnel("<html>nothing</html>", _resolved("web"), funnel_host="quiz.")
-    assert (k2, s2) == ("unknown", "confirmed")
+
+
+def test_classify_pixel_alone_no_longer_confirms():
+    # half the web runs GTM — a pixel without a funnel host or quiz evidence drops
+    k, s, _, _, reason = classify_funnel("fbq('init')", _resolved("web"))
+    assert (k, s, reason) == ("unknown", "dropped", "no_quiz_no_payoff")
+
+
+def test_classify_pixel_plus_funnel_host_confirms():
+    k, s, *_ = classify_funnel("fbq('init')", _resolved("web"), funnel_host="quiz.")
+    assert (k, s) == ("unknown", "confirmed")
+
+
+def test_classify_funnel_host_alone_no_longer_confirms():
+    k, s, _, _, reason = classify_funnel("<html>nothing</html>", _resolved("web"),
+                                         funnel_host="quiz.")
+    assert (k, s, reason) == ("unknown", "dropped", "no_quiz_no_payoff")
+
+
+def test_classify_one_quiz_screen_is_not_enough():
+    k, s, _, _, reason = classify_funnel("<html>nothing</html>", _resolved("web"),
+                                         quiz_steps=1)
+    assert (k, s, reason) == ("unknown", "dropped", "no_quiz_no_payoff")
 
 
 def test_classify_drops_generic_web():
     k, s, store, sid, reason = classify_funnel("<html>just a giftcard shop</html>", _resolved("web"))
-    assert (k, s, reason) == ("unknown", "dropped", "no_funnel_tech")
+    assert (k, s, reason) == ("unknown", "dropped", "no_quiz_no_payoff")
 
 
 # --- orchestrator (fakes; uses the migrated DB only for the candidate rows) ---
@@ -57,24 +82,32 @@ def test_run_funnel_confirm_labels_pool(_migrated_engine):
         upsert_funnel_candidate(conn, {**BASE, "page_id": "FCONF_SUB", "funnel_host": "quiz.",
                                        "landing_url": "https://fconf-sub.io/s",
                                        "landing_domain": "fconf-sub.io"})
+        upsert_funnel_candidate(conn, {**BASE, "page_id": "FCONF_QUIZ", "funnel_host": None,
+                                       "landing_url": "https://fconf-quiz.io/s",
+                                       "landing_domain": "fconf-quiz.io"})
         upsert_funnel_candidate(conn, {**BASE, "page_id": "FCONF_DROP", "funnel_host": None,
                                        "landing_url": "https://fconf-drop.io/s",
                                        "landing_domain": "fconf-drop.io"})
-    RENDER = {"https://fconf-sub.io/s": '<script src="https://js.stripe.com/v3/"></script>fbq("init")',
-              "https://fconf-drop.io/s": "<html>generic</html>"}
+    PROBE = {"https://fconf-sub.io/s":
+                 _probed('<script src="https://js.stripe.com/v3/"></script>fbq("init")'),
+             "https://fconf-quiz.io/s": _probed("<html>a quiz, no tech</html>", quiz_steps=2),
+             "https://fconf-drop.io/s": _probed("<html>generic</html>")}
     def fake_resolve(url):
         return _resolved("web")
-    def fake_render(url):
-        return RENDER[url]
+    def fake_probe(url):
+        return PROBE[url]
     try:
-        stats = run_funnel_confirm(eng, resolve=fake_resolve, render=fake_render,
+        stats = run_funnel_confirm(eng, resolve=fake_resolve, probe=fake_probe,
                                    ids=_ids(eng, "FCONF"))
-        assert stats["confirmed"] >= 1 and stats["dropped"] >= 1
+        assert stats["confirmed"] >= 2 and stats["dropped"] >= 1
         with eng.connect() as c:
-            rows = {r.page_id: (r.kind, r.status) for r in c.execute(text(
-                "SELECT page_id, kind, status FROM discovery.funnel_candidates WHERE page_id LIKE 'FCONF%'")).all()}
-        assert rows["FCONF_SUB"] == ("subscribe", "confirmed")
-        assert rows["FCONF_DROP"][1] == "dropped"
+            rows = {r.page_id: r for r in c.execute(text(
+                "SELECT page_id, kind, status, quiz_steps FROM discovery.funnel_candidates "
+                "WHERE page_id LIKE 'FCONF%'")).all()}
+        assert (rows["FCONF_SUB"].kind, rows["FCONF_SUB"].status) == ("subscribe", "confirmed")
+        assert (rows["FCONF_QUIZ"].kind, rows["FCONF_QUIZ"].status) == ("unknown", "confirmed")
+        assert rows["FCONF_QUIZ"].quiz_steps == 2        # probe evidence persisted
+        assert rows["FCONF_DROP"].status == "dropped"
     finally:
         with eng.begin() as conn:
             conn.execute(text("DELETE FROM discovery.funnel_candidates WHERE page_id LIKE 'FCONF%'"))

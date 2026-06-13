@@ -25,6 +25,26 @@ def test_matched_funnel_host():
     assert fc.matched_funnel_host("https://example.com/x") is None
 
 
+def test_matched_funnel_host_subdomain_hints_are_boundary_anchored():
+    assert fc.matched_funnel_host("https://signup.ruutlabs.com/en/run") == "signup."
+    assert fc.matched_funnel_host("https://api-quiz.betterme.world/x") == "quiz."
+    assert fc.matched_funnel_host("https://automation.quiz.betterme.world/x") == "quiz."
+    # substrings inside a label must NOT match ("go." in "logo.com", "my." in "dummy.")
+    assert fc.matched_funnel_host("https://logo.com/x") is None
+    assert fc.matched_funnel_host("https://dummy.example.com/x") is None
+
+
+def test_matched_funnel_path():
+    assert fc.matched_funnel_path("https://www.noom.com/survey/") == "/survey"
+    assert fc.matched_funnel_path(
+        "https://betterme-pilates.com/generated-questionary-x?flow=2117") == "questionary"
+    assert fc.matched_funnel_path("https://example.com/pricing") is None
+
+
+def test_funnel_signal_from_path_hint():
+    assert fc.funnel_signal(_ad("https://www.noom.com/survey/", cta="NO", body=""), "niche_term") is True
+
+
 def test_funnel_signal_true_paths():
     assert fc.funnel_signal(_ad("https://example.com/p", cta="NO"), "funnel_phrase") is True
     assert fc.funnel_signal(_ad("https://try.example.com/p", cta="NO", body=""), "niche_term") is True

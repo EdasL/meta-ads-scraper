@@ -6,7 +6,10 @@ import hashlib
 import json
 import re
 from contextlib import contextmanager
+from dataclasses import dataclass
 from html import unescape
+from agf.discovery.firehose_fingerprint import detect_signatures
+from agf.discovery.quiz_detect import score_quiz_screen, is_question_screen
 from agf.storage.s3 import put_bytes
 from agf.enrich_full.schemas import ResolvedTarget, PricingExtract, FunnelStep
 
@@ -195,32 +198,161 @@ RENDER_UA = ("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit
              "(KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1")
 
 
+def _settle(p, settle_ms):
+    """Wait for network-idle + a short settle and dismiss the CMP (best-effort)."""
+    if hasattr(p, "wait_for_load_state"):
+        try:
+            p.wait_for_load_state("networkidle", timeout=8_000)
+        except Exception:
+            pass
+    autoconsent_cmp(p)
+    if hasattr(p, "wait_for_timeout"):
+        try:
+            p.wait_for_timeout(settle_ms)
+        except Exception:
+            pass
+
+
+def _content(p) -> str:
+    try:
+        return p.content()
+    except Exception:
+        return ""
+
+
 def render_landing_html(start_url, *, page=None, proxy=None, ua=RENDER_UA,
                         settle_ms=2500, timeout_ms=30_000) -> str:
     """Render a funnel landing page and return its settled DOM HTML — the input to
     firehose_fingerprint.detect_signatures. Renders with an iOS UA (so the app
     smart-banner/MMP/store tells appear), waits for network-idle + a short settle (so the
     GTM-injected pixel/MMP land), and dismisses the CMP. Renders DIRECT by default — the
-    residential proxy is for Meta egress, not landing pages (it times these out). v1 renders
-    the landing page only; answer-aware quiz-stepping to the post-quiz paywall is v2. Pass
+    residential proxy is for Meta egress, not landing pages (it times these out). Pass
     `page` to drive an injected page (tests)."""
     def _go(p):
         p.goto(start_url)
-        if hasattr(p, "wait_for_load_state"):
-            try:
-                p.wait_for_load_state("networkidle", timeout=8_000)
-            except Exception:
-                pass
-        autoconsent_cmp(p)
-        if hasattr(p, "wait_for_timeout"):
-            try:
-                p.wait_for_timeout(settle_ms)
-            except Exception:
-                pass
+        _settle(p, settle_ms)
+        return _content(p)
+    if page is not None:
+        return _go(page)
+    with _playwright_page(proxy, timeout_ms, ua=ua) as p:
+        return _go(p)
+
+
+@dataclass(frozen=True)
+class ProbeResult:
+    """One rendered landing plus the quiz click-probe outcome."""
+    landing_html: str
+    screens: tuple    # rendered HTML of each distinct question screen observed
+    quiz_steps: int   # distinct question screens seen, landing included (0 = no quiz)
+
+
+def _click_text(page, t) -> bool:
+    """Click the element matching an answer text: exact match first, then a first-words
+    substring fallback — option text often carries junk appended by lazy widgets
+    ("Running for men Loading...") that breaks the exact match."""
+    selectors = [f'text="{t}"']
+    words = t.split()
+    if len(words) > 1:
+        selectors.append("text=" + " ".join(words[:3]))
+    for sel in selectors:
         try:
-            return p.content()
+            el = page.query_selector(sel)
         except Exception:
-            return ""
+            el = None
+        if el:
+            try:
+                el.click()
+                return True
+            except Exception:
+                continue
+    return False
+
+
+def _back(page) -> bool:
+    try:
+        page.go_back()
+        return True
+    except Exception:
+        return False
+
+
+# Start-CTA texts for quiz funnels whose landing is a splash screen, not the first
+# question (BetterMe: "Quiz: ..." headline + a lone CONTINUE). Unquoted text= matches
+# case-insensitively as a substring.
+_START_CTA_TEXTS = ("take the quiz", "start quiz", "get started", "continue", "start")
+
+
+def _click_start_cta(page) -> bool:
+    for t in _START_CTA_TEXTS:
+        try:
+            el = page.query_selector(f"text={t}")
+        except Exception:
+            el = None
+        if el:
+            try:
+                el.click()
+                return True
+            except Exception:
+                continue
+    return False
+
+
+def render_and_probe(start_url, *, max_clicks=4, page=None, proxy=None, ua=RENDER_UA,
+                     settle_ms=2500, timeout_ms=30_000) -> ProbeResult:
+    """Render a funnel landing and, when it scores as a question screen, click answers
+    (<= max_clicks total) until a SECOND distinct question screen confirms a real
+    multi-step quiz. An answer that leads off the quiz (e.g. a gender screen-out like
+    femrun's male -> /women-only dead end) is rolled back with history.back() and the
+    next answer is tried. The probe is skipped when the landing already carries a
+    payoff signature (mmp/store/checkout) — classify_funnel confirms those without
+    quiz evidence, so the clicks would be wasted work. Pass `page` to drive an
+    injected page (tests)."""
+    def _go(p):
+        p.goto(start_url)
+        _settle(p, settle_ms)
+        landing = _content(p)
+        screens = [landing]
+        cur = score_quiz_screen(landing)
+        steps = 1 if is_question_screen(cur) else 0
+        payoff = {"mmp", "store", "checkout"} & detect_signatures(landing)
+        clicks_left = 0 if payoff else max_clicks
+        if steps == 0 and clicks_left and cur.quiz_words:
+            # splash landing with quiz copy but no question yet (BetterMe's
+            # "Quiz: ..." headline + lone CONTINUE) — hop the start CTA once
+            if _click_start_cta(p):
+                clicks_left -= 1
+                _settle(p, min(settle_ms, 1500))
+                html = _content(p)
+                nxt = score_quiz_screen(html)
+                if is_question_screen(nxt):
+                    screens.append(html)
+                    steps = 1
+                    cur = nxt
+        while steps == 1 and clicks_left > 0:
+            advanced = False
+            for t in cur.answer_cluster:
+                if clicks_left <= 0:
+                    break
+                if not _click_text(p, t):
+                    continue
+                clicks_left -= 1
+                _settle(p, min(settle_ms, 1500))
+                html = _content(p)
+                nxt = score_quiz_screen(html)
+                if is_question_screen(nxt) and set(nxt.answer_cluster) != set(cur.answer_cluster):
+                    screens.append(html)
+                    steps += 1
+                    cur = nxt
+                    advanced = True
+                    break
+                # dead end / no-op — roll back and try the next answer
+                if not _back(p):
+                    clicks_left = 0
+                    break
+                _settle(p, min(settle_ms, 1500))
+            if not advanced:
+                break
+        return ProbeResult(landing_html=landing, screens=tuple(screens), quiz_steps=steps)
     if page is not None:
         return _go(page)
     with _playwright_page(proxy, timeout_ms, ua=ua) as p:

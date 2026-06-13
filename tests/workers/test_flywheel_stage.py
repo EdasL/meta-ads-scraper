@@ -1,0 +1,109 @@
+"""The worker's daily keyword flywheel — the gate, the trial lifecycle
+(promote/retire policy in db/dynamic_keywords), and run_flywheel_stage end-to-end
+with a fake extractor + injected corpus (zero network). Skips cleanly without
+AGF_TEST_DB_URL."""
+from datetime import date
+
+from sqlalchemy import text
+
+from agf.db.dynamic_keywords import (PROMOTE_MIN_NEW, TRIAL_SWEEPS,
+                                     add_trial_keywords, close_flywheel_run,
+                                     live_keywords, open_flywheel_run,
+                                     record_keyword_sweep, tried_keywords,
+                                     trial_count)
+from agf.workers.main import flywheel_due, run_flywheel_stage
+
+TODAY = date(2026, 6, 4)
+
+
+def test_flywheel_gate_one_finished_run_per_day(pg_conn):
+    assert flywheel_due(pg_conn, TODAY, dry_run=False) is True
+    assert flywheel_due(pg_conn, TODAY, dry_run=True) is False
+    run_id = open_flywheel_run(pg_conn)
+    pg_conn.execute(text(
+        "UPDATE discovery.flywheel_runs SET started_at=:d WHERE id=:i"),
+        {"d": TODAY, "i": run_id})
+    assert flywheel_due(pg_conn, TODAY, dry_run=False) is True   # open run: still due
+    close_flywheel_run(pg_conn, run_id, stats={"mined": []})
+    assert flywheel_due(pg_conn, TODAY, dry_run=False) is False
+
+
+def test_trial_lifecycle_promote_and_retire(pg_conn):
+    add_trial_keywords(pg_conn, ["fw earner", "fw dud"])
+    ids = {r.keyword: r.id for r in live_keywords(pg_conn)
+           if r.keyword in ("fw earner", "fw dud")}
+    # earner: yields PROMOTE_MIN_NEW across the trial -> active at sweep TRIAL_SWEEPS
+    for i in range(TRIAL_SWEEPS):
+        st = record_keyword_sweep(pg_conn, ids["fw earner"],
+                                  new_candidates=PROMOTE_MIN_NEW if i == 0 else 0)
+    assert st == "active"
+    # dud: zero yield through the whole trial -> retired
+    for _ in range(TRIAL_SWEEPS):
+        st = record_keyword_sweep(pg_conn, ids["fw dud"], new_candidates=0)
+    assert st == "retired"
+    # retired keywords leave the daily rotation but stay in the never-re-mint set
+    live = {r.keyword for r in live_keywords(pg_conn)}
+    assert "fw dud" not in live and "fw earner" in live
+    assert "fw dud" in tried_keywords(pg_conn)
+    # an active keyword keeps its status on later sweeps
+    assert record_keyword_sweep(pg_conn, ids["fw earner"], new_candidates=1) == "active"
+
+
+def test_duplicate_mint_is_a_noop(pg_conn):
+    assert add_trial_keywords(pg_conn, ["fw once"]) == 1
+    assert add_trial_keywords(pg_conn, ["fw once"]) == 0
+    assert trial_count(pg_conn) >= 1
+
+
+class _FakeAd:
+    def __init__(self, page_id, store_id):
+        self.page_id = page_id
+        self.page_name = f"Page {page_id}"
+        self.page_like_count = 900
+        self.link_url = f"https://apps.apple.com/us/app/id{store_id}"
+        self.cta_type = "INSTALL_MOBILE_APP"
+        self.start_date = None
+
+
+class _FakeExtractor:
+    """One small app advertiser per searched keyword."""
+    def __init__(self):
+        self.searched = []
+
+    async def search(self, *, query, **kw):
+        self.searched.append(query)
+        return [_FakeAd("FWPAGE1", "777000888")]
+
+
+def test_run_flywheel_stage_mines_sweeps_and_records(_migrated_engine):
+    eng = _migrated_engine
+
+    def _clean():
+        with eng.begin() as conn:
+            conn.execute(text("DELETE FROM discovery.candidates "
+                              "WHERE page_id = 'FWPAGE1'"))
+            conn.execute(text("DELETE FROM discovery.dynamic_keywords "
+                              "WHERE keyword LIKE 'glute sculpt%'"))
+    _clean()
+    try:
+        corpus = [(11, "Try the glute sculpt method that everyone shares."),
+                  (12, "The glute sculpt method works in weeks.")]
+        ex = _FakeExtractor()
+        stats = run_flywheel_stage(eng, ex, max_pages=1, kw_delay=0,
+                                   corpus_fn=lambda conn, min_score: corpus)
+        assert "glute sculpt method" in stats["mined"]
+        assert "glute sculpt method" in ex.searched
+        assert stats["candidates_new"] >= 1            # the fake ad landed in the pool
+        with eng.connect() as conn:
+            kw = conn.execute(text(
+                "SELECT status, sweeps_used, new_candidates_total "
+                "FROM discovery.dynamic_keywords WHERE keyword='glute sculpt method'"
+            )).one()
+            cand = conn.execute(text(
+                "SELECT source_keyword, technique FROM discovery.candidates "
+                "WHERE page_id='FWPAGE1'")).one()
+        assert kw.status == "trial" and kw.sweeps_used == 1
+        assert kw.new_candidates_total >= 1
+        assert cand.technique == "flywheel"
+    finally:
+        _clean()

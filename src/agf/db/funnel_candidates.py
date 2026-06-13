@@ -1,6 +1,8 @@
 """Repo for the web-funnel discovery pool (docs/research/2026-06-11-funnel-discovery-method).
 Sibling to db/candidates.py; append-mostly, conn-first (callers own the txn). A re-seen
 (page_id, landing_domain) bumps times_seen/last_seen/likes and NEVER regresses status."""
+import json
+
 from sqlalchemy import text
 
 _COLS = ("page_id, page_name, page_like_count, landing_url, landing_domain, funnel_host, "
@@ -37,15 +39,39 @@ def new_funnel_candidates(conn, limit: int | None = None):
 
 def mark_funnel_confirmed(conn, candidate_id: int, *, kind: str, status: str,
                           store: str | None = None, store_id: str | None = None,
-                          drop_reason: str | None = None) -> None:
+                          drop_reason: str | None = None,
+                          quiz_steps: int | None = None) -> None:
     """Write the confirm-stage verdict onto a funnel candidate."""
     conn.execute(text("""
         UPDATE discovery.funnel_candidates
            SET kind=:k, status=:s, store=:st, store_id=:sid,
-               drop_reason=:r, confirmed_at=now()
+               drop_reason=:r, quiz_steps=:qs, confirmed_at=now()
          WHERE id=:i
     """), {"k": kind, "s": status, "st": store, "sid": store_id,
-           "r": drop_reason, "i": candidate_id})
+           "r": drop_reason, "qs": quiz_steps, "i": candidate_id})
+
+
+def funnel_sweep_ran_today(conn, as_of) -> bool:
+    """True when a funnel run FINISHED on `as_of` (a crashed run doesn't block the day).
+    Mirrors db/candidates.sweep_ran_today — the worker's daily gate for the funnel stage."""
+    return bool(conn.execute(text(
+        "SELECT EXISTS(SELECT 1 FROM discovery.funnel_sweep_runs "
+        "WHERE started_at::date = :d AND finished_at IS NOT NULL)"),
+        {"d": as_of}).scalar())
+
+
+def open_funnel_sweep_run(conn) -> int:
+    return conn.execute(text(
+        "INSERT INTO discovery.funnel_sweep_runs DEFAULT VALUES RETURNING id")).scalar_one()
+
+
+def close_funnel_sweep_run(conn, run_id: int, *, stats: dict | None = None,
+                           error: str | None = None) -> None:
+    conn.execute(text(
+        "UPDATE discovery.funnel_sweep_runs SET finished_at = now(), "
+        "stats = CAST(:stats AS jsonb), error = :err WHERE id = :id"),
+        {"stats": json.dumps(stats) if stats is not None else None,
+         "err": error, "id": run_id})
 
 
 def cluster_by_domain(conn, min_advertisers: int = 2):
