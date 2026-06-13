@@ -19,24 +19,57 @@ type ShortlistParams struct {
 	MinScore  float64
 	Rising    bool // hide gems whose weekly ad count fell (latest < first)
 	HasFunnel bool // funnel_intent >= 0.5
-	MinAdAge  int  // max_longevity_days >= N; NULL longevity is excluded
-	Sort      string
+	MinAdAge  int    // max_longevity_days >= N; NULL longevity is excluded
+	Sort      string // sort key; see shortlistOrder
+	Dir       string // "asc"/"desc"; "" = the key's natural direction
 	Limit     int
 	Offset    int
 }
 
-// shortlistOrder maps the public sort keys to ORDER BY clauses. Pagination
-// needs a deterministic order, so every key tie-breaks on advertiser_id.
-var shortlistOrder = map[string]string{
-	"gemscore": "gem_score DESC, advertiser_id",
-	"fastest":  "scaling_velocity DESC NULLS LAST, advertiser_id",
-	"newest":   "max_longevity_days ASC NULLS LAST, advertiser_id",
+// shortlistOrder maps the public sort keys to their column, the direction the
+// key means by default, and whether NULLs must be pinned to the end (they stay
+// last in both directions — unknown is never "first").
+var shortlistOrder = map[string]struct {
+	expr     string
+	def      string
+	nullable bool
+}{
+	"gemscore": {"gem_score", "DESC", false},
+	"fastest":  {"scaling_velocity", "DESC", true},
+	"newest":   {"max_longevity_days", "ASC", true},
 }
 
 // ValidSort reports whether s is a known shortlist sort key.
 func ValidSort(s string) bool {
 	_, ok := shortlistOrder[s]
 	return ok
+}
+
+// ValidDir reports whether d is a sort direction ("" = the key's default).
+func ValidDir(d string) bool {
+	return d == "" || d == "asc" || d == "desc"
+}
+
+// orderClause builds the ORDER BY for a sort key and optional direction.
+// Pagination needs a deterministic order, so every clause tie-breaks on
+// advertiser_id.
+func orderClause(sort, dir string) string {
+	c, ok := shortlistOrder[sort]
+	if !ok {
+		c = shortlistOrder["gemscore"] // controller validates; default defensively
+	}
+	d := c.def
+	switch dir {
+	case "asc":
+		d = "ASC"
+	case "desc":
+		d = "DESC"
+	}
+	clause := c.expr + " " + d
+	if c.nullable {
+		clause += " NULLS LAST"
+	}
+	return clause + ", advertiser_id"
 }
 
 // hasDownloadedCreative only surfaces advertisers we can actually show an ad
@@ -102,10 +135,7 @@ func shortlistConds(p ShortlistParams) ([]string, []any) {
 func Shortlist(ctx context.Context, g *gorm.DB, p ShortlistParams) ([]models.ShortlistRow, int, error) {
 	conds, args := shortlistConds(p)
 	where := strings.Join(conds, "\n   AND ")
-	order, ok := shortlistOrder[p.Sort]
-	if !ok {
-		order = shortlistOrder["gemscore"] // controller validates; default defensively
-	}
+	order := orderClause(p.Sort, p.Dir)
 
 	rows := make([]models.ShortlistRow, 0)
 	total := 0

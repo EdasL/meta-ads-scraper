@@ -67,6 +67,10 @@ func (c *ShortlistController) List(ctx *gin.Context) {
 		helpers.Detail(ctx, http.StatusUnprocessableEntity, "bad sort.")
 		return
 	}
+	if p.Dir = ctx.Query("dir"); !repositories.ValidDir(p.Dir) {
+		helpers.Detail(ctx, http.StatusUnprocessableEntity, "bad dir.")
+		return
+	}
 	var err error
 	if p.Limit, err = helpers.QueryInt(ctx, "limit", 50); err != nil || p.Limit < 0 {
 		helpers.Detail(ctx, http.StatusUnprocessableEntity, "bad limit.")

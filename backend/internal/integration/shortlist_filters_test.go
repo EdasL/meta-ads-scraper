@@ -81,6 +81,24 @@ func TestShortlistSorts(t *testing.T) {
 	require.Equal(t, []int{advID, adv2ID, adv3ID}, ids)
 }
 
+func TestShortlistSortDir(t *testing.T) {
+	// dir=asc reverses the default gemscore order.
+	_, ids := listGems(t, url.Values{"dir": {"asc"}})
+	require.Equal(t, []int{adv3ID, adv2ID, advID}, ids)
+
+	// Reversed velocity — NULLs stay last in both directions.
+	_, ids = listGems(t, url.Values{"sort": {"fastest"}, "dir": {"asc"}})
+	require.Equal(t, []int{advID, adv3ID, adv2ID}, ids)
+
+	// Reversed newest = oldest ads first, NULL longevity still last.
+	_, ids = listGems(t, url.Values{"sort": {"newest"}, "dir": {"desc"}})
+	require.Equal(t, []int{advID, adv3ID, adv2ID}, ids)
+
+	// An explicit dir matching the key's natural direction is a no-op.
+	_, ids = listGems(t, url.Values{"sort": {"newest"}, "dir": {"asc"}})
+	require.Equal(t, []int{adv3ID, advID, adv2ID}, ids)
+}
+
 func TestShortlistMinAdAgeAndFunnel(t *testing.T) {
 	_, ids := listGems(t, url.Values{"min_ad_age": {"21"}})
 	require.Equal(t, []int{advID}, ids, "12-day and NULL-age gems excluded")
@@ -103,6 +121,7 @@ func TestShortlistTotalCountWithPagination(t *testing.T) {
 func TestShortlistBadParams(t *testing.T) {
 	for _, q := range []url.Values{
 		{"sort": {"bogus"}},
+		{"dir": {"sideways"}},
 		{"rising": {"banana"}},
 		{"has_funnel": {"2"}},
 		{"min_ad_age": {"abc"}},
@@ -125,7 +144,7 @@ func TestShortlistBadParams(t *testing.T) {
 // Present-but-empty string params mean "no filter", exactly like absent ones —
 // truncated/hand-edited share URLs must not silently empty the feed or 422.
 func TestShortlistEmptyParamsAreNoFilter(t *testing.T) {
-	w, ids := listGems(t, url.Values{"category": {""}, "cohort": {""}, "sort": {""}})
+	w, ids := listGems(t, url.Values{"category": {""}, "cohort": {""}, "sort": {""}, "dir": {""}})
 	require.Equal(t, 200, w.Code)
 	require.Len(t, ids, 3, "empty params filter nothing")
 }
