@@ -12,7 +12,7 @@ import type { CategoryCount, ShortlistSort, SortDir } from "@/types/contracts";
  * Every axis is applied server-side (GET /api/shortlist); this component only
  * edits the filter set.
  */
-export type View = "rising" | "all";
+export type View = "rising" | "all" | "fresh";
 export type Sort = ShortlistSort;
 
 export interface Filters {
@@ -49,6 +49,7 @@ const SORT_LABEL: Record<Sort, string> = {
 const VIEW_LABEL: Record<View, string> = {
   rising: "Rising",
   all: "All",
+  fresh: "Fresh",
 };
 
 const control: React.CSSProperties = {
@@ -64,7 +65,7 @@ const control: React.CSSProperties = {
 function Segmented({ view, onChange }: { view: View; onChange: (v: View) => void }) {
   return (
     <div style={{ display: "inline-flex", border: "1px solid var(--ink)" }}>
-      {(["rising", "all"] as View[]).map((v) => (
+      {(["rising", "all", "fresh"] as View[]).map((v) => (
         <button
           key={v}
           type="button"

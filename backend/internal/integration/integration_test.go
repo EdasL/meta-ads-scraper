@@ -24,7 +24,7 @@ import (
 	"github.com/edaslakavicius/emerging-app-finder/backend/routers"
 )
 
-var advID, adv2ID, adv3ID int
+var advID, adv2ID, adv3ID, adv4ID int
 
 func TestMain(m *testing.M) {
 	dsn := os.Getenv("AGF_IT_DB_URL")
@@ -577,6 +577,26 @@ func seed(g *gorm.DB) {
 		must(g.Exec(`INSERT INTO logging.crawl_log (entity_type, entity_id, crawl_result)
 			VALUES ('ad', ?, 'ok')`, i).Error)
 	}
+
+	// A fourth gem: vetoed ONLY by the 14-day longevity floor (8-day-old ads) but
+	// with a linked app and a healthy score. Migration 124 keeps it in the matview
+	// with incubating=true, so it must be HIDDEN from the default (confirmed) feed
+	// and APPEAR only under incubating=true (the Fresh view).
+	must(g.Raw(`INSERT INTO public.advertisers (page_id, page_name)
+		VALUES ('PAGE4', 'Sprouts') RETURNING id`).Scan(&adv4ID).Error)
+	var app4ID int
+	must(g.Raw(`INSERT INTO public.apps (store, store_id, name, genre, is_emerging)
+		VALUES ('ios', '7777', 'Sprout Habit', 'Health & Fitness', true)
+		RETURNING id`).Scan(&app4ID).Error)
+	var ad5ID int
+	must(g.Raw(`INSERT INTO public.ads (external_ad_id, advertiser_id, app_id)
+		VALUES ('AD5', ?, ?) RETURNING id`, adv4ID, app4ID).Scan(&ad5ID).Error)
+	must(g.Exec(`INSERT INTO public.creatives (ad_id, type, s3_key)
+		VALUES (?, 'image', 'creatives/ad5.jpg')`, ad5ID).Error)
+	must(g.Exec(`INSERT INTO adtech.advertiser_scores
+		(advertiser_id, cohort, gem_score, scaling_velocity, funnel_intent,
+		 active_ad_count, max_longevity_days, alert, vetoed, veto_reason)
+		VALUES (?, 'ios', 66, 0.8, 0.5, 4, 8, false, true, 'longevity_below_floor')`, adv4ID).Error)
 
 	must(g.Exec(`REFRESH MATERIALIZED VIEW frontend.emerging_scaling_apps`).Error)
 

@@ -248,6 +248,8 @@ export interface ShortlistQuery {
   has_funnel?: boolean;
   /** Ads running at least this many days. */
   min_ad_age?: number;
+  /** Fresh view: show ONLY apps held back by the 14-day longevity floor. */
+  incubating?: boolean;
   sort?: ShortlistSort;
   dir?: SortDir;
   limit?: number;

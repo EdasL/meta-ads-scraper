@@ -22,6 +22,7 @@ export function shortlistParams(query: ShortlistQuery): URLSearchParams {
   if (query.rising) params.set("rising", "true");
   if (query.has_funnel) params.set("has_funnel", "true");
   if (query.min_ad_age) params.set("min_ad_age", String(query.min_ad_age));
+  if (query.incubating) params.set("incubating", "true");
   if (query.sort && query.sort !== "gemscore") params.set("sort", query.sort);
   if (query.dir && query.dir !== SORT_DEFAULT_DIR[query.sort ?? "gemscore"]) params.set("dir", query.dir);
   if (query.limit != null) params.set("limit", String(query.limit));

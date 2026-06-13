@@ -110,6 +110,10 @@ type ShortlistRow struct {
 	// (Apple never exposes installs). NULL when no app is linked.
 	Store   *string `json:"store" gorm:"column:store"`
 	StoreID *string `json:"store_id" gorm:"column:store_id"`
+	// Incubating = vetoed ONLY by the 14-day longevity floor (124_emerging_matview_incubating.sql):
+	// a real linked app, healthy score, ads just too young to confirm. These rows
+	// are hidden from the default feed and surfaced by the Fresh cohort instead.
+	Incubating bool `json:"incubating" gorm:"column:incubating"`
 	// Enriched in code after the base matview scan (not scanned directly):
 	// the explainer, the per-advertiser growth summary, and the hero ad
 	// creative for the card. All nullable → JSON null when absent.

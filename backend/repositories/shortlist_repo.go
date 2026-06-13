@@ -20,6 +20,10 @@ type ShortlistParams struct {
 	Rising    bool // hide gems whose weekly ad count fell (latest < first)
 	HasFunnel bool // funnel_intent >= 0.7 (real funnel fingerprint, not has-app baseline)
 	MinAdAge  int    // max_longevity_days >= N; NULL longevity is excluded
+	// Incubating selects the longevity-floored cohort (124_emerging_matview_incubating.sql):
+	// nil → confirmed feed only (incubating=false, the default); true → incubating
+	// only (the Fresh view); false → also confirmed only (explicit).
+	Incubating *bool
 	Sort      string // sort key; see shortlistOrder
 	Dir       string // "asc"/"desc"; "" = the key's natural direction
 	Limit     int
@@ -94,7 +98,7 @@ func likePattern(q string) string {
 // the total count. (The fixed-shape `CAST(? AS text) IS NULL` idiom from the
 // queries.py port doesn't scale to this many optional axes.)
 func shortlistConds(p ShortlistParams) ([]string, []any) {
-	conds := []string{"gem_score >= ?", hasDownloadedCreative}
+	conds := []string{"gem_score >= ?"}
 	args := []any{p.MinScore}
 	if p.Cohort != nil {
 		conds = append(conds, "cohort = ?")
@@ -126,6 +130,16 @@ func shortlistConds(p ShortlistParams) ([]string, []any) {
 	if p.MinAdAge > 0 {
 		conds = append(conds, "max_longevity_days >= ?")
 		args = append(args, p.MinAdAge)
+	}
+	// Default to the confirmed feed; the Fresh view opts into incubating=true.
+	// The confirmed feed also requires a downloaded creative (the comparison row
+	// leads with ad art). The Fresh view is intentionally pre-enrichment —
+	// just-discovered apps have no s3 creative yet, so it renders on store
+	// metadata (icon_url) alone; requiring media there would always show 0.
+	if p.Incubating != nil && *p.Incubating {
+		conds = append(conds, "incubating = true")
+	} else {
+		conds = append(conds, "incubating = false", hasDownloadedCreative)
 	}
 	return conds, args
 }

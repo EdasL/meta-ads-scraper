@@ -52,6 +52,16 @@ func filterParams(ctx *gin.Context) (p repositories.ShortlistParams, ok bool) {
 		helpers.Detail(ctx, http.StatusUnprocessableEntity, "bad min_ad_age.")
 		return p, false
 	}
+	// incubating is tri-state: absent → confirmed feed (the default); present →
+	// parsed as bool so the Fresh view can request incubating=true explicitly.
+	if _, k := ctx.GetQuery("incubating"); k {
+		v, err := helpers.QueryBool(ctx, "incubating", false)
+		if err != nil {
+			helpers.Detail(ctx, http.StatusUnprocessableEntity, "bad incubating.")
+			return p, false
+		}
+		p.Incubating = &v
+	}
 	return p, true
 }
 

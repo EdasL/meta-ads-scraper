@@ -35,7 +35,7 @@ function readUrl(sp: URLSearchParams): { filters: Filters; page: number } {
   const age = num("age");
   return {
     filters: {
-      view: sp.get("view") === "all" ? "all" : "rising",
+      view: sp.get("view") === "all" ? "all" : sp.get("view") === "fresh" ? "fresh" : "rising",
       sort,
       dir: dir === "asc" || dir === "desc" ? dir : SORT_DEFAULT_DIR[sort],
       category: sp.get("category") ?? "",
@@ -94,6 +94,7 @@ export function DiscoverFeed() {
       rising: filters.view === "rising",
       has_funnel: filters.hasFunnel || undefined,
       min_ad_age: filters.minAdAge || undefined,
+      incubating: filters.view === "fresh" || undefined,
       sort: filters.sort,
       dir: filters.dir,
       limit: PAGE_SIZE,
@@ -132,6 +133,7 @@ export function DiscoverFeed() {
       rising: filters.view === "rising",
       has_funnel: filters.hasFunnel || undefined,
       min_ad_age: filters.minAdAge || undefined,
+      incubating: filters.view === "fresh" || undefined,
     }),
     [filters],
   );
@@ -216,7 +218,7 @@ export function DiscoverFeed() {
     <main style={{ maxWidth: 1200, margin: "0 auto", padding: "24px 22px 80px" }}>
       <header style={{ marginBottom: 20 }}>
         <h1 className="t-2xl w-heavy" style={{ margin: 0 }}>
-          {filters.view === "rising" ? "Gems rising now" : "All gems"}
+          {filters.view === "rising" ? "Gems rising now" : filters.view === "fresh" ? "Fresh — under 14 days" : "All gems"}
         </h1>
         <p className="t-sm" aria-live="polite" style={{ color: "var(--muted)", marginTop: 6 }}>
           {error
@@ -225,7 +227,7 @@ export function DiscoverFeed() {
               ? "Loading…"
               : refreshing
                 ? "Updating…"
-                : `${total} ${total === 1 ? "gem" : "gems"} found.${filters.view === "rising" ? " Falling ad counts hidden." : ""}`}
+                : `${total} ${total === 1 ? "gem" : "gems"} found.${filters.view === "rising" ? " Falling ad counts hidden." : filters.view === "fresh" ? " Too new to confirm — ads under 14 days." : ""}`}
         </p>
       </header>
 
@@ -255,6 +257,13 @@ export function DiscoverFeed() {
           <EmptyState
             title="Nothing rising right now"
             hint="Falling ad counts are hidden in this view."
+            ctaLabel="Show all gems"
+            onCta={() => setFilters({ ...filters, view: "all" })}
+          />
+        ) : filters.view === "fresh" ? (
+          <EmptyState
+            title="No fresh gems right now"
+            hint="No apps are inside their first 14 days of ads. Check back as new ones land."
             ctaLabel="Show all gems"
             onCta={() => setFilters({ ...filters, view: "all" })}
           />

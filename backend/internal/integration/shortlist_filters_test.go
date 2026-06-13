@@ -107,6 +107,23 @@ func TestShortlistMinAdAgeAndFunnel(t *testing.T) {
 	require.Equal(t, []int{advID}, ids, "funnel_intent >= 0.7 only (0.5 baseline, 0.2, and NULL excluded)")
 }
 
+// The 14-day longevity floor used to drop fresh apps from the feed entirely.
+// Migration 124 keeps them as an "incubating" cohort: hidden from the default
+// confirmed feed, surfaced only under incubating=true (the Fresh view).
+func TestShortlistIncubatingCohort(t *testing.T) {
+	// Default feed: confirmed only — the longevity-floored gem (adv4ID) is hidden.
+	w, ids := listGems(t, url.Values{})
+	require.Equal(t, 200, w.Code)
+	require.NotContains(t, ids, adv4ID, "incubating gem must not pollute the confirmed feed")
+	require.Equal(t, "3", w.Header().Get("X-Total-Count"))
+
+	// Fresh view: incubating=true returns ONLY the longevity-floored cohort.
+	w, ids = listGems(t, url.Values{"incubating": {"true"}})
+	require.Equal(t, 200, w.Code)
+	require.Equal(t, []int{adv4ID}, ids, "only the incubating gem")
+	require.Equal(t, "1", w.Header().Get("X-Total-Count"))
+}
+
 func TestShortlistTotalCountWithPagination(t *testing.T) {
 	w, ids := listGems(t, url.Values{"limit": {"1"}})
 	require.Equal(t, 200, w.Code)
