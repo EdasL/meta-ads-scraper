@@ -50,6 +50,15 @@ gray-landing.png
 
 # ─── Tooling caches ─────────────────────────────────────
 .firecrawl/
+.next/
+node-compile-cache/
+.playwright-mcp/
+design-review/
+
+# ─── Debug screenshots (repo root) ──────────────────────
+/*.jpeg
+/*.jpg
+/*.png
 
 # ─── Editors / IDE ──────────────────────────────────────
 .idea/
