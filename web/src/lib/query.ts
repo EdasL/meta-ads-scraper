@@ -3,7 +3,7 @@
  * (unit-tested in `query.test.ts`, run with `node --test`). Unset axes and
  * server defaults are omitted so URLs stay short and shareable.
  */
-import type { ShortlistQuery, ShortlistSort, SortDir } from "@/types/contracts";
+import type { ShortlistQuery, ShortlistSort, SortDir, FunnelQuery, FunnelSort } from "@/types/contracts";
 
 /** Each sort key's natural direction — what the server uses when no dir is
  * sent, and what the first click on a table header means. */
@@ -24,6 +24,24 @@ export function shortlistParams(query: ShortlistQuery): URLSearchParams {
   if (query.min_ad_age) params.set("min_ad_age", String(query.min_ad_age));
   if (query.sort && query.sort !== "gemscore") params.set("sort", query.sort);
   if (query.dir && query.dir !== SORT_DEFAULT_DIR[query.sort ?? "gemscore"]) params.set("dir", query.dir);
+  if (query.limit != null) params.set("limit", String(query.limit));
+  if (query.offset) params.set("offset", String(query.offset));
+  return params;
+}
+
+/** Funnels sort keys and their natural directions (mirrors the Go backend). */
+export const FUNNEL_SORT_DEFAULT_DIR: Record<FunnelSort, SortDir> = {
+  newest: "desc",
+  advertisers: "desc",
+  seen: "desc",
+};
+
+export function funnelParams(query: FunnelQuery): URLSearchParams {
+  const params = new URLSearchParams();
+  if (query.q) params.set("q", query.q);
+  if (query.has_quiz) params.set("has_quiz", "true");
+  if (query.sort && query.sort !== "newest") params.set("sort", query.sort);
+  if (query.dir && query.dir !== FUNNEL_SORT_DEFAULT_DIR[query.sort ?? "newest"]) params.set("dir", query.dir);
   if (query.limit != null) params.set("limit", String(query.limit));
   if (query.offset) params.set("offset", String(query.offset));
   return params;

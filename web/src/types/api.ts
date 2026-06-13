@@ -69,6 +69,9 @@ export interface ApiShortlistRow {
   rating_count?: number | null;
   rating?: number | null;
   tagline?: string | null;
+  // Linked app store + id (matview migration 123); picks the traction signal.
+  store?: string | null;
+  store_id?: string | null;
 }
 
 /** `AppReview` (backend models.go) — one recent store review for the app. */

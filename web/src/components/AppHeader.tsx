@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { signOut } from "next-auth/react";
-import { IconBookmark, IconLogout, IconSearch } from "@tabler/icons-react";
+import { IconBookmark, IconFilter, IconLogout, IconSearch } from "@tabler/icons-react";
 import { useSavedList } from "@/lib/useSaved";
 
 export function AppHeader() {
@@ -12,6 +12,7 @@ export function AppHeader() {
 
   const links = [
     { href: "/discover", label: "Discover", Icon: IconSearch },
+    { href: "/funnels", label: "Funnels", Icon: IconFilter },
     { href: "/saved", label: savedCount ? `Saved · ${savedCount}` : "Saved", Icon: IconBookmark },
   ];
 

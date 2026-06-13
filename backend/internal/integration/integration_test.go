@@ -453,7 +453,8 @@ func seed(g *gorm.DB) {
 	must(g.Exec(`TRUNCATE frontend.review_decisions, adtech.app_advertiser_metrics,
 		adtech.ad_metrics, adtech.app_metrics, adtech.advertiser_scores,
 		adtech.advertiser_growth, public.app_reviews, public.creatives, public.funnels,
-		public.ads, public.apps, public.advertisers, public.domains, logging.crawl_log
+		public.ads, public.apps, public.advertisers, public.domains, logging.crawl_log,
+		discovery.funnel_candidates
 		RESTART IDENTITY CASCADE`).Error)
 
 	var domainID int
@@ -578,6 +579,21 @@ func seed(g *gorm.DB) {
 	}
 
 	must(g.Exec(`REFRESH MATERIALIZED VIEW frontend.emerging_scaling_apps`).Error)
+
+	// Funnels (discovery.funnel_candidates) — backs GET /api/funnels, which
+	// groups by landing_domain. Two confirmed pages share getrelatio.com (so the
+	// row reports advertiser_count=2 and has_quiz=true, from the quiz_steps=2
+	// page); spotandtango.com has one. A 'new' and a 'dropped' row must NOT
+	// appear — the endpoint serves confirmed funnels only.
+	must(g.Exec(`INSERT INTO discovery.funnel_candidates
+		(page_id, page_name, landing_url, landing_domain, cta_type, times_seen,
+		 quiz_steps, status, confirmed_at, first_seen_at, last_seen_at)
+		VALUES
+		('FP1','Relatio Ad A','https://quiz.getrelatio.com/start','getrelatio.com','SHOP_NOW',5,2,'confirmed',now(),now()-interval '3 days',now()-interval '1 hour'),
+		('FP2','Relatio Ad B','https://quiz.getrelatio.com/v2','getrelatio.com','LEARN_MORE',3,0,'confirmed',now(),now()-interval '5 days',now()-interval '2 days'),
+		('FP3','Spot & Tango','https://spotandtango.com/lp','spotandtango.com','SIGN_UP',7,0,'confirmed',now(),now()-interval '6 days',now()-interval '6 hours'),
+		('FP4','Pending Page','https://pending.example/x','pending.example',NULL,1,NULL,'new',NULL,now(),now()),
+		('FP5','Dropped Page','https://dropped.example/y','dropped.example',NULL,1,NULL,'dropped',NULL,now(),now())`).Error)
 }
 
 func must(err error) {

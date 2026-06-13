@@ -20,6 +20,7 @@ import (
 // (POST) never conflict.
 func Init(r *gin.Engine) {
 	shortlist := controllers.NewShortlistController()
+	funnels := controllers.NewFunnelsController()
 	gems := controllers.NewGemsController()
 	review := controllers.NewReviewController()
 	saved := controllers.NewSavedGemsController()
@@ -30,6 +31,7 @@ func Init(r *gin.Engine) {
 	{
 		api.GET("/shortlist", shortlist.List)
 		api.GET("/shortlist/categories", shortlist.Categories)
+		api.GET("/funnels", funnels.List)
 		api.GET("/gems/:advertiser_id", gems.Get)
 		api.GET("/gems/:advertiser_id/scaling", gems.Scaling)
 		api.GET("/gems/:advertiser_id/app-metrics", gems.AppMetrics)

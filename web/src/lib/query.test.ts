@@ -4,7 +4,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { shortlistParams } from "./query.ts";
+import { shortlistParams, funnelParams } from "./query.ts";
 
 test("empty query → empty params", () => {
   assert.equal(shortlistParams({}).toString(), "");
@@ -61,4 +61,32 @@ test("limit 0 is still sent (explicit empty page), offset 0 is not", () => {
   const params = shortlistParams({ limit: 0, offset: 0 });
   assert.equal(params.get("limit"), "0");
   assert.equal(params.get("offset"), null);
+});
+
+// ── funnelParams (GET /api/funnels) ──────────────────────────────────────────
+
+test("funnels: empty query → empty params", () => {
+  assert.equal(funnelParams({}).toString(), "");
+});
+
+test("funnels: default sort 'newest' is omitted, non-default is sent", () => {
+  assert.equal(funnelParams({ sort: "newest" }).toString(), "");
+  assert.equal(funnelParams({ sort: "advertisers" }).get("sort"), "advertisers");
+});
+
+test("funnels: has_quiz only serialized when true", () => {
+  assert.equal(funnelParams({ has_quiz: false }).toString(), "");
+  assert.equal(funnelParams({ has_quiz: true }).get("has_quiz"), "true");
+});
+
+test("funnels: reversed dir is sent (all sorts default desc)", () => {
+  assert.equal(funnelParams({ sort: "advertisers", dir: "desc" }).get("dir"), null);
+  assert.equal(funnelParams({ sort: "advertisers", dir: "asc" }).get("dir"), "asc");
+});
+
+test("funnels: search + paging serialize together", () => {
+  const p = funnelParams({ q: "relatio", offset: 24, limit: 24 });
+  assert.equal(p.get("q"), "relatio");
+  assert.equal(p.get("offset"), "24");
+  assert.equal(p.get("limit"), "24");
 });

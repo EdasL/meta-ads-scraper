@@ -39,11 +39,8 @@ export function GemTable({
             <th>Cohort</th>
             <SortHeader id="gemscore" label="GemScore" sort={sort} dir={dir} onSort={onSort} align="right" />
             <SortHeader id="fastest" label="Ads" sort={sort} dir={dir} onSort={onSort} align="right" />
-            <th className="num" title="Play Store installs and the change over the last 28 days">
-              Installs
-            </th>
-            <th className="num" title="Store reviews and the change over the last 28 days">
-              Reviews
+            <th className="num" title="Traction: Play installs for Android apps, store reviews for iOS (Apple never exposes installs) — with the change over the last 28 days">
+              Traction
             </th>
             <SortHeader id="newest" label="First ad" sort={sort} dir={dir} onSort={onSort} />
             <th aria-label="Save" />
@@ -143,10 +140,7 @@ function GemRow({ row, onOpen }: { row: ShortlistRow; onOpen?: (row: ShortlistRo
         />
       </td>
       <td className="num">
-        <MetricCell level={row.installs != null ? compactCount(row.installs) : null} growth={deltaLine(row.installs_delta_28d)} />
-      </td>
-      <td className="num">
-        <MetricCell level={row.rating_count != null ? compactCount(row.rating_count) : null} growth={deltaLine(row.rating_count_delta_28d)} />
+        <TractionCell row={row} />
       </td>
       <td className="t-xs nums" style={{ whiteSpace: "nowrap" }}>
         {monthLabel(row.first_ad_at) ?? "—"}
@@ -155,6 +149,29 @@ function GemRow({ row, onOpen }: { row: ShortlistRow; onOpen?: (row: ShortlistRo
         <SaveToggle row={row} size="sm" />
       </td>
     </tr>
+  );
+}
+
+/** Adaptive traction: Play exposes installs (near-exact), Apple never does, so
+ * iOS rows fall back to review count. The per-row signal label keeps a mixed
+ * iOS/Android feed honest — you always know which number you're reading. When
+ * store is unknown, prefer whichever absolute is present. */
+function TractionCell({ row }: { row: ShortlistRow }) {
+  const useInstalls =
+    row.store === "android" || (row.store == null && row.installs != null);
+  const value = useInstalls ? row.installs : row.rating_count;
+  const delta = useInstalls ? row.installs_delta_28d : row.rating_count_delta_28d;
+  const signal = useInstalls ? "installs" : "reviews";
+  return (
+    <span style={{ display: "inline-flex", flexDirection: "column", alignItems: "flex-end", gap: 2 }}>
+      <span className="nums">{value != null ? compactCount(value) : "—"}</span>
+      {value != null && (
+        <span className="t-xs" style={{ color: "var(--muted)", whiteSpace: "nowrap" }}>
+          {signal}
+          {deltaLine(delta) != null ? ` · ${deltaLine(delta)}` : ""}
+        </span>
+      )}
+    </span>
   );
 }
 

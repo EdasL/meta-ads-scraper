@@ -23,7 +23,8 @@ const mvCols = `advertiser_id, cohort, page_name, app_id, app_name, icon_url, ` 
 	`max_longevity_days, alert, first_count, latest_count, weeks_observed, ` +
 	`pct_change, refreshed_at, first_ad_at, longrun_ad_count, new_ads_4w, ads_seen, ` +
 	`demand, whitespace, niche_keyword, niche_advertiser_count, ` +
-	`installs_delta_28d, rating_count_delta_28d, installs, rating_count, rating, tagline`
+	`installs_delta_28d, rating_count_delta_28d, installs, rating_count, rating, tagline, ` +
+	`store, store_id`
 
 // mvScanRow is the scan target for a matview row: the public ShortlistRow plus
 // the flat growth columns. The growth columns are scanned here (rather than into

@@ -132,6 +132,8 @@ export function adaptShortlistRow(r: ApiShortlistRow, mediaUrl: MediaUrl): Short
     rating_count: r.rating_count ?? undefined,
     rating: r.rating ?? undefined,
     tagline: r.tagline ?? undefined,
+    store: r.store === "ios" ? "ios" : r.store === "android" ? "android" : undefined,
+    store_id: r.store_id ?? undefined,
   };
 }
 

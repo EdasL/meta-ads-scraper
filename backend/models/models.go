@@ -105,6 +105,11 @@ type ShortlistRow struct {
 	Rating      *float64 `json:"rating" gorm:"column:rating"`
 	// First line of the store description, whitespace-collapsed, ≤200 chars.
 	Tagline *string `json:"tagline" gorm:"column:tagline"`
+	// Store + id of the linked app (123_emerging_matview_store.sql). The UI picks
+	// the traction signal per row from store: android → installs, ios → rating_count
+	// (Apple never exposes installs). NULL when no app is linked.
+	Store   *string `json:"store" gorm:"column:store"`
+	StoreID *string `json:"store_id" gorm:"column:store_id"`
 	// Enriched in code after the base matview scan (not scanned directly):
 	// the explainer, the per-advertiser growth summary, and the hero ad
 	// creative for the card. All nullable → JSON null when absent.
@@ -118,6 +123,27 @@ type ShortlistRow struct {
 type CategoryCount struct {
 	Category string `json:"category" gorm:"column:category"`
 	Count    int    `json:"count" gorm:"column:count"`
+}
+
+// FunnelRow is one web-to-app funnel, grouped by landing domain, behind GET
+// /api/funnels. Many advertiser pages can drive the same destination, so the
+// row is the destination: its advertiser_count is the distinct pages pointing
+// at it, and times_seen/first_seen/last_seen are aggregated across them. Only
+// confirmed funnels (a rendered landing page) reach this list. Store/store_id
+// are populated only when the funnel resolved to a known app; usually NULL.
+type FunnelRow struct {
+	LandingDomain    string   `json:"landing_domain" gorm:"column:landing_domain"`
+	AdvertiserCount  int      `json:"advertiser_count" gorm:"column:advertiser_count"`
+	SamplePageName   *string  `json:"sample_page_name" gorm:"column:sample_page_name"`
+	CTAType          *string  `json:"cta_type" gorm:"column:cta_type"`
+	HasQuiz          bool     `json:"has_quiz" gorm:"column:has_quiz"`
+	MaxQuizSteps     *int     `json:"max_quiz_steps" gorm:"column:max_quiz_steps"`
+	TimesSeen        int      `json:"times_seen" gorm:"column:times_seen"`
+	FirstSeenAt      *APITime `json:"first_seen_at" gorm:"column:first_seen_at"`
+	LastSeenAt       *APITime `json:"last_seen_at" gorm:"column:last_seen_at"`
+	SampleLandingURL *string  `json:"sample_landing_url" gorm:"column:sample_landing_url"`
+	Store            *string  `json:"store" gorm:"column:store"`
+	StoreID          *string  `json:"store_id" gorm:"column:store_id"`
 }
 
 // ExplainerInfo is the generated explainer for a gem (adtech.advertiser_explainers).

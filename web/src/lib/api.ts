@@ -1,5 +1,8 @@
 import type {
   CategoryCount,
+  FunnelQuery,
+  FunnelRow,
+  FunnelsPage,
   GemDossier,
   ReviewDecision,
   ReviewQueueRow,
@@ -7,7 +10,7 @@ import type {
   ShortlistPage,
   ShortlistQuery,
 } from "@/types/contracts";
-import { shortlistParams } from "./query";
+import { funnelParams, shortlistParams } from "./query";
 import type {
   ApiAppMetricPoint,
   ApiGemDossier,
@@ -76,6 +79,23 @@ export async function getShortlist(
  * what picking that category would yield. */
 export async function getCategories(query: ShortlistQuery = {}): Promise<CategoryCount[]> {
   return live<CategoryCount[]>(`/shortlist/categories?${shortlistParams(query)}`);
+}
+
+/** Confirmed web-to-app funnels grouped by landing domain — GET /api/funnels.
+ * The wire shape already matches the UI contract (the Go JSON is snake_case
+ * FunnelRow), so no adapter is needed; the all-pages total rides X-Total-Count. */
+export async function getFunnels(
+  query: FunnelQuery = {},
+  signal?: AbortSignal,
+): Promise<FunnelsPage> {
+  const res = await fetch(`${API_BASE}/funnels?${funnelParams(query)}`, {
+    headers: { "Content-Type": "application/json" },
+    signal,
+  });
+  if (!res.ok) throw new Error(`API ${res.status}: ${res.statusText}`);
+  const rows = (await res.json()) as FunnelRow[];
+  const header = Number(res.headers.get("X-Total-Count"));
+  return { rows, total: Number.isFinite(header) && header >= rows.length ? header : rows.length };
 }
 
 export async function getGem(advertiserId: number): Promise<GemDossier | null> {
