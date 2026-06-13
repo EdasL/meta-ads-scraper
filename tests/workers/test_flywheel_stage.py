@@ -89,7 +89,10 @@ def test_run_flywheel_stage_mines_sweeps_and_records(_migrated_engine):
         corpus = [(11, "Try the glute sculpt method that everyone shares."),
                   (12, "The glute sculpt method works in weeks.")]
         ex = _FakeExtractor()
+        # min_advertisers=2 to match this 2-advertiser corpus; we're testing the
+        # mine→sweep→record wiring, not the production default threshold.
         stats = run_flywheel_stage(eng, ex, max_pages=1, kw_delay=0,
+                                   min_advertisers=2,
                                    corpus_fn=lambda conn, min_score: corpus)
         assert "glute sculpt method" in stats["mined"]
         assert "glute sculpt method" in ex.searched
