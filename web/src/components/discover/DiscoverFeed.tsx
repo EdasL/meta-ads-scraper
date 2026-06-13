@@ -6,7 +6,7 @@ import { getCategories, getShortlist } from "@/lib/api";
 import { Fallback } from "@/components/Fallback";
 import { ActivationChecklist, EmptyState, Pagination } from "@/components/ui";
 import { PAGE_SIZE, clampPage } from "@/lib/pagination";
-import { shortlistParams } from "@/lib/query";
+import { SORT_DEFAULT_DIR, shortlistParams } from "@/lib/query";
 import { clearReturnTo, loadReturnTo, saveReturnTo } from "@/lib/returnTo";
 import type { CategoryCount, ShortlistQuery, ShortlistRow } from "@/types/contracts";
 import { GemTable } from "./GemTable";
@@ -29,12 +29,15 @@ function readUrl(sp: URLSearchParams): { filters: Filters; page: number } {
     const n = Number(sp.get(key));
     return Number.isFinite(n) && n > 0 ? Math.trunc(n) : 0;
   };
-  const sort = sp.get("sort");
+  const sortParam = sp.get("sort");
+  const sort = sortParam === "fastest" || sortParam === "newest" ? sortParam : "gemscore";
+  const dir = sp.get("dir");
   const age = num("age");
   return {
     filters: {
       view: sp.get("view") === "all" ? "all" : "rising",
-      sort: sort === "fastest" || sort === "newest" ? sort : "gemscore",
+      sort,
+      dir: dir === "asc" || dir === "desc" ? dir : SORT_DEFAULT_DIR[sort],
       category: sp.get("category") ?? "",
       q: (sp.get("q") ?? "").trim(),
       minScore: Math.min(95, num("score")),
@@ -53,6 +56,7 @@ function writeUrl(f: Filters, page: number): string {
   if (f.q) sp.set("q", f.q);
   if (f.category) sp.set("category", f.category);
   if (f.sort !== "gemscore") sp.set("sort", f.sort);
+  if (f.dir !== SORT_DEFAULT_DIR[f.sort]) sp.set("dir", f.dir);
   if (f.minScore > 0) sp.set("score", String(f.minScore));
   if (f.minAdAge > 0) sp.set("age", String(f.minAdAge));
   if (f.hasFunnel) sp.set("funnel", "1");
@@ -91,6 +95,7 @@ export function DiscoverFeed() {
       has_funnel: filters.hasFunnel || undefined,
       min_ad_age: filters.minAdAge || undefined,
       sort: filters.sort,
+      dir: filters.dir,
       limit: PAGE_SIZE,
       offset: (page - 1) * PAGE_SIZE,
     }),
@@ -272,7 +277,8 @@ export function DiscoverFeed() {
                 <GemTable
                   rows={rows}
                   sort={filters.sort}
-                  onSort={(sort) => setFilters({ ...filters, sort })}
+                  dir={filters.dir}
+                  onSort={(sort, dir) => setFilters({ ...filters, sort, dir })}
                   onOpen={rememberPosition}
                 />
               </div>

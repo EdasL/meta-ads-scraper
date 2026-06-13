@@ -3,7 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import { IconAdjustmentsHorizontal, IconSearch, IconX } from "@tabler/icons-react";
 import { Dropdown } from "@/components/ui";
-import type { CategoryCount, ShortlistSort } from "@/types/contracts";
+import { SORT_DEFAULT_DIR } from "@/lib/query";
+import type { CategoryCount, ShortlistSort, SortDir } from "@/types/contracts";
 
 /**
  * Short, opinionated filter bar (spec §5.1). Default view = "rising"; advanced
@@ -17,6 +18,8 @@ export type Sort = ShortlistSort;
 export interface Filters {
   view: View;
   sort: Sort;
+  /** Sort direction; the table headers cycle natural → reversed → default. */
+  dir: SortDir;
   /** App category — a real store genre from /api/shortlist/categories. */
   category: string;
   /** Search of app and page names. */
@@ -29,6 +32,7 @@ export interface Filters {
 export const DEFAULT_FILTERS: Filters = {
   view: "rising",
   sort: "gemscore",
+  dir: "desc",
   category: "",
   q: "",
   minScore: 0,
@@ -223,7 +227,7 @@ export function FilterRail({
             ariaLabel="Sort"
             value={filters.sort}
             options={(Object.keys(SORT_LABEL) as Sort[]).map((s) => ({ value: s, label: SORT_LABEL[s] }))}
-            onChange={(sort) => set({ sort: sort as Sort })}
+            onChange={(sort) => set({ sort: sort as Sort, dir: SORT_DEFAULT_DIR[sort as Sort] })}
             minWidth={130}
           />
         </label>

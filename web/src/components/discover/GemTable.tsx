@@ -2,9 +2,10 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import type { ShortlistRow, ShortlistSort } from "@/types/contracts";
+import type { ShortlistRow, ShortlistSort, SortDir } from "@/types/contracts";
 import { growthLine, monthLabel } from "@/lib/why";
 import { compactCount } from "@/lib/format";
+import { SORT_DEFAULT_DIR } from "@/lib/query";
 import { AppIcon, SaveToggle, ScoreBadge, Trend } from "@/components/ui";
 
 /**
@@ -12,18 +13,21 @@ import { AppIcon, SaveToggle, ScoreBadge, Trend } from "@/components/ui";
  * side by side so candidates can be compared at a glance. Each metric column
  * pairs the current level with its recent growth — level says how big,
  * growth says how fast. Headers whose metric the server can order by are
- * click-to-sort. Clicking a row opens the dossier; `onOpen` fires first so
- * the feed can remember its position.
+ * click-to-sort: first click orders the key's natural way, second reverses
+ * it, third clears back to the default order. Clicking a row opens the
+ * dossier; `onOpen` fires first so the feed can remember its position.
  */
 export function GemTable({
   rows,
   sort,
+  dir,
   onSort,
   onOpen,
 }: {
   rows: ShortlistRow[];
   sort: ShortlistSort;
-  onSort: (sort: ShortlistSort) => void;
+  dir: SortDir;
+  onSort: (sort: ShortlistSort, dir: SortDir) => void;
   onOpen?: (row: ShortlistRow) => void;
 }) {
   return (
@@ -33,15 +37,15 @@ export function GemTable({
           <tr>
             <th>App</th>
             <th>Cohort</th>
-            <SortHeader id="gemscore" label="GemScore" sort={sort} onSort={onSort} align="right" />
-            <SortHeader id="fastest" label="Ads" sort={sort} onSort={onSort} align="right" />
+            <SortHeader id="gemscore" label="GemScore" sort={sort} dir={dir} onSort={onSort} align="right" />
+            <SortHeader id="fastest" label="Ads" sort={sort} dir={dir} onSort={onSort} align="right" />
             <th className="num" title="Play Store installs and the change over the last 28 days">
               Installs
             </th>
             <th className="num" title="Store reviews and the change over the last 28 days">
               Reviews
             </th>
-            <SortHeader id="newest" label="First ad" sort={sort} onSort={onSort} />
+            <SortHeader id="newest" label="First ad" sort={sort} dir={dir} onSort={onSort} />
             <th aria-label="Save" />
           </tr>
         </thead>
@@ -59,21 +63,37 @@ function SortHeader({
   id,
   label,
   sort,
+  dir,
   onSort,
   align,
 }: {
   id: ShortlistSort;
   label: string;
   sort: ShortlistSort;
-  onSort: (sort: ShortlistSort) => void;
+  dir: SortDir;
+  onSort: (sort: ShortlistSort, dir: SortDir) => void;
   align?: "right";
 }) {
   const active = sort === id;
+  // Natural = the key's own meaning (best score / fastest / newest first),
+  // shown as ▾; reversed shows ▴.
+  const natural = active && dir === SORT_DEFAULT_DIR[id];
+
+  // Click cycle: natural → reversed → back to the default feed order.
+  function cycle() {
+    if (!active) onSort(id, SORT_DEFAULT_DIR[id]);
+    else if (natural) onSort(id, dir === "desc" ? "asc" : "desc");
+    else onSort("gemscore", SORT_DEFAULT_DIR.gemscore);
+  }
+
   return (
-    <th className={align === "right" ? "num" : undefined} aria-sort={active ? "descending" : undefined}>
-      <button type="button" className={`gem-table-sort${active ? " is-active" : ""}`} onClick={() => onSort(id)}>
+    <th
+      className={align === "right" ? "num" : undefined}
+      aria-sort={active ? (natural ? "descending" : "ascending") : undefined}
+    >
+      <button type="button" className={`gem-table-sort${active ? " is-active" : ""}`} onClick={cycle}>
         {label}
-        {active ? " ▾" : ""}
+        {active ? (natural ? " ▾" : " ▴") : ""}
       </button>
     </th>
   );

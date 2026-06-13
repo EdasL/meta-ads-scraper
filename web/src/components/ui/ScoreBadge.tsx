@@ -2,8 +2,9 @@
 
 /**
  * GemScore badge — the real 0-100 score from the matview, nothing derived.
- * `card` = number + "GemScore" caption; `detail` = bordered box with /100;
- * `corner` = small overlay chip for the hero-led card.
+ * `card` = bare colored number for table cells (the column header already
+ * names it); `detail` = bordered box with /100; `corner` = small overlay
+ * chip for the hero-led card.
  *
  * The number is color-stepped so a column of scores scans without reading:
  * 70+ strong (green), 50-69 middling (amber), below 50 plain ink.
@@ -63,9 +64,8 @@ export function ScoreBadge({ score, variant = "card" }: { score: number; variant
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", lineHeight: 1 }}>
-      <span className="t-xl w-heavy nums" style={{ color: scoreColor(n) }}>{n}</span>
-      <span className="eyebrow" style={{ marginTop: 2 }}>GemScore</span>
-    </div>
+    <span className="nums w-strong" title={`GemScore ${n} / 100`} style={{ color: scoreColor(n) }}>
+      {n}
+    </span>
   );
 }

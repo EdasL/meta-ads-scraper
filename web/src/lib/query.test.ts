@@ -40,6 +40,18 @@ test("every active axis is serialized", () => {
   assert.equal(params.get("offset"), "48");
 });
 
+test("dir matching the sort key's natural direction is omitted", () => {
+  assert.equal(shortlistParams({ sort: "gemscore", dir: "desc" }).toString(), "");
+  assert.equal(shortlistParams({ sort: "newest", dir: "asc" }).toString(), "sort=newest");
+});
+
+test("reversed dir is serialized, including against the default sort", () => {
+  assert.equal(shortlistParams({ dir: "asc" }).get("dir"), "asc");
+  const params = shortlistParams({ sort: "newest", dir: "desc" });
+  assert.equal(params.get("sort"), "newest");
+  assert.equal(params.get("dir"), "desc");
+});
+
 test("category with ampersand survives URL encoding round-trip", () => {
   const round = new URLSearchParams(shortlistParams({ category: "Health & Fitness" }).toString());
   assert.equal(round.get("category"), "Health & Fitness");

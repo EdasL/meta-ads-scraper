@@ -229,6 +229,9 @@ export interface ReviewDecision {
 /** Server-side sort keys for the gems feed (validated by the API). */
 export type ShortlistSort = "gemscore" | "fastest" | "newest";
 
+/** Sort direction; omitted means the sort key's natural direction. */
+export type SortDir = "asc" | "desc";
+
 /** Query params for GET /api/shortlist — every filter runs in the backend. */
 export interface ShortlistQuery {
   cohort?: string;
@@ -244,6 +247,7 @@ export interface ShortlistQuery {
   /** Ads running at least this many days. */
   min_ad_age?: number;
   sort?: ShortlistSort;
+  dir?: SortDir;
   limit?: number;
   offset?: number;
 }
