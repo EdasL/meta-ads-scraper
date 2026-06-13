@@ -37,8 +37,12 @@ Env:
   AGF_FUNNEL_MAX_PAGES         SERP pages per funnel keyword         (default 3)
   AGF_FUNNEL_CONFIRM_LIMIT     funnel candidates confirmed per day   (default 50)
   AGF_FLYWHEEL_DAILY           run the daily keyword flywheel        (default 1; 0 disables)
+  AGF_FLYWHEEL_EVERY_SEC        flywheel cadence in seconds           (default 0 = once/day)
   AGF_FLYWHEEL_MAX_PAGES       SERP pages per dynamic keyword        (default 2)
-  AGF_FLYWHEEL_MAX_TRIALS      trial keywords live at once           (default 20)
+  AGF_FLYWHEEL_MAX_TRIALS      trial keywords live at once           (default 40)
+  AGF_FLYWHEEL_TRIAL_SWEEPS     sweeps before a trial gets a verdict  (default 4)
+  AGF_FLYWHEEL_PROMOTE_MIN_NEW  new candidates to promote a trial     (default 3)
+  AGF_MINE_MIN_ADVERTISERS      distinct gems a phrase must span      (default 3)
   AGF_MINE_MIN_SCORE           mine ad copy of gems at/above score   (default 40)
 """
 import asyncio
@@ -52,9 +56,10 @@ from sqlalchemy import text
 
 from agf.db.engine import get_engine, begin
 from agf.db.candidates import (close_sweep_run, kept_advertiser_ids,
-                               open_sweep_run, sweep_ran_today)
-from agf.db.dynamic_keywords import (add_trial_keywords, close_flywheel_run,
-                                     flywheel_ran_today, live_keywords,
+                               open_sweep_run, reap_open_runs, sweep_ran_today)
+from agf.db.dynamic_keywords import (add_trial_keywords, apply_verdicts,
+                                     close_flywheel_run, flywheel_ran_today,
+                                     flywheel_ran_within, live_keywords,
                                      open_flywheel_run, record_keyword_sweep,
                                      tried_keywords, trial_count)
 from agf.db.funnel_candidates import (close_funnel_sweep_run, funnel_sweep_ran_today,
@@ -234,14 +239,21 @@ def run_funnel_stage(engine, extractor, *, max_pages=3, kw_delay=3.0,
 
 
 def flywheel_due(conn, as_of, *, dry_run) -> bool:
-    """Whether this tick runs the keyword flywheel. Once per day (a FINISHED
-    discovery.flywheel_runs row gates the rest of the day); never in a dry-run."""
-    return not dry_run and not flywheel_ran_today(conn, as_of)
+    """Whether this tick runs the keyword flywheel. Never in a dry-run. With
+    AGF_FLYWHEEL_EVERY_SEC set, runs on that interval (several times/day) so the
+    trial pool turns over quickly; otherwise falls back to once-per-calendar-day
+    (a FINISHED discovery.flywheel_runs row gates the rest of the day)."""
+    if dry_run:
+        return False
+    every = _env_int("AGF_FLYWHEEL_EVERY_SEC", 0)
+    if every > 0:
+        return not flywheel_ran_within(conn, every)
+    return not flywheel_ran_today(conn, as_of)
 
 
 # --- keyword flywheel ------------------------------------------------------------
 def run_flywheel_stage(engine, extractor, *, max_pages=2, kw_delay=3.0,
-                       mine_min_score=40.0, max_trials=20,
+                       mine_min_score=40.0, max_trials=40, min_advertisers=3,
                        corpus_fn=fetch_gem_copy) -> dict:
     """One mine+sweep pass of the keyword flywheel: phrases recurring across the ad
     copy of scored gems become trial sweep keywords, every live (trial|active) dynamic
@@ -249,12 +261,18 @@ def run_flywheel_stage(engine, extractor, *, max_pages=2, kw_delay=3.0,
     static taxonomy feeds, and each trial's yield decides its fate (promote/retire —
     policy constants in db/dynamic_keywords). A throttled keyword (search error)
     doesn't burn trial budget. `corpus_fn` is injectable for tests."""
+    # Apply verdicts up front so a lowered AGF_FLYWHEEL_TRIAL_SWEEPS frees the trial
+    # pool on this run (trials already past the threshold promote/retire immediately)
+    # rather than waiting for each to be re-swept.
+    with begin(engine) as conn:
+        apply_verdicts(conn)
     with engine.connect() as conn:
         tried = tried_keywords(conn)
         room = max_trials - trial_count(conn)
         corpus = corpus_fn(conn, min_score=mine_min_score) if room > 0 else []
     static = {e.keyword for e in all_entries()}
-    mined = mine_phrases(corpus, exclude=static | tried, limit=room) if corpus else []
+    mined = mine_phrases(corpus, exclude=static | tried, limit=room,
+                         min_advertisers=min_advertisers) if corpus else []
     if mined:
         with begin(engine) as conn:
             add_trial_keywords(conn, mined)
@@ -296,8 +314,8 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
              enrich_media_cap=120, enrich_ttl_hours=168, score_after=False,
              min_score=ALERT_THRESHOLD, continuous_discovery=False,
              funnel_daily=True, funnel_pages=3, funnel_confirm_limit=50,
-             flywheel_daily=True, flywheel_pages=2, flywheel_max_trials=20,
-             mine_min_score=40.0) -> dict:
+             flywheel_daily=True, flywheel_pages=2, flywheel_max_trials=40,
+             flywheel_min_advertisers=3, mine_min_score=40.0) -> dict:
     """One sweep→triage→(score)→enrich pass. Returns a summary dict (no printing).
     http_client is the sweep-scoped httpx.Client for the production triage/enrich path
     (None in a dry-run, which uses offline lookups and the no-network fake deps)."""
@@ -340,6 +358,7 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
                     close_sweep_run(conn, run_id, sweep=sweep_stats,
                                     triage=triage_stats, error=repr(exc))
             raise
+    _touch_heartbeat()  # sweep is the long stage; prove liveness before the rest
 
     # 1.5) velocity tracker — roll THIS week's active-ad counts into the weekly
     #      app_advertiser_metrics series that build_features/GemScore read. Nothing else
@@ -421,6 +440,7 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
                     close_funnel_sweep_run(conn, f_run_id, error=repr(exc))
                 print(f"[worker] funnel stage failed: {exc!r}", file=sys.stderr,
                       flush=True)
+        _touch_heartbeat()  # funnel renders landing pages — another long, blocking stage
 
     # 1.95) keyword flywheel — daily self-expansion of the discovery surface: mine
     #       recurring phrases from scored gems' ad copy into trial keywords, sweep
@@ -439,7 +459,8 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
                                               max_pages=flywheel_pages,
                                               kw_delay=kw_delay,
                                               mine_min_score=mine_min_score,
-                                              max_trials=flywheel_max_trials)
+                                              max_trials=flywheel_max_trials,
+                                              min_advertisers=flywheel_min_advertisers)
                 with begin(engine) as conn:
                     close_flywheel_run(conn, fw_run_id, stats=flywheel)
             except Exception as exc:
@@ -492,13 +513,17 @@ def _touch_heartbeat() -> None:
 
 
 def _healthcheck() -> int:
-    """Exit 0 iff the worker wrote a heartbeat within 2 sweeps + 5 min — so a hung or
-    crash-looping worker (the old print-and-exit stub failure mode) reads as down."""
+    """Exit 0 iff the worker wrote a heartbeat recently. A full sweep→funnel→enrich
+    cycle can take ~40 min, so the staleness budget must clear one whole cycle plus
+    slack — otherwise a healthy worker mid-sweep reads as down (the original bug).
+    run_once touches the heartbeat at each stage boundary, so a genuinely hung or
+    crash-looping worker still trips this. Tune via AGF_HEALTHCHECK_MAX_STALE_SEC."""
     path = _heartbeat_path()
     interval = _env_int("AGF_SWEEP_INTERVAL_SEC", 3600)
+    max_stale = max(_env_int("AGF_HEALTHCHECK_MAX_STALE_SEC", 3600), 2 * interval + 300)
     if not os.path.exists(path):
         return 1
-    return 0 if (time.time() - os.path.getmtime(path)) < (2 * interval + 300) else 1
+    return 0 if (time.time() - os.path.getmtime(path)) < max_stale else 1
 
 
 def _summary_line(s: dict) -> str:
@@ -532,6 +557,14 @@ def main(argv=None) -> None:
     dry_run = _env_bool("AGF_DRY_RUN") or "--dry-run" in argv
     once = dry_run or "--once" in argv
     engine = get_engine()
+    # Close any run rows orphaned by the previous process (SIGTERM on sleep, crash).
+    # No run survives a restart, so every still-open row is stale — reaping them keeps
+    # the *_ran_today gates and run-table diagnostics honest.
+    if not dry_run:
+        with begin(engine) as conn:
+            reaped = reap_open_runs(conn)
+        if reaped:
+            print(f"[worker] reaped orphaned runs: {reaped}", flush=True)
     # Continuous discovery is the default: every loop tick runs a fresh keyword sweep
     # (no once-per-day gate), so the brand DB keeps growing as long as this machine is
     # awake. Set AGF_CONTINUOUS_DISCOVERY=0 to fall back to the daily-gated cadence.
@@ -551,7 +584,8 @@ def main(argv=None) -> None:
         funnel_confirm_limit=_env_int("AGF_FUNNEL_CONFIRM_LIMIT", 50),
         flywheel_daily=_env_bool("AGF_FLYWHEEL_DAILY", True),
         flywheel_pages=_env_int("AGF_FLYWHEEL_MAX_PAGES", 2),
-        flywheel_max_trials=_env_int("AGF_FLYWHEEL_MAX_TRIALS", 20),
+        flywheel_max_trials=_env_int("AGF_FLYWHEEL_MAX_TRIALS", 40),
+        flywheel_min_advertisers=_env_int("AGF_MINE_MIN_ADVERTISERS", 3),
         mine_min_score=_env_float("AGF_MINE_MIN_SCORE", 40.0),
     )
     # In continuous mode a full taxonomy sweep already takes many minutes (kw_delay ×

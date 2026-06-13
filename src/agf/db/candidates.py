@@ -82,3 +82,24 @@ def close_sweep_run(conn, run_id: int, *, sweep: dict | None = None,
            "kept": triage.get("kept", 0),
            "dropped": sum((triage.get("dropped") or {}).values()),
            "reasons": json.dumps(reasons), "err": error, "id": run_id})
+
+
+def reap_open_runs(conn) -> dict[str, int]:
+    """Close run rows left open by a killed worker (SIGTERM on laptop sleep, crash).
+
+    Called once at worker startup: no run can survive a process restart, so any row
+    still missing finished_at is an orphan from a previous process. Closing them keeps
+    sweep_ran_today/flywheel_ran_today honest (an open row never counts as "ran today",
+    which is correct, but the rows otherwise accumulate forever) and clears the run
+    tables for fresh diagnostics. Idempotent: a second call closes nothing.
+    """
+    reaped: dict[str, int] = {}
+    for table in ("sweep_runs", "funnel_sweep_runs", "flywheel_runs"):
+        n = conn.execute(text(
+            f"UPDATE discovery.{table} SET finished_at = now(), "
+            "error = COALESCE(error, 'reaped: orphaned by worker restart') "
+            "WHERE finished_at IS NULL")).rowcount
+        if n:
+            reaped[table] = n
+    return reaped
+

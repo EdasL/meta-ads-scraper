@@ -3,6 +3,8 @@ regresses, daily-run gate. Rolled-back pg_conn; CANDTEST* sentinels only, and ev
 assertion filters to them (the shared agf_it DB may hold other suites' committed rows)."""
 from datetime import date
 
+from sqlalchemy import text
+
 from agf.db import candidates as cand
 
 ROW = dict(page_id="CANDTEST1", page_name="Cand Test", page_like_count=900,
@@ -63,3 +65,18 @@ def test_sweep_run_gate(pg_conn):
                                 "drops": {"social": 4}},
                          triage={"kept": 1, "dropped": {"game": 1}})
     assert cand.sweep_ran_today(pg_conn, today) is True
+
+
+def test_reap_open_runs_closes_orphans_and_is_idempotent(pg_conn):
+    # A run left open by a killed worker (no close_sweep_run) is an orphan.
+    cand.open_sweep_run(pg_conn)
+    cand.open_sweep_run(pg_conn)
+    reaped = cand.reap_open_runs(pg_conn)
+    assert reaped.get("sweep_runs", 0) >= 2   # >= : shared agf_it DB may hold other open rows
+    # All sweep_runs rows now closed, stamped with the reaper marker.
+    open_rows = pg_conn.execute(text(
+        "SELECT count(*) FROM discovery.sweep_runs WHERE finished_at IS NULL")).scalar()
+    assert open_rows == 0
+    # Second call is a no-op (nothing still open).
+    assert cand.reap_open_runs(pg_conn) == {}
+
