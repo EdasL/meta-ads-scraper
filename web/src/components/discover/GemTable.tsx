@@ -37,6 +37,9 @@ export function GemTable({
           <tr>
             <th>App</th>
             <th>Cohort</th>
+            <th title="The app's ads send traffic to a landing or quiz funnel before the store, detected on its live creatives">
+              Funnel
+            </th>
             <SortHeader id="gemscore" label="GemScore" sort={sort} dir={dir} onSort={onSort} align="right" />
             <SortHeader id="fastest" label="Ads" sort={sort} dir={dir} onSort={onSort} align="right" />
             <th className="num" title="Traction: Play installs for Android apps, store reviews for iOS (Apple never exposes installs) — with the change over the last 28 days">
@@ -130,6 +133,9 @@ function GemRow({ row, onOpen }: { row: ShortlistRow; onOpen?: (row: ShortlistRo
       <td className="t-xs" style={{ color: "var(--muted)" }}>
         {row.cohort}
       </td>
+      <td>
+        <FunnelCell intent={row.funnel_intent} />
+      </td>
       <td className="num">
         <ScoreBadge score={row.gem_score} variant="card" />
       </td>
@@ -150,6 +156,34 @@ function GemRow({ row, onOpen }: { row: ShortlistRow; onOpen?: (row: ShortlistRo
       </td>
     </tr>
   );
+}
+
+/** Whether the app routes ad traffic through a funnel (landing/quiz page)
+ * before the store. funnel_intent blends fingerprint(.50)+cta(.30)+monetize(.20):
+ * a real funnel fingerprint puts it at >= 0.7, while 0.5 is the has-app-but-no-
+ * funnel baseline that ~90% of the feed sits at. Threshold 0.7 so the badge means
+ * a detected funnel, not "has an app". Plain yes/no — the axis feeds GemScore. */
+export const FUNNEL_BADGE_THRESHOLD = 0.7;
+function FunnelCell({ intent }: { intent: number }) {
+  if (intent >= FUNNEL_BADGE_THRESHOLD) {
+    return (
+      <span
+        className="t-xs"
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          padding: "1px 7px",
+          borderRadius: 999,
+          background: "var(--accent-soft, var(--surface-2))",
+          color: "var(--accent-ink, var(--ink))",
+          whiteSpace: "nowrap",
+        }}
+      >
+        Funnel
+      </span>
+    );
+  }
+  return <span className="t-xs" style={{ color: "var(--muted)" }}>—</span>;
 }
 
 /** Adaptive traction: Play exposes installs (near-exact), Apple never does, so

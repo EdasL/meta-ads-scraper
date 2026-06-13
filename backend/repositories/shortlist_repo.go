@@ -18,7 +18,7 @@ type ShortlistParams struct {
 	Q         string  // case-insensitive substring of app_name or page_name
 	MinScore  float64
 	Rising    bool // hide gems whose weekly ad count fell (latest < first)
-	HasFunnel bool // funnel_intent >= 0.5
+	HasFunnel bool // funnel_intent >= 0.7 (real funnel fingerprint, not has-app baseline)
 	MinAdAge  int    // max_longevity_days >= N; NULL longevity is excluded
 	Sort      string // sort key; see shortlistOrder
 	Dir       string // "asc"/"desc"; "" = the key's natural direction
@@ -118,7 +118,10 @@ func shortlistConds(p ShortlistParams) ([]string, []any) {
 		conds = append(conds, "(latest_count IS NULL OR first_count IS NULL OR latest_count >= first_count)")
 	}
 	if p.HasFunnel {
-		conds = append(conds, "funnel_intent >= 0.5")
+		// >= 0.7 = a real funnel fingerprint (landing/quiz on the app's own
+		// creatives). 0.5 is the has-app-no-funnel baseline ~90% of rows sit at,
+		// so the old 0.5 made this filter a no-op. See FI_WEIGHTS in gemscore.py.
+		conds = append(conds, "funnel_intent >= 0.7")
 	}
 	if p.MinAdAge > 0 {
 		conds = append(conds, "max_longevity_days >= ?")

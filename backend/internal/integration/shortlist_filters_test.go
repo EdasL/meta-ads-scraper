@@ -2,7 +2,7 @@
 // Discover filter bar (spec docs/superpowers/specs/2026-06-10-discover-
 // filtering-pagination.md). Seeded gems, by gem_score DESC:
 //
-//	advID  88.5  app "Acme App" (Productivity)   page "Acme Co"  vel 0.7  age 42  funnel 0.5  growth NULL
+//	advID  88.5  app "Acme App" (Productivity)   page "Acme Co"  vel 0.7  age 42  funnel 1.0  growth NULL
 //	adv2ID 75    no app                          page NULL       vel NULL age NULL funnel NULL growth NULL
 //	adv3ID 72    app "Walk Tracker" (H&F)        page "Walkly"   vel 0.9  age 12  funnel 0.2  growth 10→4 (falling)
 package integration
@@ -104,7 +104,7 @@ func TestShortlistMinAdAgeAndFunnel(t *testing.T) {
 	require.Equal(t, []int{advID}, ids, "12-day and NULL-age gems excluded")
 
 	_, ids = listGems(t, url.Values{"has_funnel": {"true"}})
-	require.Equal(t, []int{advID}, ids, "funnel_intent >= 0.5 only (0.2 and NULL excluded)")
+	require.Equal(t, []int{advID}, ids, "funnel_intent >= 0.7 only (0.5 baseline, 0.2, and NULL excluded)")
 }
 
 func TestShortlistTotalCountWithPagination(t *testing.T) {

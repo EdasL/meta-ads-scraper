@@ -528,7 +528,7 @@ func seed(g *gorm.DB) {
 		 active_ad_count, max_longevity_days, alert,
 		 demand, whitespace, niche_keyword, niche_advertiser_count,
 		 installs_delta_28d, rating_count_delta_28d)
-		VALUES (?, 'ios', 88.5, 0.7, 0.6, 0.5, 3, 42, true,
+		VALUES (?, 'ios', 88.5, 0.7, 0.6, 1.0, 3, 42, true,
 		        0.8, 0.9, 'ai calorie tracker', 2, 4000, 28)`, advID).Error)
 	must(g.Exec(`INSERT INTO adtech.advertiser_scores (advertiser_id, cohort, gem_score, alert)
 		VALUES (?, 'ios', 75, false)`, adv2ID).Error)
