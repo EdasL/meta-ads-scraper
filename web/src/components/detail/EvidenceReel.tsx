@@ -4,7 +4,7 @@ import { useState } from "react";
 import { SketchLineChart, type ChartPoint, type ChartTooltipItem } from "@/components/sketch";
 import { trendFromScaling } from "@/lib/why";
 import { adRunLine, creativeMetaLine, monthDayLabel, monthYearLabel } from "@/lib/format";
-import { adLibraryAdUrl, bareDomain, externalHref } from "@/lib/links";
+import { adLibraryAdUrl, adLibraryPageUrl, bareDomain, externalHref } from "@/lib/links";
 import type { Creative, GemDossier } from "@/types/contracts";
 
 /**
@@ -20,7 +20,7 @@ function fmtWeek(iso: string) {
 }
 
 /** How many ad cards render before the "Show all" expander. */
-const INITIAL_ADS = 12;
+const TOP_ADS = 5;
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return <h2 className="t-md w-strong" style={{ margin: "0 0 12px" }}>{children}</h2>;
@@ -275,7 +275,6 @@ export function AdGrowth({ gem }: { gem: GemDossier }) {
 
 /** The collected ads, one card per ad, densest-useful grid. */
 export function AdsSection({ gem }: { gem: GemDossier }) {
-  const [showAll, setShowAll] = useState(false);
   const total = gem.creatives.length;
   const activeCount = gem.creatives.filter((c) => c.ad_active === true).length;
   const endedCount = gem.creatives.filter((c) => c.ad_active === false).length;
@@ -286,7 +285,12 @@ export function AdsSection({ gem }: { gem: GemDossier }) {
   ]
     .filter(Boolean)
     .join(" · ");
-  const visible = showAll ? gem.creatives : gem.creatives.slice(0, INITIAL_ADS);
+  // Active ads first, then ended — show the top few; the Ad Library has the rest.
+  const top = [...gem.creatives].sort(
+    (a, b) => Number(b.ad_active === true) - Number(a.ad_active === true),
+  );
+  const visible = top.slice(0, TOP_ADS);
+  const pageId = gem.company.page_id;
 
   if (total === 0) return null;
 
@@ -301,23 +305,26 @@ export function AdsSection({ gem }: { gem: GemDossier }) {
           <AdCard key={c.id} c={c} />
         ))}
       </div>
-      {total > INITIAL_ADS && (
-        <button
-          type="button"
-          onClick={() => setShowAll((s) => !s)}
+      {total > TOP_ADS && pageId && (
+        <a
+          href={adLibraryPageUrl(pageId)}
+          target="_blank"
+          rel="noreferrer"
           className="font-mono"
           style={{
+            display: "inline-block",
             marginTop: 14,
             padding: "8px 14px",
             fontSize: "var(--fs-xs)",
             border: "1.5px solid var(--ink)",
             background: "transparent",
             color: "var(--ink)",
+            textDecoration: "none",
             cursor: "pointer",
           }}
         >
-          {showAll ? "Show fewer" : `Show all ${total} ads`}
-        </button>
+          See all ads ↗
+        </a>
       )}
     </section>
   );

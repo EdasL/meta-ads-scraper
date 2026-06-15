@@ -20,6 +20,11 @@ export function adLibraryAdUrl(externalAdId: string): string {
   return `https://www.facebook.com/ads/library/?id=${externalAdId}`;
 }
 
+/** The Meta Ad Library page listing EVERY ad a Facebook page runs. */
+export function adLibraryPageUrl(pageId: string): string {
+  return `https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=US&view_all_page_id=${pageId}`;
+}
+
 /** A clickable href for a raw external URL that may arrive without a scheme. */
 export function externalHref(url: string): string {
   return /^https?:\/\//i.test(url) ? url : `https://${url}`;
@@ -63,10 +68,7 @@ export function buildGemLinks(gem: GemDossier): LinkChip[] {
 
   // Ads Library → every active ad this page runs.
   if (pageId) {
-    links.push({
-      label: "Meta Ad Library",
-      href: `https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=US&view_all_page_id=${pageId}`,
-    });
+    links.push({ label: "Meta Ad Library", href: adLibraryPageUrl(pageId) });
   }
 
   return links;
