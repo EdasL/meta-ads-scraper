@@ -24,9 +24,21 @@ def run_worker(name: str, entity_type: str, handler: Callable[..., str], *,
             with source.connect() as conn:
                 due = claim_due(conn, entity_type, candidate_ids, due_before, limit)
             for eid in due:
-                with source.begin() as conn:
-                    results[eid] = handler(conn, eid)
-                    mark_crawled(conn, entity_type, eid, results[eid])
+                try:
+                    with source.begin() as conn:
+                        results[eid] = handler(conn, eid)
+                        mark_crawled(conn, entity_type, eid, results[eid])
+                except Exception as exc:
+                    # One entity's failure (e.g. a Playwright timeout on a dead
+                    # landing) must not abort the rest of the batch. Record the
+                    # error against the entity so its TTL applies and it isn't
+                    # re-claimed on the next tight cycle, then move on.
+                    results[eid] = f"error: {type(exc).__name__}"
+                    try:
+                        with source.begin() as conn:
+                            mark_crawled(conn, entity_type, eid, results[eid])
+                    except Exception:
+                        pass
         else:  # Connection — run inside the caller's transaction via savepoints
             conn = source
             due = claim_due(conn, entity_type, candidate_ids, due_before, limit)

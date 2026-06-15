@@ -300,17 +300,21 @@ def upsert_advertiser_growth(conn, advertiser_id, first_count, latest_count,
            "weeks": weeks_observed, "pct": pct_change})
 
 
-def upsert_funnel(conn, ad_id, landing_url, final_url_after_redirect, screenshot_s3_key) -> None:
+def upsert_funnel(conn, ad_id, landing_url, final_url_after_redirect, screenshot_s3_key,
+                  kind=None, quiz_steps=None) -> None:
     conn.execute(text("""
-        INSERT INTO public.funnels (ad_id, landing_url, final_url_after_redirect, screenshot_s3_key)
-        VALUES (:ad_id, :landing, :final, :shot)
+        INSERT INTO public.funnels
+            (ad_id, landing_url, final_url_after_redirect, screenshot_s3_key, kind, quiz_steps)
+        VALUES (:ad_id, :landing, :final, :shot, :kind, :quiz_steps)
         ON CONFLICT (ad_id) DO UPDATE SET
           landing_url = EXCLUDED.landing_url,
           final_url_after_redirect = EXCLUDED.final_url_after_redirect,
           screenshot_s3_key = EXCLUDED.screenshot_s3_key,
+          kind = EXCLUDED.kind,
+          quiz_steps = EXCLUDED.quiz_steps,
           captured_at = now()
     """), {"ad_id": ad_id, "landing": landing_url, "final": final_url_after_redirect,
-           "shot": screenshot_s3_key})
+           "shot": screenshot_s3_key, "kind": kind, "quiz_steps": quiz_steps})
 
 
 def upsert_advertiser_enrichment(conn, advertiser_id, domain_id=None, parent_company_id=None,

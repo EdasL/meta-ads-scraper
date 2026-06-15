@@ -6,8 +6,64 @@ from agf.extract.deeplink import ResolvedLink
 from agf.db import repo
 from agf.enrich_full.run_enrich import enrich_gem, EnrichDeps
 from tests.enrich_full.conftest import FakeExtractor
-from tests.enrich_full.test_capture_funnel import FakeFunnelPage
 from tests.enrich_full.test_company import FakeWhois, _rec
+
+
+_Q1 = ("<html><body><p>1-min quiz</p><div><button>Male</button>"
+       "<button>Female</button></div></body></html>")
+_Q2 = ("<html><body><p>1-min quiz</p><div><button>Under 30</button>"
+       "<button>30-45</button><button>Over 45</button></div></body></html>")
+
+
+class FakeWebFunnel:
+    """A real quiz→checkout funnel that serves BOTH consumers the web branch drives:
+    render_and_probe (content()/`text=` answer clicks → quiz_steps) AND capture_funnel
+    (url/title/screenshot/`a.cta` step clicks). Confirms at 2 quiz steps."""
+
+    def __init__(self):
+        self.screens = [_Q1, _Q2]
+        self.urls = ["https://getgem.com/quiz", "https://getgem.com/checkout"]
+        self.titles = ["Quiz", "Checkout"]
+        self.i = 0
+        self.history = []
+        self.shots = 0
+
+    def goto(self, url):
+        self.i = self.urls.index(url) if url in self.urls else 0
+
+    @property
+    def url(self): return self.urls[self.i]
+    def title(self): return self.titles[self.i]
+    def content(self): return self.screens[self.i]
+    def go_back(self): self.i = self.history.pop()
+    def wait_for_load_state(self, state, timeout=None): pass
+    def wait_for_timeout(self, ms): pass
+
+    def screenshot(self):
+        self.shots += 1
+        return f"png-{self.i}".encode()
+
+    def query_selector(self, sel):
+        page = self
+        if sel == "a.cta":                       # capture_funnel's next-step CTA
+            if self.i < len(self.urls) - 1:
+                class _Cta:
+                    def click(_s):
+                        page.history.append(page.i)
+                        page.i = min(page.i + 1, len(page.urls) - 1)
+                return _Cta()
+            return None
+        if sel.startswith("text="):              # render_and_probe's answer clicks
+            t = sel[len("text="):].strip('"')
+            if t.lower() not in self.screens[self.i].lower():
+                return None
+            class _El:
+                def click(_s):
+                    if page.i == 0 and t == "Male":
+                        page.history.append(page.i)
+                        page.i = 1
+            return _El()
+        return None                              # CMP / cookie selectors
 
 
 def _ad(ext, link):
@@ -49,8 +105,7 @@ def test_enrich_gem_assembled(pg_conn):
         "https://getgem.com/quiz":
             ResolvedLink("https://getgem.com/quiz", AppIntent("web", None)),
     })
-    page = FakeFunnelPage(["https://getgem.com/quiz", "https://getgem.com/checkout"],
-                          ["Quiz", "Checkout"])
+    page = FakeWebFunnel()
     puts = []
     deps = EnrichDeps(
         extractor=ex, itunes_client=_FakeITunes(),
@@ -75,7 +130,7 @@ def test_enrich_gem_assembled(pg_conn):
     assert res.funnels == 1
     fr = pg_conn.execute(text("SELECT screenshot_s3_key, final_url_after_redirect "
                               "FROM public.funnels WHERE ad_id=:i"), {"i": ad_web}).first()
-    assert fr.screenshot_s3_key and fr.final_url_after_redirect == "https://getgem.com/checkout"
+    assert fr.screenshot_s3_key and fr.final_url_after_redirect == "https://getgem.com/quiz"
     # creative deduped + stored
     assert res.creatives == 1
     # company enrichment backfilled domain_id, tech captured

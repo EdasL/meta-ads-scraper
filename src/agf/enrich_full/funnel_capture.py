@@ -77,29 +77,56 @@ def extract_pricing(html) -> PricingExtract | None:
 
 _CMP_ACCEPT_SELECTORS = (
     "#onetrust-accept-btn-handler",
-    "#CybotCookiebotDialogBodyButtonAccept",
+    "#CybotCookiebotDialogBodyButtonAccept",                       # Cookiebot (simple)
+    "#CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll",      # Cookiebot (multilevel)
+    "#CybotCookiebotDialogBodyButtonAcceptAll",                    # Cookiebot (alt)
     "#accept-recommended-btn-handler",
     ".fc-cta-consent",                       # Google Funding Choices
     "[aria-label='Accept all']",
     "[aria-label='Accept All']",
+    "[aria-label='Allow all']",
     "button[mode='primary']",                # Quantcast
+    ".cmp-btn-accept-all",
+    "button.osano-cm-accept-all",            # Osano
 )
+
+# Visible-text accept buttons — last-resort fallback when no known selector matches.
+_CMP_ACCEPT_TEXTS = ("Accept all", "Accept All", "Allow all", "Allow All",
+                     "Accept all cookies", "I accept", "Got it", "Agree")
 
 
 def autoconsent_cmp(page) -> bool:
-    """Dismiss a cookie/consent banner (selector sweep). True if one was dismissed,
-    False if none present. Best-effort: per-selector errors are swallowed."""
+    """Dismiss a cookie/consent banner. True if one was dismissed, False if none present.
+
+    Clicks carry a SHORT timeout: a detached/stale element default-clicks for the full
+    30s (this is what stalled the enrich batch on consent-walled funnels). Best-effort —
+    per-candidate errors are swallowed."""
+    def _try(el) -> bool:
+        if not el:
+            return False
+        try:
+            if not el.is_visible():
+                return False
+        except Exception:
+            return False
+        try:
+            el.click(timeout=2_500)
+            return True
+        except Exception:
+            return False
+
     for sel in _CMP_ACCEPT_SELECTORS:
         try:
-            el = page.query_selector(sel)
-        except Exception:
-            el = None
-        if el:
-            try:
-                el.click()
+            if _try(page.query_selector(sel)):
                 return True
-            except Exception:
-                continue
+        except Exception:
+            continue
+    for t in _CMP_ACCEPT_TEXTS:
+        try:
+            if _try(page.query_selector(f'text="{t}"')):
+                return True
+        except Exception:
+            continue
     return False
 
 
@@ -199,7 +226,12 @@ RENDER_UA = ("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit
 
 
 def _settle(p, settle_ms):
-    """Wait for network-idle + a short settle and dismiss the CMP (best-effort)."""
+    """Wait for network-idle + a short settle and dismiss the CMP (best-effort).
+
+    The CMP is dismissed twice: once at network-idle, and again after the settle wait.
+    Async consent managers (Cookiebot, OneTrust) often mount their banner AFTER
+    network-idle, so a single early sweep misses them and the banner then occludes the
+    real quiz CTA — which is exactly how consent-walled funnels scored quiz_steps=0."""
     if hasattr(p, "wait_for_load_state"):
         try:
             p.wait_for_load_state("networkidle", timeout=8_000)
@@ -211,6 +243,7 @@ def _settle(p, settle_ms):
             p.wait_for_timeout(settle_ms)
         except Exception:
             pass
+    autoconsent_cmp(p)
 
 
 def _content(p) -> str:

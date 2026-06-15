@@ -28,7 +28,9 @@ class FakePage:
         if sel == "#CybotCookiebotDialogBodyButtonAccept":
             page = self
             class _El:
-                def click(self_inner):
+                def is_visible(self_inner):
+                    return True
+                def click(self_inner, timeout=None):
                     page.consented = True
                     page.log.append("consent")
             return _El()
@@ -45,8 +47,10 @@ def test_render_landing_settles_and_dismisses_cmp_in_order():
     assert html == "<html><body>paywall + fbq</body></html>"
     assert page.consented is True
     assert page.url == "https://quiz.example.com/start"
-    # networkidle BEFORE consent; settle AFTER consent; content captured LAST (settled DOM)
-    assert page.log == ["goto", "wait:networkidle", "consent", "settle:2500", "content"]
+    # networkidle BEFORE consent; settle AFTER consent; content LAST (settled DOM).
+    # CMP is dismissed twice — once at networkidle, once post-settle — to catch
+    # banners (e.g. Cookiebot) that mount late, after the first network-idle.
+    assert page.log == ["goto", "wait:networkidle", "consent", "settle:2500", "consent", "content"]
 
 
 def test_render_ua_default_is_ios():

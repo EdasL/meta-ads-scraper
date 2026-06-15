@@ -45,6 +45,23 @@ def test_classify_pixel_plus_funnel_host_confirms():
     assert (k, s) == ("unknown", "confirmed")
 
 
+def test_classify_pixel_on_bare_homepage_drops():
+    # A pixel on a funnel host but a ROOT path is a homepage, not a funnel —
+    # this is what surfaced calorii.com/ as a fake "Quiz" link. Must drop.
+    k, s, _, _, reason = classify_funnel(
+        "fbq('init')", _resolved("web"), funnel_host="calorii.",
+        funnel_url="https://calorii.com/")
+    assert (k, s, reason) == ("unknown", "dropped", "no_quiz_no_payoff")
+
+
+def test_classify_pixel_on_funnel_path_confirms():
+    # Same pixel + host, but a real funnel path (/quiz) — confirms.
+    k, s, *_ = classify_funnel(
+        "fbq('init')", _resolved("web"), funnel_host="calorii.",
+        funnel_url="https://calorii.com/quiz/start")
+    assert (k, s) == ("unknown", "confirmed")
+
+
 def test_classify_funnel_host_alone_no_longer_confirms():
     k, s, _, _, reason = classify_funnel("<html>nothing</html>", _resolved("web"),
                                          funnel_host="quiz.")

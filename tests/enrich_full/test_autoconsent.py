@@ -3,7 +3,8 @@ from agf.enrich_full.funnel_capture import autoconsent_cmp, _CMP_ACCEPT_SELECTOR
 
 class FakeEl:
     def __init__(self): self.clicked = False
-    def click(self): self.clicked = True
+    def is_visible(self): return True
+    def click(self, timeout=None): self.clicked = True
 
 
 class FakePage:

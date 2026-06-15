@@ -3,14 +3,26 @@
 capture + pricing, download deduped creatives, then company enrichment. conn-first
 (no commit); cross-cutting deps arrive via EnrichDeps (worker adapter §3.9)."""
 import asyncio
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from urllib.parse import urlparse
+
+log = logging.getLogger(__name__)
 from sqlalchemy import text
 from agf.db import repo
 from agf.enrich import emerging_from_release
 from agf.enrich_full.schemas import EnrichResult
-from agf.enrich_full.funnel_capture import resolve_landing, capture_funnel
+from agf.enrich_full.funnel_capture import resolve_landing, capture_funnel, render_and_probe
+from agf.discovery.funnel_confirm import classify_funnel
+from agf.discovery.funnel_classify import SOCIAL_HOSTS
+
+# A funnel landing is never a store or social page. apps.apple.com/play.google.com
+# are the install branch; facebook.com/<page_id> is the advertiser's own page and
+# hangs Playwright for the full timeout. Skip the probe for these hosts entirely.
+STORE_HOSTS = frozenset({"apps.apple.com", "itunes.apple.com", "play.google.com",
+                         "chromewebstore.google.com", "chrome.google.com",
+                         "microsoftedge.microsoft.com", "addons.mozilla.org"})
 from agf.enrich_full.creatives import download_creative, link_duplicate_creative
 from agf.enrich_full.appstore import lookup_itunes_batch, lookup_google_play
 from agf.enrich_full.company import enrich_company
@@ -135,16 +147,42 @@ async def enrich_gem(conn, advertiser_id, *, top_n=5, media_cap=120,
                     company_html = deps.fetch_text(target.final_url)
                 except Exception:
                     company_html = None
-            if deps.capture:
-                # capture_funnel uses Playwright's SYNC API, which cannot run inside an
-                # asyncio loop — offload to a worker thread (mirrors the Plan 2 facade).
-                steps = await asyncio.to_thread(
-                    capture_funnel, target.final_url, page=deps.page, put=deps.put,
-                    s3=deps.s3, proxy=deps.proxy)
-                if steps:
-                    repo.upsert_funnel(conn, ad.id, ad.link_url, steps[-1].url,
-                                       steps[0].screenshot_s3_key)
-                    n_funnels += 1
+            funnel_host = _domain_of(target.final_url)
+            probeable = funnel_host not in SOCIAL_HOSTS and funnel_host not in STORE_HOSTS
+            if deps.capture and probeable:
+                # A web landing is only a FUNNEL if it proves a payoff: a verified
+                # multi-step quiz (>=2 distinct question screens), a checkout/paywall,
+                # or a pixel-tracked paid-traffic page. render_and_probe renders the
+                # landing and click-probes the quiz; classify_funnel turns that into a
+                # verdict. Homepages and deep app-links score 'dropped' and never reach
+                # public.funnels — that ungated upsert was why most "Quiz" links opened
+                # a homepage instead of a quiz. 'install' (store bounce) is handled by
+                # the store branch above, so it's not a funnel here either.
+                # Playwright's SYNC API can't run inside the asyncio loop → offload.
+                try:
+                    probe = await asyncio.to_thread(
+                        render_and_probe, target.final_url, page=deps.page, proxy=deps.proxy)
+                except Exception as e:
+                    probe = None          # a slow/dead landing must not kill the advertiser
+                    # ...but never silently: a swallowed probe means the whole funnel
+                    # stage fails invisibly (e.g. browser launch dying on a bad TMPDIR).
+                    log.warning("funnel probe failed for %s: %s: %s",
+                                target.final_url, type(e).__name__, e)
+                if probe is not None:
+                    kind, status, _store, _sid, _drop = classify_funnel(
+                        probe.landing_html, target,
+                        funnel_host=funnel_host,
+                        quiz_steps=probe.quiz_steps,
+                        funnel_url=target.final_url)
+                    if status == "confirmed" and kind in ("subscribe", "unknown"):
+                        # Confirmed funnel — only now pay for the screenshot capture.
+                        steps = await asyncio.to_thread(
+                            capture_funnel, target.final_url, page=deps.page, put=deps.put,
+                            s3=deps.s3, proxy=deps.proxy)
+                        shot = steps[0].screenshot_s3_key if steps else None
+                        repo.upsert_funnel(conn, ad.id, ad.link_url, target.final_url, shot,
+                                           kind=kind, quiz_steps=probe.quiz_steps)
+                        n_funnels += 1
 
         for ctype, url in (deps.creative_urls or {}).get(str(ad.external_ad_id), []):
             try:                              # fbcdn URLs expire → a dead one mustn't kill the gem
