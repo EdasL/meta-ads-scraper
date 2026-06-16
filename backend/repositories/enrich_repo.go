@@ -22,6 +22,18 @@ func InsertEnrichJob(ctx context.Context, g *gorm.DB, advertiserID int) (int, er
 	return id, err
 }
 
+// MarkEnrichJobError flips a job row to 'error' with a message + finished_at.
+func MarkEnrichJobError(ctx context.Context, g *gorm.DB, jobID int, msg string) error {
+	return db.WithWriteTx(ctx, g, func(tx *gorm.DB) error {
+		return tx.Exec(
+			`UPDATE public.enrich_jobs
+			 SET status='error', error_text=?, finished_at=now()
+			 WHERE id=?`,
+			msg, jobID,
+		).Error
+	})
+}
+
 // LatestEnrichJob returns the most recent job row for an advertiser, or nil.
 func LatestEnrichJob(ctx context.Context, g *gorm.DB, advertiserID int) (*models.EnrichJobRow, error) {
 	var rows []models.EnrichJobRow

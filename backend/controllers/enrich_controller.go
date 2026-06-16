@@ -24,6 +24,9 @@ const enrichTimeout = 180 * time.Second
 var spawnEnrich = func(advertiserID, jobID int) error {
 	script := os.Getenv("AGF_ENRICH_SCRIPT")
 	if script == "" {
+		// Relative path: the Go API's working directory MUST be the repo root
+		// for this to resolve. Set AGF_ENRICH_SCRIPT to an absolute path if the
+		// process is launched from elsewhere (e.g. launchd, a different cwd).
 		script = "scripts/enrich_one.sh"
 	}
 	cmd := exec.Command(script,
@@ -86,10 +89,20 @@ func (c *EnrichController) Trigger(ctx *gin.Context) {
 		return
 	}
 	if err := spawnEnrich(id, jobID); err != nil {
+		// The row was inserted as 'running'; without this it would hang there
+		// until the stale-guard timeout. Flip it to 'error' so the UI sees it.
+		_ = repositories.MarkEnrichJobError(rctx, db.DB(), jobID, "could not launch enrichment")
 		helpers.Detail(ctx, http.StatusInternalServerError, "could not launch enrichment.")
 		return
 	}
-	ctx.JSON(http.StatusAccepted, gin.H{"job_id": jobID, "status": "running"})
+	// Return a consistent EnrichJobOut shape (re-fetch the row we just inserted).
+	row, err := repositories.LatestEnrichJob(rctx, db.DB(), id)
+	if err != nil || row == nil {
+		// Fall back to a minimal but typed shape.
+		ctx.JSON(http.StatusAccepted, models.EnrichJobOut{JobID: jobID, Status: "running", StartedAt: models.APITime(time.Now())})
+		return
+	}
+	ctx.JSON(http.StatusAccepted, toEnrichOut(row))
 }
 
 // Status handles GET /api/enrich/:advertiser_id.
