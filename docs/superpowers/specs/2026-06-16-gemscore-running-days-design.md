@@ -123,15 +123,23 @@ under-radar axis (UR≈0 collapses the gate) and the existing vetoes — not by
 young app with an exploding ad **count** and a single short-lived ad; "incumbent"
 = oldest ad. Under v3 that is backwards, so the corpus is updated to v3 semantics:
 a v3 breakout is an emerging app (low ratings/reach → high UR) that has found
-**multiple proven winners** (several live ads running ≥21 days → high
-`winner_depth`) **and** shows real store traction (seeded install/review velocity
-→ a genuine Demand axis, not the 0.5 floor). Incumbents stay distinguished by
-ratings/reach/installs (UR≈0 + `established_traction`/`relaunch` vetoes), NOT by
-ad age. The property tests (rank/threshold/veto) keep their original intent; only
-the trajectories that feed them are re-labeled. Note: because Demand's exponent
-rose (.20→.38), the corpus MUST seed demand for breakouts or they cannot clear
-`ALERT_THRESHOLD=60` — which is correct, since a v3 gem without install/review
-growth is not a gem.
+**multiple proven winners** — several live ads running ≥21 days → high
+`winner_depth`. Incumbents stay distinguished by ratings/reach (UR≈0 +
+`established_traction`/`relaunch` vetoes), NOT by ad age. The property tests
+(rank/threshold/veto) keep their original intent; only the trajectories that feed
+them are re-labeled.
+
+The backtest does **not** seed `adtech.app_metrics` snapshots, so the Demand axis
+floors to the neutral 0.5 for every member (this has always been true of this
+corpus — demand was never seeded, pre- or post-v3). The result is actually the
+stronger statement: with Demand neutralized, the breakouts still clear
+`ALERT_THRESHOLD=60` (they land ~63, ~10 points above the next non-breakout) on
+the **running-days winner signal alone**. The Demand-axis computation itself
+(install/review velocity from `app_metrics` deltas) is covered by unit tests in
+`tests/scoring/test_build_features.py`; the backtest's job is rank/threshold/veto
+properties, not demand end-to-end. Because Demand's exponent rose (.20→.38), a
+real production gem with genuine install/review growth scores *above* this
+floor-only baseline — flooring is the conservative case.
 
 ### Vetoes
 
