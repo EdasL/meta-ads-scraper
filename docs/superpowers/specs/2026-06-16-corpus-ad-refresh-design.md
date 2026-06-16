@@ -56,9 +56,13 @@ is duplicated.
 ### 2. New selection: the whole corpus
 
 Add `advertisers_with_page(conn) -> list[(advertiser_id, page_id)]`:
-every `public.advertisers` row with a non-null `page_id`, ordered **stalest
-first** (`MAX(ads.last_seen) ASC NULLS FIRST`) so a budget-limited or interrupted
-run refreshes the most-stale advertisers first.
+every `public.advertisers` row with a non-null `page_id` **and at least one stored
+ad** (`JOIN public.ads`), ordered **stalest first** (`MAX(ads.last_seen) ASC`) so a
+budget-limited or interrupted run refreshes the most-stale advertisers first.
+(Refined during implementation: advertisers with **zero** ads have no running-days
+to refresh and are the keeper-backfill's job (`pull_keeper_history`), so the refresh
+target is advertisers-with-ads — exactly the v3-relevant set, and it avoids
+double-processing keepers.)
 
 ### 3. "Trust the listing" vanished-ad flip (user decision 2026-06-16)
 

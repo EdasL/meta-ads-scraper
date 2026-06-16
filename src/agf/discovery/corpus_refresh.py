@@ -11,16 +11,18 @@ from agf.discovery.keeper_history import refresh_one_advertiser
 
 
 def advertisers_with_page(conn) -> list[tuple[int, str]]:
-    """(advertiser_id, page_id) for every advertiser with a non-null page_id, stalest
-    first (their freshest ad's last_seen ascending; NULL = never scraped = first), so a
-    budget-limited or interrupted run refreshes the most-stale advertisers first."""
+    """(advertiser_id, page_id) for every advertiser that has a non-null page_id AND at
+    least one stored ad, stalest first (their freshest ad's last_seen ascending), so a
+    budget-limited or interrupted run refreshes the most-stale advertisers first. This is
+    the refresh target set: advertisers with zero ads have no running-days to refresh and
+    are the keeper-backfill's job (pull_keeper_history), not this one."""
     return [(r[0], r[1]) for r in conn.execute(text("""
         SELECT a.id, a.page_id
         FROM public.advertisers a
         JOIN public.ads ad ON ad.advertiser_id = a.id
         WHERE a.page_id IS NOT NULL
         GROUP BY a.id, a.page_id
-        ORDER BY MAX(ad.last_seen) ASC NULLS FIRST, a.id
+        ORDER BY MAX(ad.last_seen) ASC, a.id
     """)).all()]
 
 

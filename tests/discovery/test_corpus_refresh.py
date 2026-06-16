@@ -108,7 +108,9 @@ def test_refresh_corpus_refreshes_each_and_respects_budget(pg_conn, _migrated_en
     b = repo.upsert_advertiser(pg_conn, SimpleNamespace(page_id="CORPUSREFB", page_name="B", page_like_count=10))
     repo.upsert_ad(pg_conn, make_ad("cr-A1", "CORPUSREFA", "A", "https://x/app"), a, None)
     repo.upsert_ad(pg_conn, make_ad("cr-B1", "CORPUSREFB", "B", "https://x/app"), b, None)
-    pg_conn.execute(text("UPDATE public.ads SET last_seen = now() - interval '9 days' WHERE advertiser_id = :a"), {"a": a})
+    # A is ancient so it is DETERMINISTICALLY the stalest in the shared test DB (the
+    # budget=12 run processes exactly the one stalest advertiser); B is recent.
+    pg_conn.execute(text("UPDATE public.ads SET last_seen = '2000-01-01' WHERE advertiser_id = :a"), {"a": a})
     pg_conn.execute(text("UPDATE public.ads SET last_seen = now() - interval '1 days' WHERE advertiser_id = :b"), {"b": b})
     pg_conn.commit()
 
