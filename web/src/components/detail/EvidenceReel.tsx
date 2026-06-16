@@ -306,22 +306,14 @@ export function AdGrowth({ gem }: { gem: GemDossier }) {
 
 /** The collected ads, one card per ad, densest-useful grid. */
 export function AdsSection({ gem }: { gem: GemDossier }) {
-  const total = gem.creatives.length;
-  const activeCount = gem.creatives.filter((c) => c.ad_active === true).length;
-  const endedCount = gem.creatives.filter((c) => c.ad_active === false).length;
-  const counts = [
-    `${total} ads collected`,
-    activeCount > 0 || endedCount > 0 ? `${activeCount} active now` : null,
-    endedCount > 0 ? `${endedCount} ended` : null,
-  ]
-    .filter(Boolean)
-    .join(" · ");
-  // Backend returns best-first (EU reach, then days running); show the top few —
-  // the Ad Library has the rest.
-  const visible = gem.creatives.slice(0, TOP_ADS);
+  // Focus on the ads that are running now. Backend returns them active-first in
+  // Meta's impressions order, so the top few active ads are the best ones.
+  const activeAds = gem.creatives.filter((c) => c.ad_active === true);
+  const counts = `${activeAds.length} active ad${activeAds.length === 1 ? "" : "s"}`;
+  const visible = activeAds.slice(0, TOP_ADS);
   const pageId = gem.company.page_id;
 
-  if (total === 0) return null;
+  if (activeAds.length === 0) return null;
 
   return (
     <section>
@@ -334,9 +326,9 @@ export function AdsSection({ gem }: { gem: GemDossier }) {
           <AdCard key={c.id} c={c} />
         ))}
       </div>
-      {total > TOP_ADS && pageId && (
+      {activeAds.length > TOP_ADS && pageId && (
         <a
-          href={adLibraryPageUrl(pageId)}
+          href={adLibraryPageUrl(pageId, true)}
           target="_blank"
           rel="noreferrer"
           className="font-mono"
@@ -352,7 +344,7 @@ export function AdsSection({ gem }: { gem: GemDossier }) {
             cursor: "pointer",
           }}
         >
-          See all ads ↗
+          See all active ads ↗
         </a>
       )}
     </section>

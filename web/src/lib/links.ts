@@ -20,9 +20,11 @@ export function adLibraryAdUrl(externalAdId: string): string {
   return `https://www.facebook.com/ads/library/?id=${externalAdId}`;
 }
 
-/** The Meta Ad Library page listing EVERY ad a Facebook page runs. */
-export function adLibraryPageUrl(pageId: string): string {
-  return `https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=US&view_all_page_id=${pageId}`;
+/** The Meta Ad Library page for a Facebook page's ads. `activeOnly` restricts to
+ * the ads running now (matches the dossier's active-only reel). */
+export function adLibraryPageUrl(pageId: string, activeOnly = false): string {
+  const status = activeOnly ? "active" : "all";
+  return `https://www.facebook.com/ads/library/?active_status=${status}&ad_type=all&country=US&view_all_page_id=${pageId}`;
 }
 
 /** A clickable href for a raw external URL that may arrive without a scheme. */
