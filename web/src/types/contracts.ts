@@ -256,8 +256,6 @@ export interface ShortlistQuery {
   /** Case-insensitive substring of the app or page name. */
   q?: string;
   min_score?: number;
-  /** Hide gems whose observed weekly ad count fell. */
-  rising?: boolean;
   /** Real funnel only (funnel_intent >= 0.5). */
   has_funnel?: boolean;
   /** Ads running at least this many days. */

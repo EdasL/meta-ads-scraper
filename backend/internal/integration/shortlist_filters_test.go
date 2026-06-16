@@ -60,13 +60,6 @@ func TestShortlistSearch(t *testing.T) {
 	require.Empty(t, ids, "no name contains a literal percent sign")
 }
 
-func TestShortlistRisingHidesFallingGrowth(t *testing.T) {
-	w, ids := listGems(t, url.Values{"rising": {"true"}})
-	require.Equal(t, 200, w.Code)
-	require.Equal(t, []int{advID, adv2ID}, ids, "falling 10→4 gem hidden; NULL growth kept")
-	require.Equal(t, "2", w.Header().Get("X-Total-Count"))
-}
-
 func TestShortlistSorts(t *testing.T) {
 	// newest = youngest ads first, NULL longevity last.
 	_, ids := listGems(t, url.Values{"sort": {"newest"}})
@@ -139,7 +132,6 @@ func TestShortlistBadParams(t *testing.T) {
 	for _, q := range []url.Values{
 		{"sort": {"bogus"}},
 		{"dir": {"sideways"}},
-		{"rising": {"banana"}},
 		{"has_funnel": {"2"}},
 		{"min_ad_age": {"abc"}},
 		// Negative paging must be a deliberate 422, not a Postgres error → 500.
@@ -198,14 +190,8 @@ func TestShortlistCategories(t *testing.T) {
 // Counts answer "what would the feed hold if I picked this category?" under
 // the CURRENT filters — a dropdown number must match what clicking it yields.
 func TestShortlistCategoriesHonorFilters(t *testing.T) {
-	// rising hides the falling Health & Fitness gem → only Productivity remains.
-	cats := listCategories(t, url.Values{"rising": {"true"}})
-	require.Len(t, cats, 1)
-	require.Equal(t, "Productivity", cats[0]["category"])
-	require.EqualValues(t, 1, cats[0]["count"])
-
 	// q=walk matches only the Health & Fitness gem.
-	cats = listCategories(t, url.Values{"q": {"walk"}})
+	cats := listCategories(t, url.Values{"q": {"walk"}})
 	require.Len(t, cats, 1)
 	require.Equal(t, "Health & Fitness", cats[0]["category"])
 

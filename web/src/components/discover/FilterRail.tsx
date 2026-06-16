@@ -7,16 +7,13 @@ import { SORT_DEFAULT_DIR } from "@/lib/query";
 import type { CategoryCount, ShortlistSort, SortDir } from "@/types/contracts";
 
 /**
- * Short, opinionated filter bar (spec §5.1). Default view = "rising"; advanced
- * axes hidden behind "more filter". ≤6 axes — never an enterprise filter wall.
- * Every axis is applied server-side (GET /api/shortlist); this component only
- * edits the filter set.
+ * Short, opinionated filter bar (spec §5.1). Advanced axes hidden behind "more
+ * filter". ≤6 axes — never an enterprise filter wall. Every axis is applied
+ * server-side (GET /api/shortlist); this component only edits the filter set.
  */
-export type View = "rising" | "all";
 export type Sort = ShortlistSort;
 
 export interface Filters {
-  view: View;
   sort: Sort;
   /** Sort direction; the table headers cycle natural → reversed → default. */
   dir: SortDir;
@@ -30,7 +27,6 @@ export interface Filters {
 }
 
 export const DEFAULT_FILTERS: Filters = {
-  view: "rising",
   sort: "gemscore",
   dir: "desc",
   category: "",
@@ -46,11 +42,6 @@ const SORT_LABEL: Record<Sort, string> = {
   newest: "Newest",
 };
 
-const VIEW_LABEL: Record<View, string> = {
-  rising: "Rising",
-  all: "All",
-};
-
 const control: React.CSSProperties = {
   background: "var(--surface-3)",
   border: "1px solid var(--line)",
@@ -60,31 +51,6 @@ const control: React.CSSProperties = {
   padding: "6px 8px",
   outline: "none",
 };
-
-function Segmented({ view, onChange }: { view: View; onChange: (v: View) => void }) {
-  return (
-    <div style={{ display: "inline-flex", border: "1px solid var(--ink)" }}>
-      {(["rising", "all"] as View[]).map((v) => (
-        <button
-          key={v}
-          type="button"
-          onClick={() => onChange(v)}
-          className="font-mono"
-          style={{
-            cursor: "pointer",
-            border: "none",
-            padding: "6px 12px",
-            fontSize: "var(--fs-xs)",
-            background: view === v ? "var(--ink)" : "transparent",
-            color: view === v ? "var(--bg)" : "var(--ink)",
-          }}
-        >
-          {VIEW_LABEL[v]}
-        </button>
-      ))}
-    </div>
-  );
-}
 
 /**
  * Debounced name search. Local text state keeps typing instant; the committed
@@ -209,8 +175,6 @@ export function FilterRail({
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12 }}>
-        <Segmented view={filters.view} onChange={(v) => set({ view: v })} />
-
         <SearchBox value={filters.q} onCommit={(q) => set({ q })} />
 
         <Dropdown

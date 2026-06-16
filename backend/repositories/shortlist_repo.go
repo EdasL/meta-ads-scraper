@@ -17,7 +17,6 @@ type ShortlistParams struct {
 	Category  *string // public.apps.genre, reached through the matview's app_id
 	Q         string  // case-insensitive substring of app_name or page_name
 	MinScore  float64
-	Rising    bool // hide gems whose weekly ad count fell (latest < first)
 	HasFunnel bool // funnel_intent >= 0.7 (real funnel fingerprint, not has-app baseline)
 	MinAdAge  int    // max_longevity_days >= N; NULL longevity is excluded
 	// Incubating selects the longevity-floored cohort (124_emerging_matview_incubating.sql):
@@ -104,11 +103,6 @@ func shortlistConds(p ShortlistParams) ([]string, []any) {
 		pat := likePattern(p.Q)
 		conds = append(conds, "(app_name ILIKE ? OR page_name ILIKE ?)")
 		args = append(args, pat, pat)
-	}
-	if p.Rising {
-		// Mirrors the product rule the client used to apply: a gem only counts
-		// as falling when its growth series exists and latest < first.
-		conds = append(conds, "(latest_count IS NULL OR first_count IS NULL OR latest_count >= first_count)")
 	}
 	if p.HasFunnel {
 		// >= 0.7 = a real funnel fingerprint (landing/quiz on the app's own

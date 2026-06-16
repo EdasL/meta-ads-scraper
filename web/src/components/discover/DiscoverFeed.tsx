@@ -35,7 +35,6 @@ function readUrl(sp: URLSearchParams): { filters: Filters; page: number } {
   const age = num("age");
   return {
     filters: {
-      view: sp.get("view") === "all" ? "all" : "rising",
       sort,
       dir: dir === "asc" || dir === "desc" ? dir : SORT_DEFAULT_DIR[sort],
       category: sp.get("category") ?? "",
@@ -52,7 +51,6 @@ function readUrl(sp: URLSearchParams): { filters: Filters; page: number } {
 
 function writeUrl(f: Filters, page: number): string {
   const sp = new URLSearchParams();
-  if (f.view !== "rising") sp.set("view", f.view);
   if (f.q) sp.set("q", f.q);
   if (f.category) sp.set("category", f.category);
   if (f.sort !== "gemscore") sp.set("sort", f.sort);
@@ -91,7 +89,6 @@ export function DiscoverFeed() {
       category: filters.category || undefined,
       q: filters.q || undefined,
       min_score: filters.minScore || undefined,
-      rising: filters.view === "rising",
       has_funnel: filters.hasFunnel || undefined,
       min_ad_age: filters.minAdAge || undefined,
       sort: filters.sort,
@@ -129,7 +126,6 @@ export function DiscoverFeed() {
     () => ({
       q: filters.q || undefined,
       min_score: filters.minScore || undefined,
-      rising: filters.view === "rising",
       has_funnel: filters.hasFunnel || undefined,
       min_ad_age: filters.minAdAge || undefined,
     }),
@@ -187,8 +183,7 @@ export function DiscoverFeed() {
     setReload((n) => n + 1);
   };
 
-  // Only filters that can NARROW the result set (view=all is broader than the
-  // rising default, and sort never changes the count).
+  // Only filters that can NARROW the result set (sort never changes the count).
   const narrowed =
     !!filters.category || !!filters.q || filters.minScore > 0 || filters.hasFunnel || filters.minAdAge > 0;
 
@@ -216,7 +211,7 @@ export function DiscoverFeed() {
     <main style={{ maxWidth: 1200, margin: "0 auto", padding: "24px 22px 80px" }}>
       <header style={{ marginBottom: 20 }}>
         <h1 className="t-2xl w-heavy" style={{ margin: 0 }}>
-          {filters.view === "rising" ? "Gems rising now" : "All gems"}
+          Gems
         </h1>
         <p className="t-sm" aria-live="polite" style={{ color: "var(--muted)", marginTop: 6 }}>
           {error
@@ -225,7 +220,7 @@ export function DiscoverFeed() {
               ? "Loading…"
               : refreshing
                 ? "Updating…"
-                : `${total} ${total === 1 ? "gem" : "gems"} found.${filters.view === "rising" ? " Falling ad counts hidden." : ""}`}
+                : `${total} ${total === 1 ? "gem" : "gems"} found.`}
         </p>
       </header>
 
@@ -251,13 +246,6 @@ export function DiscoverFeed() {
       ) : fresh && total === 0 ? (
         narrowed ? (
           <EmptyState title="Nothing matches" hint="Filters are too tight. Loosen them." ctaLabel="Reset" onCta={() => setFilters(DEFAULT_FILTERS)} />
-        ) : filters.view === "rising" ? (
-          <EmptyState
-            title="Nothing rising right now"
-            hint="Falling ad counts are hidden in this view."
-            ctaLabel="Show all gems"
-            onCta={() => setFilters({ ...filters, view: "all" })}
-          />
         ) : (
           <EmptyState
             title="No gems yet"

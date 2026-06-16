@@ -12,7 +12,7 @@ test("empty query → empty params", () => {
 
 test("defaults are omitted", () => {
   assert.equal(
-    shortlistParams({ sort: "gemscore", min_score: 0, min_ad_age: 0, offset: 0, rising: false, has_funnel: false }).toString(),
+    shortlistParams({ sort: "gemscore", min_score: 0, min_ad_age: 0, offset: 0, has_funnel: false }).toString(),
     "",
   );
 });
@@ -22,7 +22,6 @@ test("every active axis is serialized", () => {
     category: "Health & Fitness",
     q: "walk",
     min_score: 40,
-    rising: true,
     has_funnel: true,
     min_ad_age: 21,
     sort: "newest",
@@ -32,7 +31,6 @@ test("every active axis is serialized", () => {
   assert.equal(params.get("category"), "Health & Fitness");
   assert.equal(params.get("q"), "walk");
   assert.equal(params.get("min_score"), "40");
-  assert.equal(params.get("rising"), "true");
   assert.equal(params.get("has_funnel"), "true");
   assert.equal(params.get("min_ad_age"), "21");
   assert.equal(params.get("sort"), "newest");

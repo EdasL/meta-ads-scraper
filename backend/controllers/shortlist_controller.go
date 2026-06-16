@@ -40,10 +40,6 @@ func filterParams(ctx *gin.Context) (p repositories.ShortlistParams, ok bool) {
 		helpers.Detail(ctx, http.StatusUnprocessableEntity, "bad min_score.")
 		return p, false
 	}
-	if p.Rising, err = helpers.QueryBool(ctx, "rising", false); err != nil {
-		helpers.Detail(ctx, http.StatusUnprocessableEntity, "bad rising.")
-		return p, false
-	}
 	if p.HasFunnel, err = helpers.QueryBool(ctx, "has_funnel", false); err != nil {
 		helpers.Detail(ctx, http.StatusUnprocessableEntity, "bad has_funnel.")
 		return p, false

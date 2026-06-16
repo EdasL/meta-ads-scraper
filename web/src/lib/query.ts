@@ -19,7 +19,6 @@ export function shortlistParams(query: ShortlistQuery): URLSearchParams {
   if (query.category) params.set("category", query.category);
   if (query.q) params.set("q", query.q);
   if (query.min_score) params.set("min_score", String(query.min_score));
-  if (query.rising) params.set("rising", "true");
   if (query.has_funnel) params.set("has_funnel", "true");
   if (query.min_ad_age) params.set("min_ad_age", String(query.min_ad_age));
   if (query.incubating) params.set("incubating", "true");

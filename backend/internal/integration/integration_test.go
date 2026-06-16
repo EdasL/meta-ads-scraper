@@ -582,8 +582,7 @@ func seed(g *gorm.DB) {
 		VALUES (?, 'image', 'creatives/ad2.jpg')`, ad2ID).Error)
 
 	// A third gem exercising the filter axes: a Health & Fitness app, fast
-	// velocity, young ads (12 days), weak funnel intent, and a FALLING growth
-	// series (10 → 4) so `rising=true` hides it.
+	// velocity, young ads (12 days), and weak funnel intent.
 	must(g.Raw(`INSERT INTO public.advertisers (page_id, page_name)
 		VALUES ('PAGE3', 'Walkly') RETURNING id`).Scan(&adv3ID).Error)
 	var app3ID int
