@@ -31,6 +31,11 @@ import {
  */
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api";
 
+// Optional bearer token for the token-gated write endpoints (enrich, review,
+// saved-gems). The Go middleware no-ops when AGF_API_TOKEN is unset, so this
+// is only needed when the API is configured to require it.
+const API_TOKEN = process.env.NEXT_PUBLIC_API_TOKEN;
+
 /** Builds the /api/media/{key} proxy URL for an S3 object key. */
 const mediaUrl = (key: string) => `${API_BASE}/media/${key}`;
 
@@ -41,7 +46,11 @@ async function live<T>(path: string, init?: RequestInit): Promise<T> {
     // "stuck at ~300" symptom).
     cache: "no-store",
     ...init,
-    headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
+    headers: {
+      "Content-Type": "application/json",
+      ...(API_TOKEN ? { Authorization: `Bearer ${API_TOKEN}` } : {}),
+      ...(init?.headers ?? {}),
+    },
   });
   if (!res.ok) throw new Error(`API ${res.status}: ${res.statusText}`);
   return (await res.json()) as T;
@@ -143,4 +152,21 @@ export async function removeSavedGem(advertiserId: number, userEmail: string): P
     method: "POST",
     body: JSON.stringify({ user_email: userEmail }),
   });
+}
+
+/** Status of an on-demand enrichment job for a gem. */
+export type EnrichStatus = {
+  job_id: number;
+  status: "none" | "running" | "done" | "error";
+  error_text?: string | null;
+};
+
+/** Triggers an on-demand refresh of one gem; returns the running job's status. */
+export async function postEnrich(advertiserId: number): Promise<EnrichStatus> {
+  return live<EnrichStatus>(`/enrich/${advertiserId}`, { method: "POST", body: "{}" });
+}
+
+/** Polls the latest enrichment job status for a gem. */
+export async function getEnrichStatus(advertiserId: number): Promise<EnrichStatus> {
+  return live<EnrichStatus>(`/enrich/${advertiserId}`);
 }
