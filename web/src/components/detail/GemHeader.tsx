@@ -9,6 +9,7 @@ import { compactCount } from "@/lib/format";
 import { AppIcon, InfoDot, ScoreBadge, Trend } from "@/components/ui";
 import type { GemDossier } from "@/types/contracts";
 import { richestApp, StorePresenceChips } from "./AppStorePreview";
+import { RefreshDataButton } from "./RefreshDataButton";
 
 /**
  * The dossier header: everything you need to place the app before scrolling.
@@ -37,7 +38,15 @@ function ExplainerField({ label, value }: { label: string; value: string }) {
   );
 }
 
-export function GemHeader({ gem }: { gem: GemDossier }) {
+export function GemHeader({
+  gem,
+  advertiserId,
+  onRefreshed,
+}: {
+  gem: GemDossier;
+  advertiserId: number;
+  onRefreshed: () => void;
+}) {
   const [open, setOpen] = useState(false);
   const { explainer } = gem;
 
@@ -86,6 +95,7 @@ export function GemHeader({ gem }: { gem: GemDossier }) {
             <Trend glyph={g.glyph} label={trendLabel} tone={g.tone} />
             <InfoDot text={GEMSCORE_GLOSSARY} label="what GemScore means" />
           </div>
+          <RefreshDataButton advertiserId={advertiserId} onRefreshed={onRefreshed} />
         </div>
       </div>
 

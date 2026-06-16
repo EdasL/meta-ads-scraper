@@ -94,7 +94,7 @@ export function GemDetail({ advertiserId }: { advertiserId: number }) {
       </Link>
 
       <div style={{ marginTop: 14 }}>
-        <GemHeader gem={gem} />
+        <GemHeader gem={gem} advertiserId={advertiserId} onRefreshed={() => setReload((n) => n + 1)} />
       </div>
 
       <div style={{ display: "flex", flexWrap: "wrap", gap: 32, marginTop: 32, alignItems: "flex-start" }}>
