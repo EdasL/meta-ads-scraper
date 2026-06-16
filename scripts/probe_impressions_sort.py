@@ -27,6 +27,9 @@ from agf.extract.facade import Extractor
 
 N_ADV = int(sys.argv[1]) if len(sys.argv) > 1 else 5
 MAX_PAGES = int(sys.argv[2]) if len(sys.argv) > 2 else 2
+# Country filter to test the sort under. EU countries (DE/GB/FR) publish per-ad reach
+# under transparency rules, so the impressions sort may only bite there — not for US.
+COUNTRIES = (sys.argv[3].split(",") if len(sys.argv) > 3 else ["US"])
 
 
 def pick_advertisers(engine, n):
@@ -93,13 +96,13 @@ async def main():
     honored = ignored = 0
     for adv_id, pid, name, n_ads in advs:
         try:
-            default = await ex.search(query="", countries=["US"], active_status="ALL",
+            default = await ex.search(query="", countries=COUNTRIES, active_status="ALL",
                                       search_type="page", view_all_page_id=pid,
                                       sort_mode=None, max_pages=MAX_PAGES)
-            desc = await ex.search(query="", countries=["US"], active_status="ALL",
+            desc = await ex.search(query="", countries=COUNTRIES, active_status="ALL",
                                    search_type="page", view_all_page_id=pid,
                                    sort_mode="DESCENDING", max_pages=MAX_PAGES)
-            asc = await ex.search(query="", countries=["US"], active_status="ALL",
+            asc = await ex.search(query="", countries=COUNTRIES, active_status="ALL",
                                   search_type="page", view_all_page_id=pid,
                                   sort_mode="ASCENDING", max_pages=MAX_PAGES)
         except Exception as exc:
