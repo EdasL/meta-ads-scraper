@@ -96,3 +96,31 @@ def test_flip_skipped_when_listing_truncated(pg_conn, _migrated_engine):
     active = {r.external_ad_id: r.is_active for r in pg_conn.execute(text(
         "SELECT external_ad_id, is_active FROM public.ads WHERE advertiser_id = :a"), {"a": adv})}
     assert active["cr-B2"] is True                  # NOT flipped — listing was incomplete
+
+
+from agf.discovery.corpus_refresh import refresh_corpus
+
+
+def test_refresh_corpus_refreshes_each_and_respects_budget(pg_conn, _migrated_engine):
+    _clean_corpus(pg_conn)
+    eng = _migrated_engine
+    a = repo.upsert_advertiser(pg_conn, SimpleNamespace(page_id="CORPUSREFA", page_name="A", page_like_count=10))
+    b = repo.upsert_advertiser(pg_conn, SimpleNamespace(page_id="CORPUSREFB", page_name="B", page_like_count=10))
+    repo.upsert_ad(pg_conn, make_ad("cr-A1", "CORPUSREFA", "A", "https://x/app"), a, None)
+    repo.upsert_ad(pg_conn, make_ad("cr-B1", "CORPUSREFB", "B", "https://x/app"), b, None)
+    pg_conn.execute(text("UPDATE public.ads SET last_seen = now() - interval '9 days' WHERE advertiser_id = :a"), {"a": a})
+    pg_conn.execute(text("UPDATE public.ads SET last_seen = now() - interval '1 days' WHERE advertiser_id = :b"), {"b": b})
+    pg_conn.commit()
+
+    ext = FakeExtractor(page_ads={
+        "CORPUSREFA": [make_ad("cr-A1", "CORPUSREFA", "A", "https://x/app"),
+                       make_ad("cr-A2", "CORPUSREFA", "A", "https://x/app", days_old=5)],
+        "CORPUSREFB": [make_ad("cr-B1", "CORPUSREFB", "B", "https://x/app")],
+    })
+    # budget = one advertiser's pages → only the STALEST (A) is processed
+    res = asyncio.run(refresh_corpus(eng, ext, hist_pages=12, budget_requests=12,
+                                     sleep=lambda s: None, limit=None))
+    assert res["advertisers_done"] == 1
+    assert res["ads_stored"] == 2                   # A's two listing ads upserted
+    a2 = pg_conn.execute(text("SELECT 1 FROM public.ads WHERE external_ad_id='cr-A2'")).first()
+    assert a2 is not None                           # new ad A2 inserted for the stalest advertiser
