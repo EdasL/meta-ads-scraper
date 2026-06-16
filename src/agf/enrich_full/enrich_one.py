@@ -104,7 +104,10 @@ def run_job(engine, *, advertiser_id, job_id, enrich_call, score_call,
         score_call(engine, advertiser_id, as_of)
         set_status(engine, job_id, "done", finished=True)
     except BaseException as e:  # record ANY failure (incl. timeout) on the row
-        set_status(engine, job_id, "error", error_text=str(e)[:500], finished=True)
+        try:
+            set_status(engine, job_id, "error", error_text=str(e)[:500], finished=True)
+        except Exception:
+            pass  # best-effort; the Go stale-guard (180s) is the backstop
         raise
 
 
