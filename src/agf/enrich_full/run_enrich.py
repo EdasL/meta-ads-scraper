@@ -109,10 +109,19 @@ def _media_only_pass(conn, advertiser_id, deps: EnrichDeps, *, done, cap) -> int
 
 async def enrich_gem(conn, advertiser_id, *, top_n=5, media_cap=120,
                      deps: EnrichDeps) -> EnrichResult:
-    ads = conn.execute(text(
+    rows = conn.execute(text(
         "SELECT id, external_ad_id, link_url FROM public.ads WHERE advertiser_id=:a "
-        "ORDER BY last_seen DESC NULLS LAST, id LIMIT :n"),
-        {"a": advertiser_id, "n": top_n}).all()
+        "ORDER BY last_seen DESC NULLS LAST, id"),
+        {"a": advertiser_id}).all()
+    # Store/social ads all resolve to the same app and would otherwise eat the
+    # whole top_n probe budget by recency, burying a lone funnel ad past the cut
+    # (the reason most gems showed no Quiz link). Float off-store ads — the funnel
+    # candidates — ahead; sorted() is stable so recency order holds within each
+    # group, and store ads still fill the remaining slots for app metadata.
+    def _off_store(link):
+        host = _domain_of(link)
+        return bool(host) and host not in STORE_HOSTS and host not in SOCIAL_HOSTS
+    ads = sorted(rows, key=lambda r: not _off_store(r.link_url))[:top_n]
     now = datetime.now(timezone.utc)
     n_funnels = n_creatives = 0
     last_app_meta = None

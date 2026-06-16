@@ -192,6 +192,39 @@ def test_enrich_gem_top_n_truncates(pg_conn):
     assert res.n_ads_processed == 2               # 3 ads exist, top_n=2 -> 2 processed
 
 
+def test_enrich_gem_floats_funnel_ad_past_budget(pg_conn):
+    # Store ads are more numerous + sort first by recency tiebreak; the lone
+    # funnel ad is inserted last (highest id) so plain "top N by recency" would
+    # bury it past the probe budget. Off-store ads must float ahead so the
+    # funnel still gets probed.
+    store = _ad("FLOAT-IOS-0", "https://apps.apple.com/us/app/x/id999")
+    adv = repo.upsert_advertiser(pg_conn, store)
+    for i in range(3):
+        repo.upsert_ad(pg_conn, _ad(f"FLOAT-IOS-{i}",
+                                    "https://apps.apple.com/us/app/x/id999"), adv, None)
+    funnel_ad = _ad("FLOAT-WEB", "https://getgem.com/quiz")
+    ad_web = repo.upsert_ad(pg_conn, funnel_ad, adv, None)   # inserted last -> highest id
+
+    ex = FakeExtractor(links={
+        "https://apps.apple.com/us/app/x/id999":
+            ResolvedLink("https://apps.apple.com/us/app/x/id999", AppIntent("ios", "999")),
+        "https://getgem.com/quiz":
+            ResolvedLink("https://getgem.com/quiz", AppIntent("web", None)),
+    })
+    deps = EnrichDeps(
+        extractor=ex, itunes_client=_FakeITunes(),
+        put=lambda key, d, ct, client=None: key,
+        page=FakeWebFunnel(), capture=True)
+
+    res = asyncio.run(enrich_gem(pg_conn, adv, top_n=2, deps=deps))
+
+    # funnel reached the probe even though 4 store ads exist and top_n=2
+    assert res.funnels == 1
+    got = pg_conn.execute(text("SELECT count(*) FROM public.funnels WHERE ad_id=:i"),
+                          {"i": ad_web}).scalar()
+    assert got == 1
+
+
 def _png_colored(seed: int):
     import io
     from PIL import Image
