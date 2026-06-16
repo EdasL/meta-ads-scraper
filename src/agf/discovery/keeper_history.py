@@ -86,7 +86,12 @@ async def refresh_one_advertiser(engine, extractor, advertiser_id, page_id, *,
         for wk_start, cnt, nnew in zip(starts, weekly, new_weekly):
             repo.upsert_app_advertiser_metric(conn, advertiser_id, wk_start,
                                               cnt, max(nnew, 1), None)
-        if flip_vanished and not truncated:
+        # `seen` must be non-empty: a complete but EMPTY listing (or a transient
+        # malformed-but-non-error 200 that parses to []) must NOT mass-flip every active
+        # ad — `external_ad_id <> ALL('{}')` is vacuously TRUE in Postgres. A genuinely
+        # ad-less advertiser has no running-days to correct anyway, so skipping loses
+        # nothing real and removes the blast radius (final-review fix 2026-06-16).
+        if flip_vanished and not truncated and seen:
             flipped = conn.execute(text("""
                 UPDATE public.ads
                    SET is_active = false,

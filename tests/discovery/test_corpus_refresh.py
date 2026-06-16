@@ -126,3 +126,22 @@ def test_refresh_corpus_refreshes_each_and_respects_budget(pg_conn, _migrated_en
     assert res["ads_stored"] == 2                   # A's two listing ads upserted
     a2 = pg_conn.execute(text("SELECT 1 FROM public.ads WHERE external_ad_id='cr-A2'")).first()
     assert a2 is not None                           # new ad A2 inserted for the stalest advertiser
+
+
+def test_flip_skipped_when_listing_empty(pg_conn, _migrated_engine):
+    # A non-truncated EMPTY listing must NOT mass-flip the advertiser's ads: a transient
+    # empty/malformed 200 parses as [] and must not wipe running-days. (reviewer fix)
+    _clean_corpus(pg_conn)
+    eng = _migrated_engine
+    adv = repo.upsert_advertiser(pg_conn, SimpleNamespace(page_id="CORPUSREFC", page_name="C", page_like_count=10))
+    repo.upsert_ad(pg_conn, make_ad("cr-C1", "CORPUSREFC", "C", "https://x/app"), adv, None)
+    repo.upsert_ad(pg_conn, make_ad("cr-C2", "CORPUSREFC", "C", "https://x/app"), adv, None)
+    pg_conn.commit()
+    # no page_ads entry for CORPUSREFC → listing returns [] ; not truncated
+    ext = FakeExtractor(page_ads={}, page_truncated={"CORPUSREFC": False})
+    res = asyncio.run(refresh_one_advertiser(eng, ext, adv, "CORPUSREFC",
+                                             hist_pages=12, weeks=16, flip_vanished=True))
+    assert res["flipped"] == 0
+    active = {r.external_ad_id: r.is_active for r in pg_conn.execute(text(
+        "SELECT external_ad_id, is_active FROM public.ads WHERE advertiser_id = :a"), {"a": adv})}
+    assert active == {"cr-C1": True, "cr-C2": True}   # NOT flipped — empty listing is not trusted
