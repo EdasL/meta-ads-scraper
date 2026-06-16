@@ -50,8 +50,13 @@ export function signedPercent(pct: number): string {
  * series window ("↗ 3→11 ads in 4 weeks"). A percent renders only when the
  * base is at least MIN_PCT_BASE ads AND pct_change exists — tiny bases make
  * giant fake-looking percents. With no usable series (`kind: "count"`) it
- * falls back to the one real fact the row carries — the live ad count —
- * with no glyph and no invented trend word.
+ * falls back to the one real fact the row carries — the live ad count.
+ *
+ * GemScore v3 (2026-06-16): ad-count direction is NO LONGER a quality signal —
+ * an app going 30→2 ads found its winners, it isn't declining. So we show the
+ * real count delta but never a directional glyph or up/down tone: the trend is
+ * always neutral (`glyph: null`, `tone: "flat"`). The number speaks; we don't
+ * color it good or bad.
  *
  * `nowMs` only decides whether the "since" month needs a year; tests pin it.
  */
@@ -66,18 +71,12 @@ export function growthLine(
     const counts = since
       ? `${first_count}→${latest_count} ads ${since}`
       : `${first_count}→${latest_count} ads in ${weeks} ${weeks === 1 ? "week" : "weeks"}`;
-    if (pct_change != null && first_count >= MIN_PCT_BASE) {
-      // Round before deriving tone so the glyph always matches the shown %.
-      const rounded = Math.round(pct_change);
-      const tone: TrendTone = rounded > 0 ? "up" : rounded < 0 ? "down" : "flat";
-      const glyph = tone === "up" ? "↗" : tone === "down" ? "↘" : "→";
-      return { glyph, text: `${signedPercent(pct_change)} · ${counts}`, tone, kind: "growth" };
-    }
-    // No honest percent (tiny base, or pct_change missing) — counts alone,
-    // with the glyph from the count delta.
-    const tone: TrendTone = latest_count > first_count ? "up" : latest_count < first_count ? "down" : "flat";
-    const glyph = tone === "up" ? "↗" : tone === "down" ? "↘" : "→";
-    return { glyph, text: counts, tone, kind: "growth" };
+    // A percent still renders (it's a real fact) only above the base floor, but
+    // its sign is the only direction cue — no glyph, no tone color.
+    const text = pct_change != null && first_count >= MIN_PCT_BASE
+      ? `${signedPercent(pct_change)} · ${counts}`
+      : counts;
+    return { glyph: null, text, tone: "flat", kind: "growth" };
   }
   // No usable growth series → the real live ad count, nothing derived.
   return { glyph: null, text: `${fallback.active_ad_count}`, tone: "flat", kind: "count" };

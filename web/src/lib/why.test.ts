@@ -7,10 +7,12 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { signedPercent, growthLine, trendFromScaling, monthLabel } from "./why.ts";
 
+// GemScore v3: ad-count direction is not a quality signal, so growthLine is always
+// neutral (glyph null, tone flat). The real count/percent text still renders.
 test("growthLine prefers real growth numbers (base >= 5 keeps the percent)", () => {
   const g = growthLine({ first_count: 5, latest_count: 20, weeks: 4, pct_change: 300 }, { active_ad_count: 40 });
-  assert.equal(g.glyph, "↗");
-  assert.equal(g.tone, "up");
+  assert.equal(g.glyph, null);
+  assert.equal(g.tone, "flat");
   assert.equal(g.kind, "growth");
   assert.match(g.text, /\+300% · 5→20 ads in 4 weeks/);
 });
@@ -19,14 +21,14 @@ test("growthLine never renders a percent from a base under 5 ads", () => {
   // 3→11 with pct_change present: tiny base → counts only, no %
   const g = growthLine({ first_count: 3, latest_count: 11, weeks: 4, pct_change: 267 }, { active_ad_count: 40 });
   assert.equal(g.kind, "growth");
-  assert.equal(g.glyph, "↗");
-  assert.equal(g.tone, "up");
+  assert.equal(g.glyph, null);
+  assert.equal(g.tone, "flat");
   assert.equal(g.text, "3→11 ads in 4 weeks");
   assert.ok(!g.text.includes("%"));
-  // shrinking from a tiny base → counts only, down glyph
+  // shrinking count → still the real delta, but neutral (consolidation isn't decline)
   const down = growthLine({ first_count: 4, latest_count: 1, weeks: 6, pct_change: -75 }, { active_ad_count: 1 });
-  assert.equal(down.glyph, "↘");
-  assert.equal(down.tone, "down");
+  assert.equal(down.glyph, null);
+  assert.equal(down.tone, "flat");
   assert.equal(down.text, "4→1 ads in 6 weeks");
 });
 
@@ -39,7 +41,7 @@ test("growthLine anchors on the first-ad month when the row carries first_ad_at"
     now,
   );
   assert.equal(g.text, "2→25 ads since Mar");
-  assert.equal(g.glyph, "↗");
+  assert.equal(g.glyph, null);
   assert.ok(!g.text.includes("%")); // tiny base: no percent even with first_ad_at
   // earlier year → month + year
   const old = growthLine(
@@ -79,20 +81,21 @@ test("growthLine rounds raw API float pct_change to a whole percent", () => {
     { active_ad_count: 40 },
   );
   assert.equal(g.text, "+167% · 30→80 ads in 16 weeks");
-  assert.equal(g.tone, "up");
-  // tiny float that rounds to zero → flat, not a misleading "+0%" with ↗
+  assert.equal(g.tone, "flat");
+  assert.equal(g.glyph, null);
+  // tiny float that rounds to zero → still the real "0% · 10→10" text, neutral
   const flat = growthLine(
     { first_count: 10, latest_count: 10, weeks: 4, pct_change: 0.3 },
     { active_ad_count: 40 },
   );
   assert.equal(flat.text, "0% · 10→10 ads in 4 weeks");
   assert.equal(flat.tone, "flat");
-  assert.equal(flat.glyph, "→");
+  assert.equal(flat.glyph, null);
 });
 
 test("growthLine: null pct_change (grew from zero) shows honest counts, no %", () => {
   const g = growthLine({ first_count: 0, latest_count: 8, weeks: 3, pct_change: null }, { active_ad_count: 8 });
-  assert.equal(g.tone, "up");
+  assert.equal(g.tone, "flat");
   assert.equal(g.kind, "growth");
   assert.match(g.text, /0→8 ads in 3 weeks/);
   assert.ok(!g.text.includes("%"));
