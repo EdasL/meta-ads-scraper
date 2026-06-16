@@ -26,26 +26,6 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
   return <h2 className="t-md w-strong" style={{ margin: "0 0 12px" }}>{children}</h2>;
 }
 
-function StatusPill({ active }: { active: boolean | undefined }) {
-  // Unknown status (older rows without is_active) shows nothing — never guess.
-  if (active === undefined) return null;
-  return (
-    <span
-      className="font-mono"
-      style={{
-        fontSize: "0.62rem",
-        padding: "2px 7px",
-        border: "1px solid",
-        borderColor: active ? "var(--up)" : "var(--line)",
-        background: active ? "var(--up-bg)" : "transparent",
-        color: active ? "var(--up)" : "var(--muted)",
-      }}
-    >
-      {active ? "Active" : "Ended"}
-    </span>
-  );
-}
-
 /** Longevity badges that tie a card to the header counts: a still-running ad
  * past 30 days is a proven winner ("Ads running 30+ days"); a still-running ad
  * under 4 weeks old is one of the "New ads". Both read straight off the ad's own
@@ -111,7 +91,6 @@ function AdCard({ c }: { c: Creative }) {
     >
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "8px 10px" }}>
         <span style={{ display: "inline-flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-          <StatusPill active={c.ad_active} />
           <AdBadges c={c} />
         </span>
         {c.external_ad_id && (
@@ -309,18 +288,19 @@ export function AdsSection({ gem }: { gem: GemDossier }) {
   // Focus on the ads that are running now. Backend returns them active-first in
   // Meta's impressions order, so the top few active ads are the best ones.
   const activeAds = gem.creatives.filter((c) => c.ad_active === true);
-  const counts = `${activeAds.length} active ad${activeAds.length === 1 ? "" : "s"}`;
   const visible = activeAds.slice(0, TOP_ADS);
   const pageId = gem.company.page_id;
+  // "Top N" only when we're actually trimming; otherwise it's just all the active ads.
+  const title =
+    activeAds.length > TOP_ADS
+      ? `Top ${TOP_ADS} active ads by impressions`
+      : "Active ads by impressions";
 
   if (activeAds.length === 0) return null;
 
   return (
     <section>
-      <SectionTitle>The ads</SectionTitle>
-      <p className="font-mono nums" style={{ fontSize: "var(--fs-xs)", color: "var(--muted)", margin: "0 0 12px" }}>
-        {counts}
-      </p>
+      <SectionTitle>{title}</SectionTitle>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(190px, 1fr))", gap: 12 }}>
         {visible.map((c) => (
           <AdCard key={c.id} c={c} />
