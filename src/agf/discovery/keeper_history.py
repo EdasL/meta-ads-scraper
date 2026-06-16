@@ -58,6 +58,46 @@ def _linked_app_id(conn, advertiser_id: int) -> int | None:
     """), {"adv": advertiser_id}).scalar()
 
 
+async def refresh_one_advertiser(engine, extractor, advertiser_id, page_id, *,
+                                hist_pages: int = 12, weeks: int = 16,
+                                flip_vanished: bool = False) -> dict:
+    """Re-scrape one advertiser's Meta ALL-listing and reconcile public.ads in one txn:
+    upsert every ad (is_active/start_date/end_date/last_seen via repo.upsert_ad) + its
+    text-creative backstop, then reconstruct the last `weeks` weekly metric rows. When
+    flip_vanished AND the listing was NOT truncated, flip the advertiser's still-active
+    DB ads that are absent from the listing to is_active=false (they ended-and-delisted).
+    Raises ExtractError if the listing pull fails (caller counts it). Returns
+    {ads_stored, truncated, flipped}."""
+    ads, truncated = await extractor.search_listing(page_id=page_id, max_pages=hist_pages)
+    seen, uniq = set(), []
+    for ad in ads:
+        if ad.ad_archive_id and ad.ad_archive_id not in seen:
+            seen.add(ad.ad_archive_id)
+            uniq.append(ad)
+    weekly = reconstruct_weekly_ad_counts(uniq, weeks=weeks)
+    new_weekly = new_ads_per_week(uniq, weeks=weeks)
+    starts = _week_starts(date.today(), weeks)
+    flipped = 0
+    with begin(engine) as conn:
+        app_id = _linked_app_id(conn, advertiser_id)
+        for ad in uniq:
+            ad_id = repo.upsert_ad(conn, ad, advertiser_id, app_id)
+            repo.ensure_text_creative(conn, ad_id, ad)
+        for wk_start, cnt, nnew in zip(starts, weekly, new_weekly):
+            repo.upsert_app_advertiser_metric(conn, advertiser_id, wk_start,
+                                              cnt, max(nnew, 1), None)
+        if flip_vanished and not truncated:
+            flipped = conn.execute(text("""
+                UPDATE public.ads
+                   SET is_active = false,
+                       end_date  = COALESCE(end_date, last_seen)
+                 WHERE advertiser_id = :adv AND is_active
+                   AND external_ad_id <> ALL(:seen)
+            """), {"adv": advertiser_id,
+                   "seen": [str(s) for s in seen]}).rowcount
+    return {"ads_stored": len(uniq), "truncated": truncated, "flipped": flipped}
+
+
 async def pull_keeper_history(engine, extractor, *, hist_pages: int = 12,
                               budget_requests: int = 600, weeks: int = 16,
                               sleep=time.sleep, kw_delay: float = 2.0) -> dict:
@@ -72,35 +112,18 @@ async def pull_keeper_history(engine, extractor, *, hist_pages: int = 12,
     with engine.connect() as conn:
         keepers = keepers_missing_history(conn)
     stats = {"keepers_done": 0, "requests_spent": 0, "ads_stored": 0, "errors": 0}
-    starts = _week_starts(date.today(), weeks)
     for advertiser_id, page_id in keepers:
         if stats["requests_spent"] + hist_pages > budget_requests:
             break
         stats["requests_spent"] += hist_pages
         try:
-            ads = await extractor.search(query="", countries=["US"],
-                                         search_type="page", view_all_page_id=page_id,
-                                         active_status="ALL", max_pages=hist_pages)
+            res = await refresh_one_advertiser(engine, extractor, advertiser_id,
+                                               page_id, hist_pages=hist_pages, weeks=weeks)
         except ExtractError:
             stats["errors"] += 1
             sleep(kw_delay)
             continue
-        seen, uniq = set(), []
-        for ad in ads:
-            if ad.ad_archive_id and ad.ad_archive_id not in seen:
-                seen.add(ad.ad_archive_id)
-                uniq.append(ad)
-        weekly = reconstruct_weekly_ad_counts(uniq, weeks=weeks)
-        new_weekly = new_ads_per_week(uniq, weeks=weeks)
-        with begin(engine) as conn:
-            app_id = _linked_app_id(conn, advertiser_id)
-            for ad in uniq:
-                ad_id = repo.upsert_ad(conn, ad, advertiser_id, app_id)
-                repo.ensure_text_creative(conn, ad_id, ad)
-            for wk_start, cnt, nnew in zip(starts, weekly, new_weekly):
-                repo.upsert_app_advertiser_metric(conn, advertiser_id, wk_start,
-                                                  cnt, max(nnew, 1), None)
         stats["keepers_done"] += 1
-        stats["ads_stored"] += len(uniq)
+        stats["ads_stored"] += res["ads_stored"]
         sleep(kw_delay)
     return stats
