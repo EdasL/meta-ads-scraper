@@ -89,10 +89,11 @@ export function GemHeader({
           </div>
         </div>
         <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <ScoreBadge score={gem.gem_score} variant="detail" />
-            <InfoDot text={GEMSCORE_GLOSSARY} label="what GemScore means" />
-          </div>
+          <ScoreBadge
+            score={gem.gem_score}
+            variant="detail"
+            info={<InfoDot text={GEMSCORE_GLOSSARY} label="what GemScore means" />}
+          />
           <RefreshDataButton advertiserId={advertiserId} onRefreshed={onRefreshed} />
           {gem.ads_last_seen && (
             <span className="t-sm" style={{ color: "var(--muted)" }}>

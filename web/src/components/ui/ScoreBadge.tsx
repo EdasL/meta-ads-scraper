@@ -1,5 +1,7 @@
 "use client";
 
+import type { ReactNode } from "react";
+
 /**
  * GemScore badge — the real 0-100 score from the matview, nothing derived.
  * `card` = bare colored number for table cells (the column header already
@@ -16,7 +18,16 @@ function scoreColor(n: number, onOverlay = false): string {
   return n >= 70 ? "var(--up)" : n >= 50 ? "var(--warn)" : "var(--ink)";
 }
 
-export function ScoreBadge({ score, variant = "card" }: { score: number; variant?: "card" | "detail" | "corner" }) {
+export function ScoreBadge({
+  score,
+  variant = "card",
+  info,
+}: {
+  score: number;
+  variant?: "card" | "detail" | "corner";
+  /** Optional slot rendered in the detail box's top-right corner (e.g. an InfoDot). */
+  info?: ReactNode;
+}) {
   const n = Math.round(score);
 
   if (variant === "corner") {
@@ -47,6 +58,7 @@ export function ScoreBadge({ score, variant = "card" }: { score: number; variant
     return (
       <div
         style={{
+          position: "relative",
           display: "inline-flex",
           flexDirection: "column",
           alignItems: "center",
@@ -57,6 +69,7 @@ export function ScoreBadge({ score, variant = "card" }: { score: number; variant
           minWidth: 92,
         }}
       >
+        {info && <div style={{ position: "absolute", top: 6, right: 6 }}>{info}</div>}
         <span className="t-2xl w-heavy nums" style={{ lineHeight: 1, color: scoreColor(n) }}>{n}</span>
         <span className="eyebrow" style={{ marginTop: 5 }}>/ 100 GemScore</span>
       </div>
