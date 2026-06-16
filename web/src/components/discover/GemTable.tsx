@@ -105,6 +105,18 @@ function GemRow({ row, onOpen }: { row: ShortlistRow; onOpen?: (row: ShortlistRo
   const href = `/gems/${row.advertiser_id}`;
   const trend = growthLine(row.growth, { active_ad_count: row.active_ad_count, first_ad_at: row.first_ad_at });
 
+  // Winners = ads still live after 30+ days (winner_depth, the core GemScore v3
+  // signal). When the app has proven winners, the ad-count cell leads with them
+  // and keeps the growth direction as a glyph; early apps with no long-runners
+  // fall back to the plain growth line so "rising" still shows.
+  const winners = row.longrun_ad_count ?? 0;
+  const adsGrowth =
+    winners > 0 ? (
+      <Trend glyph={trend.glyph} label={`${winners} run 30d+`} tone={trend.tone} />
+    ) : (
+      <Trend glyph={trend.glyph} label={trend.text} tone={trend.tone} />
+    );
+
   // The whole row is a target, but anchors and buttons inside it (name link,
   // save toggle) keep their own behavior.
   function openFromRow(e: React.MouseEvent) {
@@ -140,10 +152,7 @@ function GemRow({ row, onOpen }: { row: ShortlistRow; onOpen?: (row: ShortlistRo
         <ScoreBadge score={row.gem_score} variant="card" />
       </td>
       <td className="num">
-        <MetricCell
-          level={`${row.active_ad_count} active`}
-          growth={<Trend glyph={trend.glyph} label={trend.text} tone={trend.tone} />}
-        />
+        <MetricCell level={`${row.active_ad_count} active`} growth={adsGrowth} />
       </td>
       <td className="num">
         <TractionCell row={row} />

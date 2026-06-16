@@ -114,6 +114,7 @@ export function GemHeader({
       >
         <div style={{ display: "flex", gap: 28, flexWrap: "wrap" }}>
           <Stat label="Ads in library" value={adsInLibrary} />
+          <Stat label="Running 30+ days" value={gem.ad_lifecycle ? gem.ad_lifecycle.running_30d_plus.toLocaleString() : undefined} />
           <Stat label="Launched last 4 weeks" value={gem.ad_lifecycle ? gem.ad_lifecycle.launched_4w.toLocaleString() : undefined} />
           <Stat label="Page likes" value={gem.page_like_count?.toLocaleString()} />
         </div>
