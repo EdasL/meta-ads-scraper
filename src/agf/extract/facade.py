@@ -92,6 +92,22 @@ class Extractor:
                 jitter=self._search_jitter, sleep=self._sleep)
         return await asyncio.to_thread(lambda: self._run_resilient(attempt))
 
+    async def search_listing(self, *, page_id, countries=["US"],
+                             max_pages=12) -> tuple[list, bool]:
+        """An advertiser's full ALL-status ad listing + whether pagination was
+        truncated at max_pages (more pages remained). Mirrors search() but returns the
+        has_next flag search() discards, so the corpus refresh only reconciles is_active
+        on a COMPLETE listing."""
+        def attempt():
+            ws = self._pool.acquire()
+            records, _cursor, has_next = search_ads(
+                ws.session, ws.tokens, query="", countries=countries,
+                active_status="ALL", search_type="page", view_all_page_id=page_id,
+                max_pages=max_pages, delay=self._search_delay,
+                jitter=self._search_jitter, sleep=self._sleep)
+            return records, bool(has_next)
+        return await asyncio.to_thread(lambda: self._run_resilient(attempt))
+
     async def typeahead(self, *, query: str, country: str = "US") -> list[dict]:
         """Keyword -> candidate Pages (page_id + page_like_count + name). Throttle-aware:
         rotates IP + backs off on rate-limit, same as `search`."""

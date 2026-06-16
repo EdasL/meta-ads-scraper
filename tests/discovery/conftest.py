@@ -19,6 +19,7 @@ class FakeExtractor:
     """Async stand-in for the Plan 2 Extractor facade."""
     eu_ads: list = field(default_factory=list)        # for sort_by_impressions sweeps
     page_ads: dict = field(default_factory=dict)      # view_all_page_id -> [AdRecord]
+    page_truncated: dict = field(default_factory=dict)   # view_all_page_id -> bool
     keyword_ads: dict = field(default_factory=dict)   # query -> [AdRecord] (link_app)
     links: dict = field(default_factory=dict)         # url -> ResolvedLink
     default_ads: list = field(default_factory=list)
@@ -31,6 +32,13 @@ class FakeExtractor:
         if sort_by_impressions:
             return list(self.eu_ads)
         return list(self.keyword_ads.get(query, self.default_ads))
+
+    async def search_listing(self, *, page_id, countries=("US",), max_pages=12):
+        # delegate to self.search so subclasses that override search (e.g. to raise
+        # ExtractError) still drive search_listing; truncation comes from page_truncated.
+        ads = await self.search(view_all_page_id=page_id, search_type="page",
+                                active_status="ALL", max_pages=max_pages)
+        return list(ads), bool(self.page_truncated.get(page_id, False))
 
     async def ad_details(self, ad_archive_id):
         raise NotImplementedError
