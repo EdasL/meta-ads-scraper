@@ -1,29 +1,24 @@
 #!/usr/bin/env bash
-# Wrapper the Go API execs for on-demand enrichment. Sources ops/.env so the
-# subprocess gets proxies and S3/MinIO creds, then runs the one-shot CLI.
-# Keeps the Go API ignorant of Python env internals.
+# Wrapper the Go API execs for on-demand enrichment. Runs the one-shot CLI from
+# the repo root with the project venv interpreter, mirroring how the worker
+# launchd job runs enrichment (com.fielddesk.worker).
+#
+# Environment comes from the CALLER (the API launchd plist), which carries the
+# host-correct AGF_DATABASE_URL, S3/MinIO creds, and AGF_PROXIES. We deliberately
+# do NOT source ops/.env: that file holds container-network values
+# (host.docker.internal) that don't resolve on the host. For a standalone run,
+# export the needed vars yourself (same set the worker plist defines).
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
-# A DB URL provided by the caller (the host launchd env) targets a
-# host-resolvable address; ops/.env's value targets the container network and
-# won't resolve on the host. Preserve the caller's value if present.
-_CALLER_DB_URL="${AGF_DATABASE_URL:-}"
-
-if [ -f ops/.env ]; then
-  set -a
-  # shellcheck disable=SC1091
-  . ops/.env
-  set +a
-fi
-
-if [ -n "$_CALLER_DB_URL" ]; then
-  export AGF_DATABASE_URL="$_CALLER_DB_URL"
-fi
-
 # Package is not installed editable — make `agf` importable from src/.
 export PYTHONPATH="src${PYTHONPATH:+:$PYTHONPATH}"
 
-exec python -m agf.enrich_full.enrich_one "$@"
+# Prefer the project venv interpreter; launchd has a minimal PATH so a bare
+# `python` may not resolve.
+PY="$REPO_ROOT/.venv/bin/python"
+[ -x "$PY" ] || PY="python3"
+
+exec "$PY" -m agf.enrich_full.enrich_one "$@"
