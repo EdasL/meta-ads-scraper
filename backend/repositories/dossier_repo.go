@@ -149,8 +149,9 @@ func Dossier(ctx context.Context, g *gorm.DB, advertiserID int) (*models.GemDoss
 		//     through models.StringList without driver array plumbing.
 		//   - eu_total_reach: latest non-NULL snapshot for the ad (US ads have
 		//     none → null).
-		// Active ads sort first, then ads with stored media (the real evidence),
-		// then newest start date — the order the reel shows.
+		// Best ads first: highest EU reach (US ads have none → sort last),
+		// then longest-running, then ads with stored media as a tiebreaker —
+		// the order the reel shows its top 5.
 		creatives := make([]models.CreativeInfo, 0)
 		if err := tx.Raw(
 			`SELECT * FROM (
@@ -186,8 +187,9 @@ func Dossier(ctx context.Context, g *gorm.DB, advertiserID int) (*models.GemDoss
 			            CASE c.type WHEN 'video' THEN 0 WHEN 'image' THEN 1 ELSE 2 END,
 			            c.id
 			 ) per_ad
-			 ORDER BY COALESCE(ad_active, false) DESC, (s3_key IS NOT NULL) DESC,
-			          ad_started_on DESC NULLS LAST`,
+			 ORDER BY eu_total_reach DESC NULLS LAST,
+			          ad_days_running DESC NULLS LAST,
+			          (s3_key IS NOT NULL) DESC`,
 			advertiserID,
 		).Scan(&creatives).Error; err != nil {
 			return err

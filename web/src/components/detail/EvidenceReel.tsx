@@ -316,11 +316,9 @@ export function AdsSection({ gem }: { gem: GemDossier }) {
   ]
     .filter(Boolean)
     .join(" · ");
-  // Active ads first, then ended — show the top few; the Ad Library has the rest.
-  const top = [...gem.creatives].sort(
-    (a, b) => Number(b.ad_active === true) - Number(a.ad_active === true),
-  );
-  const visible = top.slice(0, TOP_ADS);
+  // Backend returns best-first (EU reach, then days running); show the top few —
+  // the Ad Library has the rest.
+  const visible = gem.creatives.slice(0, TOP_ADS);
   const pageId = gem.company.page_id;
 
   if (total === 0) return null;
