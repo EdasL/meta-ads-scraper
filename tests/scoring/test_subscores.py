@@ -34,11 +34,13 @@ def test_under_radar_gem_is_high():
 
 
 def test_scaling_velocity_combines_with_weights():
-    sv = scaling_velocity({"wow": 1.0, "ramp": 1.0, "accel": 1.0, "ewma": 1.0,
-                           "longevity": 1.0, "iteration": 1.0})
+    sv = scaling_velocity({"winner_age": 1.0, "winner_depth": 1.0,
+                           "count_growth": 1.0, "iteration": 1.0})
     assert sv == 1.0
-    assert set(SV_WEIGHTS) == {"wow", "ramp", "accel", "ewma", "longevity", "iteration"}
+    assert set(SV_WEIGHTS) == {"winner_age", "winner_depth", "count_growth", "iteration"}
     assert abs(sum(SV_WEIGHTS.values()) - 1.0) < 1e-9
+    # winner signal (age + depth) is the majority of the axis
+    assert SV_WEIGHTS["winner_age"] + SV_WEIGHTS["winner_depth"] == 0.70
 
 
 def test_funnel_intent_weights_present():

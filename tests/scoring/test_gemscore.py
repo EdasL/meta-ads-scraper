@@ -6,17 +6,17 @@ def test_all_axes_max_is_100():
 
 
 def test_missing_demand_and_whitespace_floor_to_neutral():
-    # three-axis callers (no D/W data yet) land at exactly 100 * 0.5^(0.20+0.10)
-    assert abs(gem_score(1.0, 1.0, 1.0) - 100 * 0.5 ** 0.3) < 1e-9
+    # three-axis callers (no D/W data yet) land at exactly 100 * 0.5^(0.38+0.05)
+    assert abs(gem_score(1.0, 1.0, 1.0) - 100 * 0.5 ** 0.43) < 1e-9
 
 
 def test_incumbent_present_low_axis_gates_to_near_zero():
     # UR genuinely 0 (famous brand) -> AND-gate collapses the score to exactly 0
     assert gem_score(1.0, 0.0, 1.0, 1.0, 1.0) == 0.0
-    # a low (but present) UR is gated hard relative to a high UR at equal others
+    # a low (but present) UR still drags the score down, just less hard than v2
     low_ur = gem_score(0.9, 0.02, 0.9, 0.9, 0.9)
     high_ur = gem_score(0.9, 0.9, 0.9, 0.9, 0.9)
-    assert low_ur < 0.5 * high_ur
+    assert low_ur < 0.7 * high_ur
 
 
 def test_present_zero_gates_every_axis():
