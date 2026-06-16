@@ -457,3 +457,21 @@ type CoverageMetrics struct {
 	MediaTextless int64 `json:"media_textless"`
 	Stalled       bool  `json:"stalled"` // ConfirmedFeed < FeedStallFloor
 }
+
+// EnrichJobRow is one public.enrich_jobs row (DB read shape).
+type EnrichJobRow struct {
+	ID         int      `gorm:"column:id"`
+	Status     string   `gorm:"column:status"`
+	ErrorText  *string  `gorm:"column:error_text"`
+	StartedAt  APITime  `gorm:"column:started_at"`
+	FinishedAt *APITime `gorm:"column:finished_at"`
+}
+
+// EnrichJobOut is the JSON the enrich endpoints return.
+type EnrichJobOut struct {
+	JobID      int      `json:"job_id"`
+	Status     string   `json:"status"`
+	ErrorText  *string  `json:"error_text"`
+	StartedAt  APITime  `json:"started_at"`
+	FinishedAt *APITime `json:"finished_at"`
+}
