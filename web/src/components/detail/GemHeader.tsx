@@ -2,11 +2,11 @@
 
 import { useState } from "react";
 import { IconChevronDown, IconChevronRight, IconExternalLink } from "@tabler/icons-react";
-import { GEMSCORE_GLOSSARY, growthLine } from "@/lib/why";
+import { GEMSCORE_GLOSSARY } from "@/lib/why";
 import { markExpandedWhy } from "@/lib/onboarding";
 import { buildGemLinks } from "@/lib/links";
-import { compactCount } from "@/lib/format";
-import { AppIcon, InfoDot, ScoreBadge, Trend } from "@/components/ui";
+import { compactCount, isoDateLabel } from "@/lib/format";
+import { AppIcon, InfoDot, ScoreBadge } from "@/components/ui";
 import type { GemDossier } from "@/types/contracts";
 import { richestApp, StorePresenceChips } from "./AppStorePreview";
 import { RefreshDataButton } from "./RefreshDataButton";
@@ -63,10 +63,6 @@ export function GemHeader({
 
   const metaParts = [gem.cohort, app?.developer, app?.price_label].filter(Boolean);
 
-  // Same observed-growth line the feed cards use — one source of truth.
-  const g = growthLine(gem.growth, gem);
-  const trendLabel = g.kind === "growth" ? g.text : `${g.text} ads live`;
-
   return (
     <section style={{ border: "1.5px solid var(--ink)", background: "var(--surface-1)", padding: "20px 22px", boxShadow: "var(--shadow-hard)" }}>
       {/* identity row */}
@@ -93,12 +89,16 @@ export function GemHeader({
           </div>
         </div>
         <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8 }}>
-          <ScoreBadge score={gem.gem_score} variant="detail" />
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <Trend glyph={g.glyph} label={trendLabel} tone={g.tone} />
+            <ScoreBadge score={gem.gem_score} variant="detail" />
             <InfoDot text={GEMSCORE_GLOSSARY} label="what GemScore means" />
           </div>
           <RefreshDataButton advertiserId={advertiserId} onRefreshed={onRefreshed} />
+          {gem.ads_last_seen && (
+            <span className="t-sm" style={{ color: "var(--muted)" }}>
+              Data fetched {isoDateLabel(gem.ads_last_seen)}
+            </span>
+          )}
         </div>
       </div>
 
