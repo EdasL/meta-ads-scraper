@@ -6,7 +6,7 @@ from sqlalchemy import text
 from agf.scoring.cohorts import pctile
 from agf.scoring.features import build_features
 from agf.scoring.gemscore import (scaling_velocity, under_radar, funnel_intent,
-                                  demand, whitespace, gem_score)
+                                  demand, whitespace, gem_score, WINNER_AGE_CAP_DAYS)
 from agf.scoring.vetoes import apply_vetoes
 from agf.scoring.whitespace import load_niche_crowding
 
@@ -28,15 +28,19 @@ def _values(members, attr):
     return [getattr(m, attr) for m in members if getattr(m, attr) is not None]
 
 
+def _capped_age(days):
+    # winner_age saturates at the cap so an incumbent's ancient ad can't dominate the
+    # cohort normalize (see gemscore.WINNER_AGE_CAP_DAYS).
+    return min(days, WINNER_AGE_CAP_DAYS)
+
+
 def _sv_components(fv, members):
-    # all "higher raw = faster scaling"; longevity uses the bounded share so a big
-    # incumbent's raw run-length can't dominate a fast-growing gem.
+    # v3: running-days winner signal dominates; count_growth is a clamped (>=0) bonus.
     return {
-        "wow": pctile(fv.wow_log_growth, _values(members, "wow_log_growth")),
-        "ramp": pctile(fv.window_growth, _values(members, "window_growth")),
-        "accel": pctile(fv.accel, _values(members, "accel")),
-        "ewma": pctile(fv.ewma_velocity, _values(members, "ewma_velocity")),
-        "longevity": pctile(fv.longevity_share, _values(members, "longevity_share")),
+        "winner_age": pctile(_capped_age(fv.max_longevity_days),
+                             [_capped_age(v) for v in _values(members, "max_longevity_days")]),
+        "winner_depth": pctile(fv.proven_winner_count, _values(members, "proven_winner_count")),
+        "count_growth": pctile(fv.count_growth, _values(members, "count_growth")),
         "iteration": pctile(fv.iteration_rate, _values(members, "iteration_rate")),
     }
 

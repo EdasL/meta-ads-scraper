@@ -14,6 +14,12 @@ gem — but a *present, genuinely low* axis (famous brand -> UR≈0) still gates
 # ad count, CLAMPED at 0 so a falling count never subtracts. iteration = still launching.
 SV_WEIGHTS = {"winner_age": 0.40, "winner_depth": 0.30,
               "count_growth": 0.15, "iteration": 0.15}
+# winner_age saturates here: an ad running >= this many days is "fully proven", so a big
+# incumbent's 500-day ad can't dominate the cohort-percentile normalize and bury a
+# genuinely-emerging app's winner. A young app's ~month-old winner reaches the cap and
+# sits at the top of the axis. Applied to the SV component only; the stored
+# max_longevity_days stays raw. Incumbents are gated by UR + vetoes, not by winner_age.
+WINNER_AGE_CAP_DAYS = 35
 UR_WEIGHTS = {"rating": 0.40, "followers": 0.20, "reach": 0.20, "newness": 0.20}
 FI_WEIGHTS = {"fingerprint": 0.50, "cta": 0.30, "monetize": 0.20}
 # demand: store-traction velocity (installs = Play maxInstalls delta; reviews =

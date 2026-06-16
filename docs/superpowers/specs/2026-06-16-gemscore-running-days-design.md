@@ -93,10 +93,45 @@ the fix.
 
 ```python
 PROVEN_WINNER_DAYS = 21   # a live ad running >= this many days counts as a "winner"
+WINNER_AGE_CAP_DAYS = 35  # winner_age saturates here (see refinement below)
 ```
 
-(was an implicit 14-day floor; raised to 21 for the depth threshold. Single knob,
-easy to retune.)
+(`PROVEN_WINNER_DAYS` was an implicit 14-day floor; raised to 21 for the depth
+threshold. Single knob, easy to retune.)
+
+### Refinement (2026-06-16, found during implementation): cap `winner_age`
+
+Using the **raw** oldest-live-ad age for `winner_age` rewards incumbency: a big
+brand that has run one ad for 500+ days would top the axis, and in cohort
+percentile normalization those ancient ads squash every genuinely-emerging app's
+month-old winner down to the bottom. v2 avoided this by using a *bounded*
+longevity-share; v3 keeps "longer = better" but **caps the signal at
+`WINNER_AGE_CAP_DAYS = 35`** (user decision 2026-06-16: ~a month of running already
+proves a winner; longer just signals incumbency): an ad running ≥35 days is "fully
+proven", extra age adds nothing, and a young app's ~month-old winner reaches the cap
+and sits at the top of the axis. The cap is applied only to the SV `winner_age`
+*component*
+(both the app's value and the cohort members it is ranked against are capped);
+the stored/displayed `max_longevity_days` stays raw (it is a real reported number
+and is written to `advertiser_scores`). Incumbents are still held back by the
+under-radar axis (UR≈0 collapses the gate) and the existing vetoes — not by
+`winner_age`.
+
+### Test corpus is v3-relabeled (not just renumbered)
+
+`tests/scoring/test_backtest_synthetic.py` encoded the v2 worldview: "breakout" =
+young app with an exploding ad **count** and a single short-lived ad; "incumbent"
+= oldest ad. Under v3 that is backwards, so the corpus is updated to v3 semantics:
+a v3 breakout is an emerging app (low ratings/reach → high UR) that has found
+**multiple proven winners** (several live ads running ≥21 days → high
+`winner_depth`) **and** shows real store traction (seeded install/review velocity
+→ a genuine Demand axis, not the 0.5 floor). Incumbents stay distinguished by
+ratings/reach/installs (UR≈0 + `established_traction`/`relaunch` vetoes), NOT by
+ad age. The property tests (rank/threshold/veto) keep their original intent; only
+the trajectories that feed them are re-labeled. Note: because Demand's exponent
+rose (.20→.38), the corpus MUST seed demand for breakouts or they cannot clear
+`ALERT_THRESHOLD=60` — which is correct, since a v3 gem without install/review
+growth is not a gem.
 
 ### Vetoes
 

@@ -75,63 +75,70 @@ def _seasonal_with_trend(n=12, period=4):
 
 
 # ---------------------------------------------------------------------------
-# Corpus specification
-# genre, rating_count, release_date_str, is_emerging, longevity_days,
+# Corpus specification (GemScore v3 semantics, 2026-06-16)
+# genre, rating_count, release_date_str, is_emerging, ad_ages,
 # series, reach, has_funnel, cta_type, parent_page_id (or None)
+#
+# ad_ages: per-ad running-days (one live ad seeded per entry). v3's winner signal is
+# RUNNING-DAYS, so a true breakout is an emerging app that has found MULTIPLE proven
+# winners — several live ads running >= PROVEN_WINNER_DAYS (21) — giving it a high
+# winner_depth. Incumbents/flat advertisers keep a single ad and are held back by the
+# under-radar axis + vetoes (ratings/reach), NOT by ad age (winner_age saturates at the
+# 35-day cap, so a 500-day incumbent ad can't dominate the cohort normalize).
 # ---------------------------------------------------------------------------
 
 # "Health & Fitness" cohort — 8 members
 HF_SPECS = {
-    # --- true breakouts (2) ---
-    "BT01": ("Health & Fitness", 50,        "2026-05-01", True,  35,
+    # --- true breakouts (2): multiple proven winners (live ads >=21d) ---
+    "BT01": ("Health & Fitness", 50,        "2026-05-01", True,  [35, 30, 25, 22],
              _convex_rising(10), 100, True, "INSTALL_MOBILE_APP", None),
-    "BT02": ("Health & Fitness", 70,        "2026-04-15", True,  51,
+    "BT02": ("Health & Fitness", 70,        "2026-04-15", True,  [50, 40, 30, 22],
              _convex_rising(10, start=2, factor=1.8), 70, True, "INSTALL_MOBILE_APP", None),
-    # --- incumbent (1) ---
-    "BT03": ("Health & Fitness", 9_000_000, "2016-01-01", False, 500,
+    # --- incumbent (1): one ancient ad, gated by ratings/reach + established_traction ---
+    "BT03": ("Health & Fitness", 9_000_000, "2016-01-01", False, [500],
              _flat(10, 90), 12_000_000, False, "LEARN_MORE", None),
-    # --- flat advertiser (1) ---
-    "BT04": ("Health & Fitness", 5_000,     "2025-01-01", True,  150,
+    # --- flat advertiser (1): single durable ad, no growth/depth -> must not alert ---
+    "BT04": ("Health & Fitness", 5_000,     "2025-01-01", True,  [150],
              _flat(10, 40), 20_000, False, "LEARN_MORE", None),
     # --- disguised incumbent (1) ---  parent_page_id will be set to BT03's adv id
-    "BT05": ("Health & Fitness", 300,       "2026-03-01", True,  96,
+    "BT05": ("Health & Fitness", 300,       "2026-03-01", True,  [96],
              _convex_rising(10), 200, True, "INSTALL_MOBILE_APP", "BT03"),
     # --- relaunch (1) ---
-    "BT06": ("Health & Fitness", 150_000,   "2026-02-01", True,  126,
+    "BT06": ("Health & Fitness", 150_000,   "2026-02-01", True,  [126],
              _convex_rising(10), 300, True, "INSTALL_MOBILE_APP", None),
     # --- seasonal_only (1) ---
-    "BT07": ("Health & Fitness", 400,       "2025-10-01", True,  250,
+    "BT07": ("Health & Fitness", 400,       "2025-10-01", True,  [250],
              _seasonal_no_trend(12), 500, True, "INSTALL_MOBILE_APP", None),
     # --- seasonal_with_trend (1) ---
-    "BT08": ("Health & Fitness", 350,       "2025-10-01", True,  250,
+    "BT08": ("Health & Fitness", 350,       "2025-10-01", True,  [250],
              _seasonal_with_trend(12), 400, True, "INSTALL_MOBILE_APP", None),
 }
 
 # "Education" cohort — 8 members
 ED_SPECS = {
-    # --- true breakout (2) ---
-    "BT11": ("Education", 60,        "2026-05-01", True,  35,
+    # --- true breakout (2): multiple proven winners ---
+    "BT11": ("Education", 60,        "2026-05-01", True,  [35, 30, 25, 22],
              _convex_rising(10), 120, True, "INSTALL_MOBILE_APP", None),
-    "BT12": ("Education", 65,        "2026-04-20", True,  45,
+    "BT12": ("Education", 65,        "2026-04-20", True,  [45, 35, 28, 22],
              _convex_rising(10, start=2, factor=1.8), 75, True, "INSTALL_MOBILE_APP", None),
     # --- incumbent (1) ---
-    "BT13": ("Education", 7_000_000, "2015-06-01", False, 600,
+    "BT13": ("Education", 7_000_000, "2015-06-01", False, [600],
              _flat(10, 85), 10_000_000, False, "LEARN_MORE", None),
     # --- flat advertiser (1) ---
-    "BT14": ("Education", 4_000,     "2025-02-01", True,  145,
+    "BT14": ("Education", 4_000,     "2025-02-01", True,  [145],
              _flat(10, 35), 15_000, False, "LEARN_MORE", None),
     # --- one_week_blip (1) — only 1 metric row → weeks_observed=1 < 2 ---
-    "BT15": ("Education", 200,       "2026-05-10", True,  20,
+    "BT15": ("Education", 200,       "2026-05-10", True,  [20],
              [5],  # single week
              200, True, "INSTALL_MOBILE_APP", None),
-    # --- short_longevity (1) — longevity < 14d ---
-    "BT16": ("Education", 100,       "2026-05-25", True,  10,   # 10d < 14d floor
+    # --- short_longevity (1) — single young ad below the proven-winner line ---
+    "BT16": ("Education", 100,       "2026-05-25", True,  [10],   # 10d < 21d, not yet proven
              _convex_rising(8), 150, True, "INSTALL_MOBILE_APP", None),
     # --- disguised incumbent in Education (1) ---
-    "BT17": ("Education", 250,       "2026-03-10", True,  87,
+    "BT17": ("Education", 250,       "2026-03-10", True,  [87],
              _convex_rising(10), 180, True, "INSTALL_MOBILE_APP", "BT13"),
     # --- relaunch in Education (1) ---
-    "BT18": ("Education", 120_000,   "2026-01-15", True,  141,
+    "BT18": ("Education", 120_000,   "2026-01-15", True,  [141],
              _convex_rising(10), 220, True, "INSTALL_MOBILE_APP", None),
 }
 
@@ -146,22 +153,29 @@ def _seed(conn):
     """Insert all corpus advertisers. Returns {page_id: advertiser_id}."""
     ids = {}
     for pid, spec in ALL_SPECS.items():
-        genre, ratings, rel, emerging, longd, series, reach, funnel, cta, _parent = spec
-        ar = AdRecord(
-            f"{pid}-AD", pid, pid, True,
-            NOW - longd * DAY,   # start_date epoch
-            None, 5, cta, "Install",
-            f"https://apps.apple.com/us/app/x/id{pid}", "body"
-        )
-        adv = repo.upsert_advertiser(conn, ar)
+        genre, ratings, rel, emerging, ad_ages, series, reach, funnel, cta, _parent = spec
+        def _ar(j, age):
+            return AdRecord(
+                f"{pid}-AD{j}", pid, pid, True,
+                NOW - age * DAY,   # start_date epoch
+                None, 5, cta, "Install",
+                f"https://apps.apple.com/us/app/x/id{pid}", "body"
+            )
+        # advertiser + app are page-level; seed one live ad per ad_ages entry so
+        # winner_depth (count of live ads >= PROVEN_WINNER_DAYS) is exercised.
+        adv = repo.upsert_advertiser(conn, _ar(0, ad_ages[0]))
         app = repo.upsert_app(conn, {
             "store": "ios", "store_id": pid, "name": pid,
             "genre": genre, "rating_count": ratings,
             "release_date": rel, "is_emerging": emerging,
         })
-        ad_id = repo.upsert_ad(conn, ar, adv, app)
+        first_ad_id = None
+        for j, age in enumerate(ad_ages):
+            ad_id = repo.upsert_ad(conn, _ar(j, age), adv, app)
+            if j == 0:
+                first_ad_id = ad_id
         if funnel:
-            repo.upsert_funnel(conn, ad_id,
+            repo.upsert_funnel(conn, first_ad_id,
                                f"https://{pid}.example",
                                f"https://{pid}.example/checkout",
                                "shot.png")
