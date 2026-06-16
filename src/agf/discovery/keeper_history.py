@@ -80,8 +80,11 @@ async def refresh_one_advertiser(engine, extractor, advertiser_id, page_id, *,
     flipped = 0
     with begin(engine) as conn:
         app_id = _linked_app_id(conn, advertiser_id)
-        for ad in uniq:
-            ad_id = repo.upsert_ad(conn, ad, advertiser_id, app_id)
+        # `uniq` preserves Meta's listing order, which for a per-advertiser (page) query
+        # is "Impressions: high to low" by default — so the enumerate index is the ad's
+        # impressions rank (1-based). The dossier reel orders by it.
+        for meta_rank, ad in enumerate(uniq, start=1):
+            ad_id = repo.upsert_ad(conn, ad, advertiser_id, app_id, meta_rank=meta_rank)
             repo.ensure_text_creative(conn, ad_id, ad)
         for wk_start, cnt, nnew in zip(starts, weekly, new_weekly):
             repo.upsert_app_advertiser_metric(conn, advertiser_id, wk_start,

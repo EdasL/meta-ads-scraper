@@ -126,14 +126,18 @@ def upsert_app(conn, meta) -> int:
     }).scalar_one()
 
 
-def upsert_ad(conn, ar, advertiser_id: int, app_id: int | None) -> int:
+def upsert_ad(conn, ar, advertiser_id: int, app_id: int | None,
+              meta_rank: int | None = None) -> int:
+    """Upsert one ad. `meta_rank` is the ad's 1-based position in Meta's
+    impressions-ordered listing (set only by the impressions-ordered re-scrape in
+    refresh_one_advertiser); a NULL leaves any existing rank untouched on conflict."""
     return conn.execute(text("""
         INSERT INTO public.ads
           (external_ad_id, advertiser_id, app_id, link_url, cta_type, cta_text,
-           publisher_platforms, is_active, start_date, end_date, collation_count)
+           publisher_platforms, is_active, start_date, end_date, collation_count, meta_rank)
         VALUES
           (:ext, :adv, :app, :link, :cta_type, :cta_text,
-           :platforms, :is_active, :start_date, :end_date, :collation)
+           :platforms, :is_active, :start_date, :end_date, :collation, :meta_rank)
         ON CONFLICT (external_ad_id) DO UPDATE SET
           advertiser_id   = EXCLUDED.advertiser_id,
           app_id          = COALESCE(EXCLUDED.app_id, public.ads.app_id),
@@ -143,6 +147,7 @@ def upsert_ad(conn, ar, advertiser_id: int, app_id: int | None) -> int:
           is_active       = EXCLUDED.is_active,
           end_date        = COALESCE(EXCLUDED.end_date, public.ads.end_date),
           collation_count = COALESCE(EXCLUDED.collation_count, public.ads.collation_count),
+          meta_rank       = COALESCE(EXCLUDED.meta_rank, public.ads.meta_rank),
           last_seen       = now()
         RETURNING id
     """), {
@@ -151,6 +156,7 @@ def upsert_ad(conn, ar, advertiser_id: int, app_id: int | None) -> int:
         "platforms": getattr(ar, "publisher_platforms", None),
         "is_active": bool(ar.is_active), "start_date": _ts(ar.start_date),
         "end_date": _ts(ar.end_date), "collation": ar.collation_count,
+        "meta_rank": meta_rank,
     }).scalar_one()
 
 

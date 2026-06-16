@@ -149,9 +149,11 @@ func Dossier(ctx context.Context, g *gorm.DB, advertiserID int) (*models.GemDoss
 		//     through models.StringList without driver array plumbing.
 		//   - eu_total_reach: latest non-NULL snapshot for the ad (US ads have
 		//     none → null).
-		// Best ads first: active ads, then highest EU reach (US ads have none →
-		// sort last), then longest-running, then ads with stored media as a
-		// tiebreaker — the order the reel shows its top 5.
+		// Best ads first: active ads, then Meta's own impressions rank (meta_rank,
+		// captured from the "Impressions: high to low" listing order — NULL until the
+		// advertiser is re-scraped), then highest EU reach (US ads have none → sort
+		// last), then longest-running, then stored media — the order the reel shows
+		// its top 5.
 		creatives := make([]models.CreativeInfo, 0)
 		if err := tx.Raw(
 			`SELECT * FROM (
@@ -163,6 +165,7 @@ func Dossier(ctx context.Context, g *gorm.DB, advertiserID int) (*models.GemDoss
 			          a.start_date::date AS ad_started_on,
 			          a.end_date::date AS ad_ended_on,
 			          a.is_active AS ad_active,
+			          a.meta_rank,
 			          CASE
 			            WHEN a.start_date IS NULL THEN NULL
 			            WHEN COALESCE(a.is_active, false) THEN CURRENT_DATE - a.start_date::date
@@ -188,6 +191,7 @@ func Dossier(ctx context.Context, g *gorm.DB, advertiserID int) (*models.GemDoss
 			            c.id
 			 ) per_ad
 			 ORDER BY COALESCE(ad_active, false) DESC,
+			          meta_rank ASC NULLS LAST,
 			          eu_total_reach DESC NULLS LAST,
 			          ad_days_running DESC NULLS LAST,
 			          (s3_key IS NOT NULL) DESC`,

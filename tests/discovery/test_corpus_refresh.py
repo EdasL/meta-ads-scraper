@@ -98,6 +98,22 @@ def test_flip_skipped_when_listing_truncated(pg_conn, _migrated_engine):
     assert active["cr-B2"] is True                  # NOT flipped — listing was incomplete
 
 
+def test_meta_rank_follows_listing_order(pg_conn, _migrated_engine):
+    _clean_corpus(pg_conn)
+    eng = _migrated_engine
+    adv = repo.upsert_advertiser(pg_conn, SimpleNamespace(page_id="CORPUSREFR", page_name="R", page_like_count=10))
+    pg_conn.commit()
+    # listing returns three ads in impressions order: top, mid, low.
+    listing = [make_ad("cr-top", "CORPUSREFR", "R", "https://x/app"),
+               make_ad("cr-mid", "CORPUSREFR", "R", "https://x/app"),
+               make_ad("cr-low", "CORPUSREFR", "R", "https://x/app")]
+    ext = FakeExtractor(page_ads={"CORPUSREFR": listing}, page_truncated={"CORPUSREFR": False})
+    asyncio.run(refresh_one_advertiser(eng, ext, adv, "CORPUSREFR", hist_pages=12, weeks=16))
+    ranks = {r.external_ad_id: r.meta_rank for r in pg_conn.execute(text(
+        "SELECT external_ad_id, meta_rank FROM public.ads WHERE advertiser_id = :a"), {"a": adv})}
+    assert ranks == {"cr-top": 1, "cr-mid": 2, "cr-low": 3}, ranks
+
+
 from agf.discovery.corpus_refresh import refresh_corpus
 
 
