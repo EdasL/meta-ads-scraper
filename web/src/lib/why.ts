@@ -84,7 +84,7 @@ export function growthLine(
 }
 
 export const GEMSCORE_GLOSSARY =
-  "GemScore rates how promising a find is, 0 to 100. High = scaling fast, still under the radar, and a real funnel.";
+  "GemScore rates how promising a find is, 0 to 100. High = proven ads running a while, growing installs and reviews, and still under the radar.";
 
 export interface Trend {
   pct: number | null;
