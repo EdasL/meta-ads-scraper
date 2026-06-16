@@ -138,6 +138,16 @@ export interface AdLifecycle {
   ended_4w: number; // ads ended in the last 28 days
 }
 
+/**
+ * Trailing 4-week change in the ad signals: the count today minus the count 28
+ * days ago, reconstructed from each ad's run interval (start_date/end_date), so
+ * it is exact and available immediately rather than accrued from snapshots.
+ */
+export interface MetricChange4w {
+  active_ads: number; // change in active ad count
+  running_30d: number; // change in ads running 30+ days
+}
+
 export interface CompanyInfo {
   domain?: string;
   domain_age_years?: number;
@@ -197,6 +207,9 @@ export interface GemDossier extends ShortlistRow {
   scaling: ScalingPoint[];
   /** Ad-lifecycle summary; null on older API builds (the UI omits its clauses). */
   ad_lifecycle?: AdLifecycle | null;
+  /** Trailing 4-week change in the ad signals (reconstructed from each ad's run
+   * interval). Null on older builds or when the advertiser has no datable ads. */
+  metric_change_4w?: MetricChange4w | null;
   company: CompanyInfo;
   apps: AppInfo[];
   /** Daily app-store snapshots (merged from /gems/{id}/app-metrics). */

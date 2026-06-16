@@ -152,6 +152,15 @@ export interface ApiGemDossier {
   meta_active_ads_capped?: boolean | null; // true when the count hit the cap
   meta_active_ads_checked_at?: string | null;
   ad_lifecycle?: ApiAdLifecycle | null; // absent/null on older builds
+  metric_change_4w?: ApiMetricChange4w | null; // trailing 4-week ad-signal change
+}
+
+/** `MetricChange4w` (backend models.go) — trailing 4-week change in the ad
+ * signals, reconstructed from each ad's run interval (start_date/end_date).
+ * Absent/null on older builds or when the advertiser has no datable ads. */
+export interface ApiMetricChange4w {
+  active_ads: number;
+  running_30d: number;
 }
 
 /** `ScalingPoint` (schemas.py) — one weekly snapshot. Note `total_eu_reach`. */

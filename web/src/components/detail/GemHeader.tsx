@@ -18,7 +18,17 @@ import { RefreshDataButton } from "./RefreshDataButton";
  * and the outbound links — one block, no satellite sections.
  */
 
-function Stat({ label, value, hint }: { label: string; value: React.ReactNode; hint?: string }) {
+function Stat({
+  label,
+  value,
+  hint,
+  delta,
+}: {
+  label: string;
+  value: React.ReactNode;
+  hint?: string;
+  delta?: number | null;
+}) {
   if (value === undefined || value === null || value === "") return null;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
@@ -27,7 +37,25 @@ function Stat({ label, value, hint }: { label: string; value: React.ReactNode; h
         {label}
         {hint && <InfoDot text={hint} label={label} />}
       </span>
+      {delta != null && <DeltaLine delta={delta} />}
     </div>
+  );
+}
+
+/** The trailing 4-week change for a stat — green when growing, muted otherwise.
+ * A drop is never alarm-red: a falling ad count is information, not a failure. */
+function DeltaLine({ delta }: { delta: number }) {
+  const text =
+    delta === 0
+      ? "no change in 4w"
+      : `${delta > 0 ? "+" : "−"}${compactCount(Math.abs(delta))} in 4w`;
+  return (
+    <span
+      className="font-mono nums"
+      style={{ fontSize: "var(--fs-xs)", color: delta > 0 ? "var(--up)" : "var(--muted)" }}
+    >
+      {text}
+    </span>
   );
 }
 
@@ -52,6 +80,7 @@ export function GemHeader({
 }) {
   const [open, setOpen] = useState(false);
   const { explainer } = gem;
+  const mc = gem.metric_change_4w; // trailing 4-week change in the ad signals
 
   const app = richestApp(gem.apps);
   const name = gem.app_name ?? gem.page_name;
@@ -119,14 +148,21 @@ export function GemHeader({
         <div style={{ display: "flex", gap: 28, flexWrap: "wrap" }}>
           <Stat label="Ads in library" value={adsInLibrary} />
           <Stat
+            label="Active ads"
+            value={gem.ad_lifecycle ? gem.ad_lifecycle.active_now.toLocaleString() : undefined}
+            delta={mc?.active_ads}
+            hint="Ads running right now. The 4-week change shows whether the advertiser is putting more spend behind the app or pulling back."
+          />
+          <Stat
             label="Ads running 30+ days"
             value={gem.ad_lifecycle ? gem.ad_lifecycle.running_30d_plus.toLocaleString() : undefined}
-            hint="Ads still live after 30+ days. An advertiser keeps paying to run an ad only when it converts, so long-running ads are proven winners — the strongest sign the app is working."
+            delta={mc?.running_30d}
+            hint="Ads still live after 30+ days. An advertiser keeps paying to run an ad only when it converts, so long-running ads are proven winners — the strongest sign the app is working. The 4-week change shows whether winners are accumulating."
           />
           <Stat
             label="New ads (last 4 weeks)"
             value={gem.ad_lifecycle ? gem.ad_lifecycle.launched_4w.toLocaleString() : undefined}
-            hint="Ads launched in the last 4 weeks. Steady new creative means the advertiser is still testing and scaling spend, not coasting on old ads."
+            hint="Ads launched in the last 4 weeks — already a 4-week figure. Steady new creative means the advertiser is still testing and scaling spend, not coasting on old ads."
           />
           <Stat label="Page likes" value={gem.page_like_count?.toLocaleString()} />
         </div>

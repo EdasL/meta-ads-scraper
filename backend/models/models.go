@@ -246,24 +246,36 @@ type CreativeInfo struct {
 // The Meta-signal block (ads_last_seen … meta_active_ads_checked_at) comes from
 // public.advertisers; counts are NULL until the count-ads job has run.
 type GemDossier struct {
-	Gem                    ShortlistRow   `json:"gem"`
-	Domain                 *string        `json:"domain"`
-	PageID                 *string        `json:"page_id" gorm:"column:page_id"`
-	PageCategory           *string        `json:"page_category"`
-	IgUsername             *string        `json:"ig_username"`
-	IgFollowers            *int           `json:"ig_followers"`
-	ParentCompany          *string        `json:"parent_company"`
-	AdsLastSeen            *APITime       `json:"ads_last_seen"`
-	PageLikeCount          *int64         `json:"page_like_count"`
-	MetaActiveAds          *int           `json:"meta_active_ads"`
-	MetaActiveAdsCapped    bool           `json:"meta_active_ads_capped"`
-	MetaActiveAdsCheckedAt *APITime       `json:"meta_active_ads_checked_at"`
-	Apps                   []AppInfo      `json:"apps"`
-	Funnels                []FunnelInfo   `json:"funnels"`
-	Creatives              []CreativeInfo `json:"creatives"`
-	Explainer              *ExplainerInfo `json:"explainer"`
-	Growth                 *GrowthInfo    `json:"growth"`
-	AdLifecycle            *AdLifecycle   `json:"ad_lifecycle"`
+	Gem                    ShortlistRow    `json:"gem"`
+	Domain                 *string         `json:"domain"`
+	PageID                 *string         `json:"page_id" gorm:"column:page_id"`
+	PageCategory           *string         `json:"page_category"`
+	IgUsername             *string         `json:"ig_username"`
+	IgFollowers            *int            `json:"ig_followers"`
+	ParentCompany          *string         `json:"parent_company"`
+	AdsLastSeen            *APITime        `json:"ads_last_seen"`
+	PageLikeCount          *int64          `json:"page_like_count"`
+	MetaActiveAds          *int            `json:"meta_active_ads"`
+	MetaActiveAdsCapped    bool            `json:"meta_active_ads_capped"`
+	MetaActiveAdsCheckedAt *APITime        `json:"meta_active_ads_checked_at"`
+	Apps                   []AppInfo       `json:"apps"`
+	Funnels                []FunnelInfo    `json:"funnels"`
+	Creatives              []CreativeInfo  `json:"creatives"`
+	Explainer              *ExplainerInfo  `json:"explainer"`
+	Growth                 *GrowthInfo     `json:"growth"`
+	AdLifecycle            *AdLifecycle    `json:"ad_lifecycle"`
+	MetricChange4w         *MetricChange4w `json:"metric_change_4w"`
+}
+
+// MetricChange4w is the trailing 4-week change in the ad signals, reconstructed
+// from each ad's own start_date/end_date in public.ads: the count as of today
+// minus the count as of 28 days ago. No snapshot table is needed — every ad
+// carries the interval it ran, so any past date's count is exact and the deltas
+// are real immediately (not "building history"). Nil only when the advertiser
+// has no datable ads at all.
+type MetricChange4w struct {
+	ActiveAds  int `json:"active_ads"`
+	Running30d int `json:"running_30d"`
 }
 
 // AppMetricPoint mirrors an adtech.app_metrics row joined to public.apps for

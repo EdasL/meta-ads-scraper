@@ -25,6 +25,7 @@ import type {
   ApiGrowth,
   ApiHeroCreative,
   ApiAdLifecycle,
+  ApiMetricChange4w,
 } from "@/types/api";
 import type {
   ShortlistRow,
@@ -42,6 +43,7 @@ import type {
   Growth,
   HeroCreative,
   AdLifecycle,
+  MetricChange4w,
 } from "@/types/contracts";
 
 /** Null/undefined numeric → default (UI types axes as non-null; bars do value×100). */
@@ -161,6 +163,13 @@ export function adaptAdLifecycle(l: ApiAdLifecycle | null | undefined): AdLifecy
     launched_4w: num(l.launched_4w),
     ended_4w: num(l.ended_4w),
   };
+}
+
+/** 4-week ad-signal change → null when the API doesn't send it (older builds or
+ * an advertiser with no datable ads). */
+export function adaptMetricChange4w(m: ApiMetricChange4w | null | undefined): MetricChange4w | null {
+  if (!m) return null;
+  return { active_ads: num(m.active_ads), running_30d: num(m.running_30d) };
 }
 
 /** Daily app-store snapshot → UI point; nulls become undefined (optional). */
@@ -301,5 +310,6 @@ export function adaptDossier(
     meta_active_ads_capped: d.meta_active_ads_capped ?? undefined,
     meta_active_ads_checked_at: d.meta_active_ads_checked_at ?? undefined,
     ad_lifecycle: adaptAdLifecycle(d.ad_lifecycle),
+    metric_change_4w: adaptMetricChange4w(d.metric_change_4w),
   };
 }

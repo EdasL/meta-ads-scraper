@@ -37,6 +37,16 @@ type dossierReview struct {
 	AppID int `gorm:"column:app_id"`
 }
 
+// adChange4w scans the trailing 4-week change in the ad signals, reconstructed
+// from each ad's run interval (start_date/end_date) in public.ads — no snapshot
+// table needed. An ad counts as active on a date D when it started on or before
+// D and had not ended by D; "running 30+ days on D" additionally requires it to
+// have started 30+ days before D.
+type adChange4w struct {
+	ActiveDelta    int `gorm:"column:active_delta"`
+	Running30Delta int `gorm:"column:running30_delta"`
+}
+
 // Dossier ports queries.py:gem_dossier — five reads in one read-only snapshot.
 // Returns (nil, nil) when the advertiser is not in the matview (→ 404).
 func Dossier(ctx context.Context, g *gorm.DB, advertiserID int) (*models.GemDossier, error) {
@@ -266,6 +276,41 @@ func Dossier(ctx context.Context, g *gorm.DB, advertiserID int) (*models.GemDoss
 			d.MetaActiveAds = enr[0].MetaActiveAds
 			d.MetaActiveAdsCapped = enr[0].MetaActiveAdsCapped
 			d.MetaActiveAdsCheckedAt = enr[0].MetaActiveAdsCheckedAt
+		}
+
+		// 4-week change in the ad signals, reconstructed from each ad's run
+		// interval — count as of today minus count as of 28 days ago. Exact and
+		// available immediately (no snapshot history needed) because every ad
+		// carries its own start_date/end_date. Attached only when the advertiser
+		// has at least one datable ad.
+		// An ad was running on date D when it started on or before D and had not
+		// stopped by D. A still-active ad has no real end (its stored end_date is
+		// just the last day it was seen), so is_active stands in for "running
+		// through now" — the same rule the scaling-series reconstruction uses.
+		chg := make([]adChange4w, 0, 1)
+		if err := tx.Raw(
+			`SELECT
+			   count(*) FILTER (WHERE start_date <= now()
+			     AND (is_active OR end_date >= now()))
+			   - count(*) FILTER (WHERE start_date <= now() - interval '28 days'
+			     AND (is_active OR end_date >= now() - interval '28 days'))
+			     AS active_delta,
+			   count(*) FILTER (WHERE start_date <= now() - interval '30 days'
+			     AND (is_active OR end_date >= now()))
+			   - count(*) FILTER (WHERE start_date <= now() - interval '58 days'
+			     AND (is_active OR end_date >= now() - interval '28 days'))
+			     AS running30_delta
+			 FROM public.ads
+			 WHERE advertiser_id = ? AND start_date IS NOT NULL`,
+			advertiserID,
+		).Scan(&chg).Error; err != nil {
+			return err
+		}
+		if len(chg) > 0 {
+			d.MetricChange4w = &models.MetricChange4w{
+				ActiveAds:  chg[0].ActiveDelta,
+				Running30d: chg[0].Running30Delta,
+			}
 		}
 		out = d
 		return nil

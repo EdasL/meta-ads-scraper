@@ -140,6 +140,7 @@ func TestDossier(t *testing.T) {
 		Funnels       []map[string]any `json:"funnels"`
 		Creatives     []map[string]any `json:"creatives"`
 		AdLifecycle   map[string]any   `json:"ad_lifecycle"`
+		MetricChange  map[string]any   `json:"metric_change_4w"`
 	}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &d))
 	require.EqualValues(t, advID, d.Gem["advertiser_id"])
@@ -217,6 +218,13 @@ func TestDossier(t *testing.T) {
 	require.EqualValues(t, 2, d.Gem["ads_seen"])
 	require.EqualValues(t, 0, d.Gem["longrun_ad_count"])
 	require.EqualValues(t, 1, d.Gem["new_ads_4w"])
+
+	// 4-week change reconstructed from each ad's run interval: AD1 is active now
+	// but had not started 28 days ago (it began 9 days ago) → active ads +1;
+	// neither ad was running 30+ days in either window → running_30d 0.
+	require.NotNil(t, d.MetricChange)
+	require.EqualValues(t, 1, d.MetricChange["active_ads"])
+	require.EqualValues(t, 0, d.MetricChange["running_30d"])
 }
 
 // The second advertiser has no app, no ad run metadata, and no Meta signals:
@@ -474,11 +482,14 @@ func TestReadyz(t *testing.T) {
 
 // seed loads a small, deterministic dataset and refreshes the product matview.
 func seed(g *gorm.DB) {
+	// public.enrich_jobs has no FK to advertisers, so the CASCADE below does not
+	// reach it — list it explicitly, else "running" rows leak across test-binary
+	// runs and the enrich-dedup test sees a stale job (flaky count==0).
 	must(g.Exec(`TRUNCATE frontend.review_decisions, adtech.app_advertiser_metrics,
 		adtech.ad_metrics, adtech.app_metrics, adtech.advertiser_scores,
 		adtech.advertiser_growth, public.app_reviews, public.creatives, public.funnels,
 		public.ads, public.apps, public.advertisers, public.domains, logging.crawl_log,
-		discovery.funnel_candidates
+		discovery.funnel_candidates, public.enrich_jobs
 		RESTART IDENTITY CASCADE`).Error)
 
 	var domainID int
