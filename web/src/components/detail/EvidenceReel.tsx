@@ -46,6 +46,34 @@ function StatusPill({ active }: { active: boolean | undefined }) {
   );
 }
 
+/** Longevity badges that tie a card to the header counts: a still-running ad
+ * past 30 days is a proven winner ("Ads running 30+ days"); a still-running ad
+ * under 4 weeks old is one of the "New ads". Both read straight off the ad's own
+ * run length, so they only appear when the status is known. */
+function AdBadges({ c }: { c: Creative }) {
+  const days = c.ad_days_running;
+  if (c.ad_active !== true || days == null) return null;
+  const badge =
+    days >= 30 ? { label: "Running 30+ days", win: true } : days <= 28 ? { label: "New ad", win: false } : null;
+  if (!badge) return null;
+  return (
+    <span
+      className="font-mono"
+      style={{
+        fontSize: "0.62rem",
+        padding: "2px 7px",
+        border: "1px solid",
+        borderColor: badge.win ? "var(--up)" : "var(--line)",
+        background: badge.win ? "var(--up-bg)" : "transparent",
+        color: badge.win ? "var(--up)" : "var(--ink-soft)",
+        whiteSpace: "nowrap",
+      }}
+    >
+      {badge.label}
+    </span>
+  );
+}
+
 // Natural aspect ratio — reels are 9:16; a fixed landscape crop hides most of the ad.
 const mediaStyle: React.CSSProperties = {
   width: "100%",
@@ -82,7 +110,10 @@ function AdCard({ c }: { c: Creative }) {
       }}
     >
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "8px 10px" }}>
-        <StatusPill active={c.ad_active} />
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+          <StatusPill active={c.ad_active} />
+          <AdBadges c={c} />
+        </span>
         {c.external_ad_id && (
           <a
             href={adLibraryAdUrl(c.external_ad_id)}

@@ -18,12 +18,15 @@ import { RefreshDataButton } from "./RefreshDataButton";
  * and the outbound links — one block, no satellite sections.
  */
 
-function Stat({ label, value }: { label: string; value: React.ReactNode }) {
+function Stat({ label, value, hint }: { label: string; value: React.ReactNode; hint?: string }) {
   if (value === undefined || value === null || value === "") return null;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
       <span className="t-md w-strong nums">{value}</span>
-      <span className="eyebrow">{label}</span>
+      <span className="eyebrow" style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+        {label}
+        {hint && <InfoDot text={hint} label={label} />}
+      </span>
     </div>
   );
 }
@@ -114,8 +117,16 @@ export function GemHeader({
       >
         <div style={{ display: "flex", gap: 28, flexWrap: "wrap" }}>
           <Stat label="Ads in library" value={adsInLibrary} />
-          <Stat label="Running 30+ days" value={gem.ad_lifecycle ? gem.ad_lifecycle.running_30d_plus.toLocaleString() : undefined} />
-          <Stat label="Launched last 4 weeks" value={gem.ad_lifecycle ? gem.ad_lifecycle.launched_4w.toLocaleString() : undefined} />
+          <Stat
+            label="Ads running 30+ days"
+            value={gem.ad_lifecycle ? gem.ad_lifecycle.running_30d_plus.toLocaleString() : undefined}
+            hint="Ads still live after 30+ days. An advertiser keeps paying to run an ad only when it converts, so long-running ads are proven winners — the strongest sign the app is working."
+          />
+          <Stat
+            label="New ads (last 4 weeks)"
+            value={gem.ad_lifecycle ? gem.ad_lifecycle.launched_4w.toLocaleString() : undefined}
+            hint="Ads launched in the last 4 weeks. Steady new creative means the advertiser is still testing and scaling spend, not coasting on old ads."
+          />
           <Stat label="Page likes" value={gem.page_like_count?.toLocaleString()} />
         </div>
         {links.length > 0 && (
