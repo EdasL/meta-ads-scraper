@@ -95,6 +95,7 @@ from agf.scoring.cohorts import cohort_key
 _MONETIZE_CTAS = {"INSTALL_MOBILE_APP", "SHOP_NOW", "SUBSCRIBE", "SIGN_UP",
                   "GET_OFFER", "ORDER_NOW", "DOWNLOAD", "GET_QUOTE"}
 LONGEVITY_FLOOR_DAYS = 14
+PROVEN_WINNER_DAYS = 21  # a still-live ad running >= this many days is a proven "winner"
 
 
 @dataclass(frozen=True)
@@ -146,6 +147,8 @@ class FeatureVector:
     installs_delta_28d: int | None = None
     rating_count_delta_28d: int | None = None
     iteration_rate: float = 0.0          # EWMA of weekly ad-launch counts
+    proven_winner_count: int = 0         # live ads running >= PROVEN_WINNER_DAYS (winner_depth)
+    count_growth: float = 0.0            # max(0, window_growth): rising ad count only, never negative
 
 
 def _as_of_epoch(as_of) -> int:
@@ -175,6 +178,7 @@ def build_features(conn, advertiser_id: int, as_of) -> FeatureVector:
     max_long = max(longs) if longs else 0
     long_share = (sum(1 for d in longs if d >= LONGEVITY_FLOOR_DAYS) / len(longs)
                   if longs else 0.0)
+    proven_winners = sum(1 for d in longs if d >= PROVEN_WINNER_DAYS)
     collation_total = sum(int(r.collation_count or 0) for r in active)
     install_cta = any((r.cta_type or "") in _MONETIZE_CTAS for r in active)
     has_app = any(r.app_id is not None for r in ad_rows)
@@ -263,4 +267,9 @@ def build_features(conn, advertiser_id: int, as_of) -> FeatureVector:
         # "how often do they ship new creatives", not "what is still running"
         iteration_rate=ewma(weekly_launch_counts(
             [r.start_epoch for r in ad_rows if r.start_epoch], now_epoch)),
+        proven_winner_count=proven_winners,
+        # rising ad count is a small bonus; a FALLING count clamps to 0 so winner
+        # consolidation (20 ads -> 2 winners) is never punished. window_growth is the
+        # sustained multi-week ramp already computed above.
+        count_growth=max(0.0, window_log_growth(series)),
     )

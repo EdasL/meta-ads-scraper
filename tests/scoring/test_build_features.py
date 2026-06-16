@@ -137,3 +137,26 @@ def test_build_features_demand_none_without_snapshots(pg_conn):
     assert fv.installs_velocity is None and fv.review_velocity is None
     assert fv.installs_delta_28d is None and fv.rating_count_delta_28d is None
     assert fv.iteration_rate > 0                 # one launch still counts
+
+
+def test_build_features_winner_depth_and_count_growth_clamp(pg_conn):
+    """v3: proven_winner_count = live ads >=21d; count_growth clamps a FALLING count to 0."""
+    adv = repo.upsert_advertiser(pg_conn, _ad("F9", days_old=40))
+    app = repo.upsert_app(pg_conn, {"store": "ios", "store_id": "999",
+                                    "name": "Feet", "genre": "Health & Fitness",
+                                    "rating_count": 120, "release_date": "2026-05-20",
+                                    "is_emerging": True})
+    # three live ads: 40d and 25d are >=21 (proven), 5d is not
+    repo.upsert_ad(pg_conn, _ad("F9", days_old=40), adv, app)
+    repo.upsert_ad(pg_conn, _ad("F10", days_old=25), adv, app)
+    repo.upsert_ad(pg_conn, _ad("F11", days_old=5), adv, app)
+    # active_ad_count series 8,8,4,2 -> count FELL (winner consolidation)
+    for wk, n in zip(("2026-05-11", "2026-05-18", "2026-05-25", "2026-06-01"), (8, 8, 4, 2)):
+        repo.upsert_app_advertiser_metric(pg_conn, adv, wk, n, n, n * 10)
+
+    fv = build_features(pg_conn, adv, AS_OF)
+
+    assert fv.proven_winner_count == 2          # 40d + 25d ads, the 5d ad excluded
+    assert fv.max_longevity_days >= 40          # winner_age = oldest live ad
+    assert fv.window_growth < 0                 # raw ramp is negative (8 -> 2)
+    assert fv.count_growth == 0.0               # clamped: a falling count never subtracts
