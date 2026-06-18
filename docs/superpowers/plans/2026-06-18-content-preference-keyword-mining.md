@@ -388,17 +388,6 @@ pytestmark = pytest.mark.skipif(
     not os.environ.get("AGF_TEST_DB_URL"), reason="needs AGF_TEST_DB_URL")
 
 
-def _seed(conn, aid, app_id):
-    conn.execute(text("INSERT INTO public.apps (id, store, store_id, name, genre, description) "
-                      "VALUES (:i,'ios',:s,:n,'Music','Remove vocals') "
-                      "ON CONFLICT (id) DO NOTHING"),
-                 {"i": app_id, "s": f"s{app_id}", "n": f"App{aid}"})
-    conn.execute(text(
-        "INSERT INTO frontend.emerging_scaling_apps "
-        "(advertiser_id, app_id, app_name, gem_score) VALUES (:a,:p,:n,50) "
-        "ON CONFLICT DO NOTHING") if False else text("SELECT 1"))  # matview is read-only; see note
-
-
 def test_embed_apps_is_incremental(monkeypatch):
     eng = get_engine(os.environ["AGF_TEST_DB_URL"])
     apply_migrations(eng)
