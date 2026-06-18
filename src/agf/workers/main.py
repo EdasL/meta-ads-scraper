@@ -607,10 +607,17 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
 
     # 2a) content embeddings — embed new/changed apps so the preference scorer
     #     ranks on current content. Best-effort: a failure must not stall the cycle.
+    #     Uses engine.connect() + commit_every=25 so a 429 mid-cycle persists the
+    #     already-embedded batch instead of rolling the whole cycle back.
     if score_after and os.environ.get("AGF_EMBED_APPS", "1") != "0":
         try:
-            with begin(engine) as conn:
-                emb_stats = embed_apps(conn)
+            with engine.connect() as conn:
+                try:
+                    emb_stats = embed_apps(conn, commit_every=25)
+                    conn.commit()
+                except Exception as exc:
+                    conn.commit()  # persist progress before the best-effort handler logs
+                    raise
             print(f"[worker] embeddings: {emb_stats}", flush=True)
         except Exception as exc:
             print(f"[worker] embedding stage failed: {exc!r}",
