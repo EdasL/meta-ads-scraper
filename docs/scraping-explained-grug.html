@@ -66,7 +66,9 @@ ranked feed to a human who thumbs them up or down. This doc walks the whole mach
 <a href="#session">03 · sessions, warming, doc_id healing</a>
 <a href="#club">04 · the club — rd_challenge + 1675004</a>
 <a href="#sweep">05 · discovery sweep → candidates</a>
+<a href="#taxonomy">05A · the keyword taxonomy (the existing seed)</a>
 <a href="#triage">06 · triage — keep or drop</a>
+<a href="#appstore">06A · the App Store side</a>
 <a href="#funnel">07 · the funnel pipeline + bridge</a>
 <a href="#flywheel">08 · the keyword flywheel</a>
 <a href="#signal">09 · building the growth signal</a>
@@ -296,6 +298,56 @@ is still wasted proxy money.
 </div>
 
 <!-- ============================================================ -->
+<h2 id="taxonomy"><span class="n">05A</span> the keyword taxonomy — the existing seed</h2>
+<p>
+§05 said the sweep "loops over the taxonomy entries." Here is what those entries actually <em>are</em> — the
+hand-written list that every app the system finds ultimately traces back to. It lives in one file,
+<code>src/agf/discovery/taxonomy.py</code>, as a flat list of <code>TaxonomyEntry(keyword, layer, search_type,
+max_pages)</code> in three layers:
+</p>
+<p class="ref">src/agf/discovery/taxonomy.py</p>
+<table>
+<tr><th>layer</th><th>count</th><th>searchType</th><th>pages</th><th>what it is</th></tr>
+<tr><td><strong>FUNNEL_PHRASES</strong></td><td>~28</td><td><code>EXACT_PHRASE</code></td><td>8</td><td>quiz/funnel intent — these go to the funnel pipe (§07)</td></tr>
+<tr><td><strong>NICHE_TERMS</strong></td><td>~250</td><td><code>UNORDERED</code></td><td>4</td><td>the real app-hunting seed — niche + "app"</td></tr>
+<tr><td><strong>STORE_FRAGMENTS</strong></td><td>~13</td><td><code>UNORDERED</code></td><td>3</td><td>broad app-install catchers</td></tr>
+</table>
+<p>The actual words, by layer:</p>
+<pre><code>FUNNEL_PHRASES   "take the quiz" · "personalized plan" · "based on your answers"
+                 "your 28-day plan" · "answer a few questions" · "build your plan" ...
+
+STORE_FRAGMENTS  "apps.apple.com" · "play.google.com" · "download the app"
+                 "get it on google play" · "try the app free" · "our new app" ...
+
+NICHE_TERMS  (grouped by vertical, ~250 total)
+  fitness (~36)   "wall pilates app" · "kettlebell workout app" · "chair yoga app"
+                  "couch to 5k app" · "glute workout app" · "rucking app"
+  womens-health   "perimenopause app" · "pcos app" · "fertility tracker app"
+  diet (~18)      "carnivore diet app" · "keto diet app" · "glucose tracker app"
+  sleep (~10)     "sleep tracker app" · "brown noise app" · "lucid dreaming app"
+  mental (~27)    "cbt therapy app" · "adhd focus app" · "quit vaping app" · "nofap app"
+  productivity    "dopamine detox app" · "screen time blocker app" · "second brain app"
+  learning (~34)  "learn japanese app" · "ielts prep app" · "ai math solver app"
+  ai tools (~18)  "ai headshot app" · "ai companion app" · "ai interior design app"
+  finance (~18)   "debt payoff app" · "crypto portfolio app" · "subscription tracker app"
+  family          "co parenting app" · "potty training app" · "love language app"
+  lifestyle (~30) "plant identifier app" · "bird identifier app" · "guitar tuner app"</code></pre>
+<p>
+Two functions read this list: <code>all_entries()</code> returns everything; <code>sweep_entries()</code> returns just
+the <strong>niche_term + store_fragment</strong> layers — that's the daily app sweep (funnel phrases are spent on
+the funnel pipe instead). The <code>"... app"</code> suffix is deliberate: it's narrow, and the probes showed narrow
+keywords surface small apps while bare category words surface incumbents.
+</p>
+<div class="grug">
+this list is the whole mouth of the river. grug can only ever find an app that one of these ~300 words
+reaches. and look at the shape: about <strong>half</strong> is health / self-improvement (fitness + mental + diet +
+sleep + women's health), and <strong>all</strong> of it is consumer quiz-funnel utility apps. whole worlds are
+missing on purpose — games (excluded), and just-not-there — B2B, shopping, dating, photo-social, travel.
+grug even <em>deleted</em> the spiritual/astrology niche on 2026-06-18 because every app it found got a 👎. so
+the seed is broad-ish but lopsided, and it's a FIXED list — it goes stale. that's the whole reason §13's
+new door exists.
+</div>
+
 <h2 id="triage"><span class="n">06</span> triage — keep or drop</h2>
 <p>
 The sweep stored thin rows. Triage is where each candidate is <em>judged</em>: it's looked up in the real app
@@ -329,6 +381,59 @@ next cycle — it isn't punished for the scraper's own bad connection. Survivors
 </p>
 
 <!-- ============================================================ -->
+<h2 id="appstore"><span class="n">06A</span> the App Store side</h2>
+<p>
+Everything so far was Meta. But an "app candidate" is only a store link until the system asks the actual
+<strong>App Store / Google Play</strong> who it is. That store lookup is used in three places: <strong>triage</strong>
+(§06 — installs/ratings decide keep-or-drop), <strong>enrich</strong> (§10 — full detail), and the <strong>growth
+signal</strong> (§09 — daily install/review snapshots). All of it is Apple/Google traffic — <em>zero</em> Meta calls.
+</p>
+<p class="ref">src/agf/enrich_full/appstore.py · reviews.py · app_refresh.py · sidecar/</p>
+
+<h3>iOS — the iTunes Lookup API</h3>
+<p>One cheap public endpoint, batched up to 200 ids per call:</p>
+<pre><code>GET https://itunes.apple.com/lookup?id=111,222,...&entity=software&country=us
+
+  -> trackName, primaryGenreName, releaseDate, userRatingCount, averageUserRating,
+     artworkUrl512, screenshotUrls, formattedPrice, genreIds
+  is_game = primaryGenreName=="Games" or "6014" in genreIds   # authoritative, not guessed</code></pre>
+<p>
+<code>lookup_itunes_batch()</code> parses each result into an <code>AppMeta</code>. Critical rule (in the code's own
+comment): use <code>releaseDate</code> (first release) for the "is it emerging?" gate, <strong>not</strong>
+<code>currentVersionReleaseDate</code> (last update) — a 5-year-old app shipping an update isn't new.
+</p>
+
+<h3>Android — the Google Play sidecar</h3>
+<p>
+Google has no clean public API, so there's a tiny Node helper, <code>sidecar/gp_lookup.js</code>, that wraps the
+<code>google-play-scraper</code> library. Python shells out to it:
+</p>
+<pre><code>node sidecar/gp_lookup.js com.app.one com.app.two ...   # -> JSON array on stdout
+
+  -> title, developer, genre, genreId, released/releaseDateISO, score, ratings,
+     description, icon, screenshots, maxInstalls, priceText
+  is_game = genreId starts with "GAME_"</code></pre>
+<p>
+<code>maxInstalls</code> is the best free traction signal anywhere — iOS hides install counts, so for Apple the
+system uses the <em>rating-count delta</em> as a proxy. Same <code>AppMeta</code> shape comes out of both stores, so
+everything downstream is store-agnostic.
+</p>
+
+<h3>the other store feeds</h3>
+<table>
+<tr><th>feed</th><th>endpoint / how</th><th>used for</th></tr>
+<tr><td><strong>reviews</strong></td><td>iOS customer-reviews RSS (lowercase paged form) · <code>gp_reviews.js</code> sidecar</td><td>~20 recent reviews per gem (enrich)</td></tr>
+<tr><td><strong>new-releases</strong></td><td>iTunes <code>rss/newapplications</code> JSON</td><td>the §13 new door (emerging seed)</td></tr>
+<tr><td><strong>metadata refresh</strong></td><td><code>app_refresh.py</code> re-pulls the listing daily</td><td>icon/screenshots/price + the <code>adtech.app_metrics</code> growth series</td></tr>
+</table>
+<div class="grug">
+two stores, one shape. iTunes is a free batch URL (200 apps a call); Google needs a little Node helper
+because it has no honest API. grug asks them three questions at three moments: at triage "how big are
+you?" (too big → drop), at enrich "show me your icon, shots, reviews", and every day "how many installs
+now?" (that's the growth the score lives on). all free, no Meta club. the install count is gold — Apple
+hides it, so for iOS grug counts the ratings climbing instead.
+</div>
+
 <h2 id="funnel"><span class="n">07</span> the funnel pipeline + the app bridge</h2>
 <p>
 Funnels run as a parallel river beside the app sweep, with the same scraping machinery but different
