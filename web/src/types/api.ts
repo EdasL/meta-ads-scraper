@@ -254,3 +254,11 @@ export interface ApiSavedGemIn {
   verdict: string | null;
   confidence: number | null;
 }
+
+/** `PreferenceQueueRow` (backend preference_queue.go) — one ranked card from
+ * GET /preference-queue. Extends the standard shortlist row with the model's
+ * predicted like probability and a plain-English reason. */
+export interface ApiPreferenceCardRow extends ApiShortlistRow {
+  p_like: number;
+  why: string;
+}

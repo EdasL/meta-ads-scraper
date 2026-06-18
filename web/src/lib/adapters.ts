@@ -26,6 +26,7 @@ import type {
   ApiHeroCreative,
   ApiAdLifecycle,
   ApiMetricChange4w,
+  ApiPreferenceCardRow,
 } from "@/types/api";
 import type {
   ShortlistRow,
@@ -44,6 +45,7 @@ import type {
   HeroCreative,
   AdLifecycle,
   MetricChange4w,
+  PreferenceCard,
 } from "@/types/contracts";
 
 /** Null/undefined numeric → default (UI types axes as non-null; bars do value×100). */
@@ -311,5 +313,18 @@ export function adaptDossier(
     meta_active_ads_checked_at: d.meta_active_ads_checked_at ?? undefined,
     ad_lifecycle: adaptAdLifecycle(d.ad_lifecycle),
     metric_change_4w: adaptMetricChange4w(d.metric_change_4w),
+  };
+}
+
+/** Translate one preference-queue row into the UI contract. Reuses
+ * `adaptShortlistRow` for the base fields then staples on the model outputs. */
+export function adaptPreferenceCard(
+  r: ApiPreferenceCardRow,
+  mediaUrl: MediaUrl,
+): PreferenceCard {
+  return {
+    ...adaptShortlistRow(r, mediaUrl),
+    pLike: typeof r.p_like === "number" ? r.p_like : 0,
+    why: r.why ?? "",
   };
 }

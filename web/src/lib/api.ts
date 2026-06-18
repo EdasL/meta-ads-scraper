@@ -1,6 +1,7 @@
 import type {
   CategoryCount,
   GemDossier,
+  PreferenceCard,
   ReviewDecision,
   ReviewQueueRow,
   ScalingPoint,
@@ -11,6 +12,7 @@ import { shortlistParams } from "./query";
 import type {
   ApiAppMetricPoint,
   ApiGemDossier,
+  ApiPreferenceCardRow,
   ApiReviewQueueRow,
   ApiSavedGem,
   ApiSavedGemIn,
@@ -19,6 +21,7 @@ import type {
 } from "@/types/api";
 import {
   adaptDossier,
+  adaptPreferenceCard,
   adaptReviewRow,
   adaptScalingPoint,
   adaptShortlistRow,
@@ -201,4 +204,14 @@ export async function postEnrich(advertiserId: number): Promise<EnrichStatus> {
 /** Polls the latest enrichment job status for a gem. */
 export async function getEnrichStatus(advertiserId: number): Promise<EnrichStatus> {
   return live<EnrichStatus>(`/enrich/${advertiserId}`);
+}
+
+/** Fetch the preference-ranked queue for a user.
+ * Returns rows sorted by the model's predicted like probability (p_like desc).
+ * Returns [] when the user has no ratings yet. */
+export async function getPreferenceQueue(userEmail: string): Promise<PreferenceCard[]> {
+  const rows = await live<ApiPreferenceCardRow[]>(
+    `/preference-queue?user_email=${encodeURIComponent(userEmail)}`,
+  );
+  return rows.map((r) => adaptPreferenceCard(r, mediaUrl));
 }

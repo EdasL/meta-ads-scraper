@@ -280,3 +280,11 @@ export interface ShortlistPage {
   rows: ShortlistRow[];
   total: number;
 }
+
+/** One card from the preference queue — a shortlist row ranked by the
+ * preference model, with the predicted like probability and a plain-English
+ * reason surfaced from the model coefficients. */
+export interface PreferenceCard extends ShortlistRow {
+  pLike: number;
+  why: string;
+}
