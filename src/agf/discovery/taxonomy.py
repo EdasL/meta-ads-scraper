@@ -42,12 +42,12 @@ FUNNEL_PHRASES = [
 # Layer 2 — app-niche / pain-point terms (non-game leaning). Grouped by vertical so
 # additions stay reviewable; the probes showed NARROW keywords surface small apps.
 _NICHE_CORE = [
-    "calorie tracker app", "habit tracker app", "sleep sounds app", "meditation app",
+    "habit tracker app", "sleep sounds app", "meditation app",
     "anxiety relief app", "language learning app", "journaling app", "workout plan app",
-    "intermittent fasting app", "cycle tracking app", "budgeting app", "sobriety app",
+    "cycle tracking app", "budgeting app", "sobriety app",
     "posture corrector app", "brain training app", "breathing exercise app", "water reminder app",
-    "gratitude journal app", "focus timer app", "weight loss app", "skin care routine app",
-    "plant identifier app", "AI tutor app", "manifestation app", "couples relationship app",
+    "gratitude journal app", "focus timer app", "skin care routine app",
+    "plant identifier app", "AI tutor app", "couples relationship app",
     "pelvic floor app", "menopause app", "pilates app", "running coach app",
 ]
 _NICHE_FITNESS = [
@@ -71,12 +71,12 @@ _NICHE_HEALTH_WOMEN = [
     "face yoga app", "hair growth app", "skincare routine builder app", "skin analyzer app",
 ]
 _NICHE_DIET = [
-    "macro tracker app", "carnivore diet app", "keto diet app", "mediterranean diet app",
+    "carnivore diet app", "keto diet app", "mediterranean diet app",
     "anti inflammatory diet app", "gluten free scanner app", "food intolerance app",
     "meal prep planner app", "grocery list app", "recipe organizer app", "ai recipe app",
-    "calorie photo scanner app", "glucose tracker app", "gut health app",
-    "protein tracker app", "supplement tracker app", "fasting tracker app",
-    "weight loss for women app", "emotional eating app", "binge eating recovery app",
+    "glucose tracker app", "gut health app",
+    "protein tracker app", "supplement tracker app",
+    "emotional eating app", "binge eating recovery app",
     "mindful eating app", "fiber tracker app",
 ]
 _NICHE_SLEEP = [
@@ -138,13 +138,10 @@ _NICHE_FAMILY_RELATION = [
     "date night ideas app", "marriage counseling app", "love language app",
     "attachment style app", "breakup recovery app", "conversation starters app",
 ]
-_NICHE_SPIRITUAL = [
-    "bible study app", "daily devotional app", "prayer journal app",
-    "christian meditation app", "quran memorization app", "islamic prayer times app",
-    "catholic rosary app", "tarot reading app", "astrology birth chart app",
-    "human design app", "numerology app", "moon phases app",
-    "manifestation journal app", "vision board app",
-]
+# _NICHE_SPIRITUAL (bible/christian/catholic/quran + tarot/astrology/manifestation)
+# was removed 2026-06-18: every app it surfaced was disliked (0 likes across
+# ~17 ratings) — see preference-learnings memo. The keyword flywheel can still
+# re-mine these from ad copy; the durable fix is weighting keywords by like-rate.
 _NICHE_LIFESTYLE = [
     "plant care reminder app", "mushroom identifier app", "bird identifier app",
     "rock identifier app", "coin identifier app", "antique appraisal app",
@@ -160,7 +157,7 @@ _NICHE_LIFESTYLE = [
 NICHE_TERMS = (_NICHE_CORE + _NICHE_FITNESS + _NICHE_HEALTH_WOMEN + _NICHE_DIET
                + _NICHE_SLEEP + _NICHE_MENTAL + _NICHE_PRODUCTIVITY + _NICHE_LEARNING
                + _NICHE_AI_TOOLS + _NICHE_FINANCE + _NICHE_FAMILY_RELATION
-               + _NICHE_SPIRITUAL + _NICHE_LIFESTYLE)
+               + _NICHE_LIFESTYLE)
 
 # Layer 3 — store-URL / install-CTA fragments (broad app-install baseline)
 STORE_FRAGMENTS = [
