@@ -24,6 +24,7 @@ func Init(r *gin.Engine) {
 	review := controllers.NewReviewController()
 	enrich := controllers.NewEnrichController()
 	saved := controllers.NewSavedGemsController()
+	ratings := controllers.NewRatingsController()
 	health := controllers.NewHealthController()
 	media := controllers.NewMediaController(storage.Client(), storage.Bucket())
 
@@ -47,6 +48,10 @@ func Init(r *gin.Engine) {
 		api.GET("/saved-gems", saved.List)
 		api.POST("/saved-gems/:advertiser_id", middlewares.RequireToken(), saved.Save)
 		api.POST("/saved-gems/:advertiser_id/remove", middlewares.RequireToken(), saved.Remove)
+		// Per-user app ratings (like/neutral/dislike + comment). Writes are
+		// token-guarded like saved gems and review decisions.
+		api.GET("/ratings", ratings.List)
+		api.POST("/ratings/:advertiser_id", middlewares.RequireToken(), ratings.Save)
 		api.GET("/health/metrics", health.Metrics)
 		api.GET("/health/coverage", health.Coverage)
 		api.GET("/media/*key", media.Get)

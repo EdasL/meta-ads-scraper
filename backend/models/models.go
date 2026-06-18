@@ -430,6 +430,22 @@ type SavedGemRemoveIn struct {
 	UserEmail string `json:"user_email" binding:"required"`
 }
 
+// RatingIn is the upsert body for POST /api/ratings/:advertiser_id.
+// rating "none" signals a delete (removes the row entirely).
+type RatingIn struct {
+	UserEmail string `json:"user_email" binding:"required"`
+	Rating    string `json:"rating" binding:"required,oneof=like neutral dislike none"`
+	Comment   string `json:"comment"`
+}
+
+// RatingRow is one entry from GET /api/ratings. features is the scoring-signal
+// snapshot frozen at upsert time; it is opaque JSON on the wire.
+type RatingRow struct {
+	Rating   string         `json:"rating"`
+	Comment  string         `json:"comment"`
+	Features map[string]any `json:"features"`
+}
+
 // Alert mirrors monitoring.metrics.Alert (a frozen dataclass).
 type Alert struct {
 	Kind     string `json:"kind"`
