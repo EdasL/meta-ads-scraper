@@ -9,6 +9,8 @@ import hashlib
 import json
 import math
 import os
+import time
+import urllib.error
 import urllib.request
 
 
@@ -57,15 +59,36 @@ class EmbedError(RuntimeError):
     pass
 
 
-def _http_post(url: str, body: dict) -> dict:
+_RETRIABLE_STATUS = frozenset({429, 500, 503})
+
+
+def _http_post(url: str, body: dict, *, max_retries: int = 6,
+               _open=None, _sleep=time.sleep) -> dict:
+    """POST with exponential backoff on rate limits (429) and transient 5xx.
+    A bulk embed of ~1k apps trips Gemini's per-minute quota; honor Retry-After
+    when present, else back off 1,2,4,…s (capped 60). _open/_sleep are injectable
+    for tests. Non-retriable errors (and exhausted retries) raise EmbedError."""
     req = urllib.request.Request(
         url, data=json.dumps(body).encode(),
         headers={"Content-Type": "application/json"})
-    try:
-        with urllib.request.urlopen(req, timeout=30) as r:
-            return json.loads(r.read())
-    except Exception as exc:  # noqa: BLE001 - surface any transport failure uniformly
-        raise EmbedError(f"gemini embed POST failed: {exc!r}") from exc
+    opener = _open or (lambda r: urllib.request.urlopen(r, timeout=30))
+    for attempt in range(max_retries + 1):
+        try:
+            with opener(req) as resp:
+                return json.loads(resp.read())
+        except urllib.error.HTTPError as exc:
+            if exc.code in _RETRIABLE_STATUS and attempt < max_retries:
+                retry_after = exc.headers.get("Retry-After") if exc.headers else None
+                try:
+                    delay = float(retry_after) if retry_after else min(2 ** attempt, 60)
+                except (TypeError, ValueError):
+                    delay = min(2 ** attempt, 60)
+                _sleep(delay)
+                continue
+            raise EmbedError(f"gemini embed POST failed: {exc!r}") from exc
+        except Exception as exc:  # noqa: BLE001 - surface any transport failure uniformly
+            raise EmbedError(f"gemini embed POST failed: {exc!r}") from exc
+    raise EmbedError("gemini embed POST failed: retries exhausted")
 
 
 def embed_texts(texts: list[str], *, api_key: str | None = None,

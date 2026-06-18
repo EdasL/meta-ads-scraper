@@ -5,12 +5,11 @@ Run:
     PYTHONPATH=src AGF_DATABASE_URL=postgresql://agf:agf@localhost:5433/agf \\
     .venv/bin/python scripts/embed_apps.py
 """
-import os
 import sys
 
 from sqlalchemy import text
 
-from agf.db.engine import begin, get_engine
+from agf.db.engine import get_engine
 from agf.scoring.embeddings import build_embed_text, content_hash, embed_texts
 
 _APPS = text(
@@ -46,7 +45,7 @@ def _ad_copy_by_advertiser(conn, ids):
     return out
 
 
-def embed_apps(conn, *, embed_fn=embed_texts, limit=None) -> dict:
+def embed_apps(conn, *, embed_fn=embed_texts, limit=None, commit_every=0) -> dict:
     rows = list(conn.execute(_APPS))
     ids = [r.advertiser_id for r in rows]
     ad_copy = _ad_copy_by_advertiser(conn, ids)
@@ -67,19 +66,31 @@ def embed_apps(conn, *, embed_fn=embed_texts, limit=None) -> dict:
         if limit and len(pending) >= limit:
             break
 
+    # commit_every > 0 persists progress in batches so a rate-limit failure mid-run
+    # keeps the work already done (a re-run resumes via the content_hash skip above)
+    # instead of rolling back the whole bulk embed.
     embedded = 0
     for aid, text_, h in pending:
         vec = embed_fn([text_])[0]
         conn.execute(_UPSERT, {"a": aid, "e": vec, "h": h, "d": len(vec),
                                "m": "gemini-embedding-001"})
         embedded += 1
+        if commit_every and embedded % commit_every == 0:
+            conn.commit()
     return {"embedded": embedded, "skipped": len(rows) - embedded}
 
 
 def main() -> int:
     eng = get_engine()
-    with begin(eng) as conn:
-        stats = embed_apps(conn)
+    with eng.connect() as conn:
+        try:
+            stats = embed_apps(conn, commit_every=25)
+            conn.commit()
+        except Exception as exc:
+            conn.commit()  # persist the batch completed before the failure
+            print(f"[embed] stopped early ({exc!r}); progress saved, re-run to resume",
+                  flush=True)
+            return 1
     print(f"[embed] {stats}", flush=True)
     return 0
 
