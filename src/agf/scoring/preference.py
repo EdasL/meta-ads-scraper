@@ -140,3 +140,67 @@ class PreferenceModel:
             xs = (x - self._means[name]) / self._stds[name]
             z += self.coefficients[name] * xs
         return 1.0 / (1.0 + math.exp(-z))
+
+
+EXPLORE_EVERY = 4  # 1-in-4 slots are explore picks → ~75/25 exploit/explore
+
+
+def interleave(scored: list[dict]) -> list[dict]:
+    exploit = sorted(scored, key=lambda r: r["p_like"], reverse=True)
+    explore = sorted(scored, key=lambda r: r["uncertainty"], reverse=True)
+    seen: set = set()
+    order: list[dict] = []
+    ei = xi = 0
+
+    def _next(lst, idx):
+        while idx < len(lst) and lst[idx]["advertiser_id"] in seen:
+            idx += 1
+        return idx
+
+    while len(order) < len(scored):
+        use_explore = (len(order) % EXPLORE_EVERY) == (EXPLORE_EVERY - 1)
+        if use_explore:
+            ei = _next(explore, ei)
+            pick = explore[ei] if ei < len(explore) else None
+        else:
+            pick = None
+        if pick is None:                      # exploit slot, or explore exhausted
+            xi = _next(exploit, xi)
+            pick = exploit[xi] if xi < len(exploit) else None
+        if pick is None:                      # exploit exhausted, take any explore
+            ei = _next(explore, ei)
+            pick = explore[ei]
+        pick = dict(pick)
+        pick["queue_rank"] = len(order)
+        seen.add(pick["advertiser_id"])
+        order.append(pick)
+    return order
+
+
+def why_string(model: PreferenceModel, features: dict, top_k: int = 2) -> str:
+    if model.version == "heuristic-v1":
+        parts = []
+        if features.get("has_funnel"):
+            parts.append(WHY_LABELS["has_funnel"])
+        ws = features.get("whitespace")
+        if ws is not None and float(ws) >= 0.6:
+            parts.append(WHY_LABELS["whitespace"])
+        return " · ".join(parts[:top_k])
+    contribs = []
+    for name in FEATURES:
+        coef = model.coefficients.get(name, 0.0)
+        v = features.get(name)
+        if name == "has_funnel":
+            x = 1.0 if v else 0.0
+            contrib = coef * x
+        else:
+            if v is None:
+                x = model._means.get(name, 0.0)
+            else:
+                x = float(v)
+            xs = (x - model._means.get(name, 0.0)) / model._stds.get(name, 1.0)
+            contrib = coef * xs
+        if contrib > 0:
+            contribs.append((contrib, name))
+    contribs.sort(reverse=True)
+    return " · ".join(WHY_LABELS[n] for _, n in contribs[:top_k])
