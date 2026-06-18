@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { PreferenceCard } from "@/types/contracts";
 import type { Rating } from "@/lib/api";
+import { MIN_PCT_BASE } from "@/lib/why";
 
 const btnBase: React.CSSProperties = {
   display: "inline-flex",
@@ -47,7 +48,7 @@ export function ReviewCard({
   }
 
   const growthLine =
-    card.growth?.pct_change != null
+    card.growth?.pct_change != null && card.growth.first_count >= MIN_PCT_BASE
       ? `${card.growth.pct_change >= 0 ? "+" : ""}${Math.round(card.growth.pct_change)}% ${card.growth.weeks}w`
       : null;
 

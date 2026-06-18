@@ -50,6 +50,8 @@ export function ReviewDeck() {
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "TEXTAREA" || t.tagName === "INPUT" || t.isContentEditable)) return;
       if (!current) return;
       if (e.key === "ArrowRight") rate("like");
       else if (e.key === "ArrowLeft") rate("dislike");
