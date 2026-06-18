@@ -16,7 +16,7 @@ from sqlalchemy import text
 
 from agf.db.engine import begin, get_engine
 from agf.scoring.preference import (
-    FEATURES, PreferenceModel, interleave, uncertainty, why_string,
+    PreferenceModel, interleave, uncertainty, why_string,
 )
 
 _MV_FEATURES = (
