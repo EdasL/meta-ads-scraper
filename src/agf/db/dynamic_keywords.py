@@ -36,34 +36,39 @@ TRIAL_SWEEPS = trial_sweeps()
 PROMOTE_MIN_NEW = promote_min_new()
 
 
-def tried_keywords(conn) -> set[str]:
-    """Every dynamic keyword ever minted, any status — the never-re-mint set."""
+# `kind` ('app' | 'funnel') keeps the two flywheels' keyword pools separate so a funnel
+# trial keyword is never swept into the app candidate pool and vice-versa. Defaults to
+# 'app' so existing app-flywheel callers are unchanged.
+def tried_keywords(conn, *, kind: str = "app") -> set[str]:
+    """Every dynamic keyword of this kind ever minted, any status — the never-re-mint set."""
     return {r[0] for r in conn.execute(
-        text("SELECT keyword FROM discovery.dynamic_keywords")).all()}
+        text("SELECT keyword FROM discovery.dynamic_keywords WHERE kind=:k"),
+        {"k": kind}).all()}
 
 
-def trial_count(conn) -> int:
+def trial_count(conn, *, kind: str = "app") -> int:
     return conn.execute(text(
-        "SELECT count(*) FROM discovery.dynamic_keywords WHERE status='trial'")).scalar()
+        "SELECT count(*) FROM discovery.dynamic_keywords WHERE status='trial' AND kind=:k"),
+        {"k": kind}).scalar()
 
 
-def add_trial_keywords(conn, keywords, *, source: str = "gem_copy") -> int:
-    """Mint trial keywords; existing ones (any status) are left untouched."""
+def add_trial_keywords(conn, keywords, *, source: str = "gem_copy", kind: str = "app") -> int:
+    """Mint trial keywords of this kind; existing ones (any status) are left untouched."""
     added = 0
     for kw in keywords:
         added += conn.execute(text(
-            "INSERT INTO discovery.dynamic_keywords (keyword, source) "
-            "VALUES (:k, :s) ON CONFLICT (keyword) DO NOTHING"),
-            {"k": kw, "s": source}).rowcount
+            "INSERT INTO discovery.dynamic_keywords (keyword, source, kind) "
+            "VALUES (:k, :s, :kind) ON CONFLICT (keyword, kind) DO NOTHING"),
+            {"k": kw, "s": source, "kind": kind}).rowcount
     return added
 
 
-def live_keywords(conn):
-    """The keywords the daily flywheel sweep runs: trials + proven actives."""
+def live_keywords(conn, *, kind: str = "app"):
+    """The keywords the daily flywheel sweep runs: trials + proven actives, this kind only."""
     return conn.execute(text(
         "SELECT id, keyword, status, sweeps_used, new_candidates_total "
-        "FROM discovery.dynamic_keywords WHERE status IN ('trial','active') "
-        "ORDER BY status DESC, id")).all()           # trials first
+        "FROM discovery.dynamic_keywords WHERE status IN ('trial','active') AND kind=:k "
+        "ORDER BY status DESC, id"), {"k": kind}).all()  # trials first
 
 
 def record_keyword_sweep(conn, keyword_id: int, *, new_candidates: int) -> str:
@@ -84,17 +89,19 @@ def record_keyword_sweep(conn, keyword_id: int, *, new_candidates: int) -> str:
     return verdict
 
 
-def apply_verdicts(conn) -> dict:
+def apply_verdicts(conn, *, kind: str | None = None) -> dict:
     """Batch-apply the current verdict cadence to every trial that has already
     used its sweep budget. Idempotent — safe to run on startup or by hand to
     recycle a backlog after lowering AGF_FLYWHEEL_TRIAL_SWEEPS. Trials that
-    haven't reached the budget are left as 'trial'. Returns counts."""
+    haven't reached the budget are left as 'trial'. `kind` scopes it to one pool
+    (None = all kinds, back-compat). Returns counts."""
     rows = conn.execute(text(
         "UPDATE discovery.dynamic_keywords SET status = CASE "
         "  WHEN new_candidates_total >= :promote THEN 'active' ELSE 'retired' END "
         "WHERE status = 'trial' AND sweeps_used >= :budget "
+        "  AND (CAST(:kind AS TEXT) IS NULL OR kind = :kind) "
         "RETURNING status"),
-        {"promote": promote_min_new(), "budget": trial_sweeps()}).all()
+        {"promote": promote_min_new(), "budget": trial_sweeps(), "kind": kind}).all()
     promoted = sum(1 for r in rows if r.status == "active")
     return {"promoted": promoted, "retired": len(rows) - promoted}
 

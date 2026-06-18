@@ -63,7 +63,9 @@ def classify_funnel_candidate(ad, *, keyword: str, technique: str) -> tuple[str,
         "landing_url": ad.link_url, "landing_domain": domain,
         "funnel_host": fc.matched_funnel_host(ad.link_url),
         "cta_type": ad.cta_type, "ad_start_date": _start_date(ad.start_date),
-        "source_keyword": keyword, "technique": technique, **fc.parse_utms(ad.link_url),
+        "source_keyword": keyword, "technique": technique,
+        "body_text": ad.body_text,                   # the flywheel mines this for new phrases
+        **fc.parse_utms(ad.link_url),
     }
 
 

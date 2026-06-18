@@ -163,3 +163,14 @@ def fetch_gem_copy(conn, *, min_score: float = 40.0):
         "JOIN public.creatives c ON c.ad_id = a.id "
         "WHERE m.gem_score >= :s AND NULLIF(c.body_text, '') IS NOT NULL"),
         {"s": min_score}).all()
+
+
+def fetch_funnel_copy(conn):
+    """(page_id, body_text) rows for every CONFIRMED funnel candidate that captured ad
+    copy — the funnel flywheel's mining corpus (the sibling of fetch_gem_copy). page_id
+    is the cross-advertiser author key mine_phrases needs. body_text is NULL on rows
+    swept before migration 131, so the corpus grows as the funnel sweep refills it."""
+    from sqlalchemy import text
+    return conn.execute(text(
+        "SELECT DISTINCT page_id, body_text FROM discovery.funnel_candidates "
+        "WHERE status = 'confirmed' AND NULLIF(body_text, '') IS NOT NULL")).all()

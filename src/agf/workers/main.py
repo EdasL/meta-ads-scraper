@@ -39,6 +39,10 @@ Env:
                                the smaller/emerging ones rank below the big spenders)
   AGF_FUNNEL_CONFIRM_LIMIT     funnel candidates confirmed per day   (default 50)
   AGF_FUNNEL_REPAIR_PER_CYCLE  feed apps probed for a missing funnel (default 3; 0 off)
+  AGF_FUNNEL_FLYWHEEL          grow the funnel keyword vocabulary    (default 1; 0 off)
+  AGF_FUNNEL_FLYWHEEL_MAX_PAGES   pages per funnel trial keyword     (default 4)
+  AGF_FUNNEL_FLYWHEEL_MAX_TRIALS  funnel trial keywords live at once (default 30)
+  AGF_FUNNEL_FLYWHEEL_MIN_ADVERTISERS  distinct funnels a phrase spans (default 2)
   AGF_FLYWHEEL_DAILY           run the daily keyword flywheel        (default 1; 0 disables)
   AGF_FLYWHEEL_EVERY_SEC        flywheel cadence in seconds           (default 0 = once/day)
   AGF_FLYWHEEL_MAX_PAGES       SERP pages per dynamic keyword        (default 2)
@@ -68,11 +72,12 @@ from agf.db.dynamic_keywords import (add_trial_keywords, apply_verdicts,
 from agf.db.funnel_candidates import (close_funnel_sweep_run, funnel_sweep_ran_today,
                                       open_funnel_sweep_run)
 from agf.discovery.funnel_confirm import run_funnel_confirm
-from agf.discovery.keyword_mining import fetch_gem_copy, mine_phrases
+from agf.discovery.keyword_mining import fetch_funnel_copy, fetch_gem_copy, mine_phrases
 from agf.discovery.funnel_sweep import run_funnel_sweep
 from agf.discovery.keeper_history import pull_keeper_history
 from agf.discovery.sweep import run_sweep
-from agf.discovery.taxonomy import TaxonomyEntry, all_entries, sweep_entries
+from agf.discovery.taxonomy import (FUNNEL_PHRASES, TaxonomyEntry, all_entries,
+                                    sweep_entries)
 from agf.discovery.triage import run_triage
 from agf.enrich_full.appstore import lookup_google_play, lookup_itunes_batch
 from agf.enrich_full.media_repair import (repair_advertiser,
@@ -222,14 +227,63 @@ def funnel_due(conn, as_of, *, dry_run) -> bool:
 
 
 # --- funnel stage --------------------------------------------------------------
-def run_funnel_stage(engine, extractor, *, max_pages=3, kw_delay=3.0,
-                     confirm_limit=50, resolve=None, probe=None) -> dict:
-    """One funnel sweep+confirm pass — the web2app sibling of the app discovery stage.
-    Sweep: the 28-keyword funnel_phrase layer -> discovery.funnel_candidates (Meta via
-    the proxied extractor). Confirm: render each new landing page DIRECT (no proxy,
-    iOS UA — see funnel_capture) + quiz click-probe + resolve the deeplink, write the
-    verdict. `resolve`/`probe` are injectable for tests; production wires the extractor's
-    deeplink resolver and the lazy-imported Playwright render_and_probe."""
+def run_funnel_flywheel_stage(engine, extractor, *, max_pages=4, kw_delay=3.0,
+                              max_trials=30, min_advertisers=2,
+                              corpus_fn=fetch_funnel_copy) -> dict:
+    """One mine+sweep pass of the FUNNEL keyword flywheel — the sibling of
+    run_flywheel_stage, kept on a SEPARATE keyword pool (kind='funnel'). Phrases
+    recurring across CONFIRMED funnels' ad copy become trial funnel keywords; every live
+    funnel keyword gets one exact-phrase sweep into the SAME funnel candidate pool (and
+    the app bridge) via run_funnel_sweep; each trial's new-candidate yield promotes or
+    retires it. This is what stops the funnel vocabulary from being a fixed 28 phrases."""
+    with begin(engine) as conn:
+        apply_verdicts(conn, kind="funnel")
+    with engine.connect() as conn:
+        tried = tried_keywords(conn, kind="funnel")
+        room = max_trials - trial_count(conn, kind="funnel")
+        corpus = corpus_fn(conn) if room > 0 else []
+    static = set(FUNNEL_PHRASES)                       # never re-mint the static phrases
+    mined = mine_phrases(corpus, exclude=static | tried, limit=room,
+                         min_advertisers=min_advertisers) if corpus else []
+    if mined:
+        with begin(engine) as conn:
+            add_trial_keywords(conn, mined, source="funnel_copy", kind="funnel")
+    with engine.connect() as conn:
+        live = live_keywords(conn, kind="funnel")
+    stats = {"mined": mined, "keywords_swept": 0, "errors": 0, "candidates_new": 0,
+             "candidates_seen": 0, "bridged_app_new": 0, "promoted": 0, "retired": 0}
+    for kw in live:
+        entry = TaxonomyEntry(kw.keyword, "funnel_phrase", "KEYWORD_EXACT_PHRASE", max_pages)
+        s = asyncio.run(run_funnel_sweep(engine, extractor, entries=[entry],
+                                         max_pages=max_pages, kw_delay=kw_delay))
+        if s["keywords_swept"] != 1:                   # throttled — no verdict this pass
+            stats["errors"] += 1
+            continue
+        with begin(engine) as conn:
+            status = record_keyword_sweep(conn, kw.id, new_candidates=s["candidates_new"])
+        stats["keywords_swept"] += 1
+        stats["candidates_new"] += s["candidates_new"]
+        stats["candidates_seen"] += s["candidates_seen"]
+        stats["bridged_app_new"] += s["bridged_app_new"]
+        if kw.status == "trial" and status == "active":
+            stats["promoted"] += 1
+        elif status == "retired":
+            stats["retired"] += 1
+    return stats
+
+
+def run_funnel_stage(engine, extractor, *, max_pages=8, kw_delay=3.0,
+                     confirm_limit=50, flywheel=True, flywheel_pages=4,
+                     flywheel_max_trials=30, flywheel_min_advertisers=2,
+                     resolve=None, probe=None) -> dict:
+    """One funnel sweep+confirm(+flywheel) pass — the web2app sibling of the app
+    discovery stage. Sweep: the funnel_phrase layer -> discovery.funnel_candidates (Meta
+    via the proxied extractor) deep enough to reach the smaller advertisers below the big
+    spenders. Confirm: render each new landing page DIRECT (no proxy, iOS UA — see
+    funnel_capture) + quiz click-probe + resolve the deeplink, write the verdict.
+    Flywheel: grow the funnel vocabulary from confirmed-funnel ad copy. `resolve`/`probe`
+    are injectable for tests; production wires the extractor's deeplink resolver and the
+    lazy-imported Playwright render_and_probe."""
     if resolve is None:
         def resolve(url):
             return asyncio.run(extractor.resolve_deeplink(url)).intent
@@ -240,7 +294,12 @@ def run_funnel_stage(engine, extractor, *, max_pages=3, kw_delay=3.0,
                                          max_pages=max_pages, kw_delay=kw_delay))
     confirm = run_funnel_confirm(engine, resolve=resolve, probe=probe,
                                  limit=confirm_limit)
-    return {"sweep": sweep, "confirm": confirm}
+    fly = None
+    if flywheel:
+        fly = run_funnel_flywheel_stage(engine, extractor, max_pages=flywheel_pages,
+                                        kw_delay=kw_delay, max_trials=flywheel_max_trials,
+                                        min_advertisers=flywheel_min_advertisers)
+    return {"sweep": sweep, "confirm": confirm, "flywheel": fly}
 
 
 def flywheel_due(conn, as_of, *, dry_run) -> bool:
@@ -318,7 +377,9 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
              sweep_pages=2, kw_delay=3.0, enrich_budget=600, enrich_top_n=5,
              enrich_media_cap=120, enrich_ttl_hours=168, score_after=False,
              min_score=ALERT_THRESHOLD, continuous_discovery=False,
-             funnel_daily=True, funnel_pages=3, funnel_confirm_limit=50,
+             funnel_daily=True, funnel_pages=8, funnel_confirm_limit=50,
+             funnel_flywheel=True, funnel_flywheel_pages=4, funnel_flywheel_max_trials=30,
+             funnel_flywheel_min_advertisers=2,
              flywheel_daily=True, flywheel_pages=2, flywheel_max_trials=40,
              flywheel_min_advertisers=3, mine_min_score=40.0,
              media_repair_per_cycle=5, funnel_repair_per_cycle=3) -> dict:
@@ -438,7 +499,11 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
             try:
                 funnel = run_funnel_stage(engine, extractor, max_pages=funnel_pages,
                                           kw_delay=kw_delay,
-                                          confirm_limit=funnel_confirm_limit)
+                                          confirm_limit=funnel_confirm_limit,
+                                          flywheel=funnel_flywheel,
+                                          flywheel_pages=funnel_flywheel_pages,
+                                          flywheel_max_trials=funnel_flywheel_max_trials,
+                                          flywheel_min_advertisers=funnel_flywheel_min_advertisers)
                 with begin(engine) as conn:
                     close_funnel_sweep_run(conn, f_run_id, stats=funnel)
             except Exception as exc:
@@ -583,6 +648,10 @@ def _summary_line(s: dict) -> str:
         line += (f" funnel(new={fs['candidates_new']} seen={fs['candidates_seen']} "
                  f"bridged={fs.get('bridged_app_new', 0)} "
                  f"confirmed={fco['confirmed']}/{fco['examined']})")
+        ff = s["funnel"].get("flywheel")
+        if ff is not None:
+            line += (f" funnel_fly(kw={ff['keywords_swept']} mined={len(ff['mined'])} "
+                     f"new={ff['candidates_new']} promoted={ff['promoted']})")
     if s.get("flywheel") is not None:
         fw = s["flywheel"]
         line += (f" flywheel(kw={fw['keywords_swept']} mined={len(fw['mined'])} "
@@ -633,6 +702,10 @@ def main(argv=None) -> None:
         funnel_daily=_env_bool("AGF_FUNNEL_DAILY", True),
         funnel_pages=_env_int("AGF_FUNNEL_MAX_PAGES", 8),
         funnel_confirm_limit=_env_int("AGF_FUNNEL_CONFIRM_LIMIT", 50),
+        funnel_flywheel=_env_bool("AGF_FUNNEL_FLYWHEEL", True),
+        funnel_flywheel_pages=_env_int("AGF_FUNNEL_FLYWHEEL_MAX_PAGES", 4),
+        funnel_flywheel_max_trials=_env_int("AGF_FUNNEL_FLYWHEEL_MAX_TRIALS", 30),
+        funnel_flywheel_min_advertisers=_env_int("AGF_FUNNEL_FLYWHEEL_MIN_ADVERTISERS", 2),
         flywheel_daily=_env_bool("AGF_FLYWHEEL_DAILY", True),
         flywheel_pages=_env_int("AGF_FLYWHEEL_MAX_PAGES", 2),
         flywheel_max_trials=_env_int("AGF_FLYWHEEL_MAX_TRIALS", 40),

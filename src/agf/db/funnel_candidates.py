@@ -7,21 +7,24 @@ from sqlalchemy import text
 
 _COLS = ("page_id, page_name, page_like_count, landing_url, landing_domain, funnel_host, "
          "cta_type, utm_source, utm_medium, utm_campaign, utm_content, ad_start_date, "
-         "source_keyword, technique")
+         "source_keyword, technique, body_text")
 
 
 def upsert_funnel_candidate(conn, row: dict) -> tuple[int, bool]:
-    """Insert or bump one funnel candidate. Returns (id, was_new)."""
+    """Insert or bump one funnel candidate. Returns (id, was_new). body_text is the ad
+    copy the funnel keyword flywheel mines for new phrases; backfilled on re-seen rows."""
+    row = {"body_text": None, **row}                 # optional; default NULL
     got = conn.execute(text(f"""
         INSERT INTO discovery.funnel_candidates ({_COLS})
         VALUES (:page_id, :page_name, :page_like_count, :landing_url, :landing_domain,
                 :funnel_host, :cta_type, :utm_source, :utm_medium, :utm_campaign,
-                :utm_content, :ad_start_date, :source_keyword, :technique)
+                :utm_content, :ad_start_date, :source_keyword, :technique, :body_text)
         ON CONFLICT (page_id, landing_domain) DO UPDATE SET
           times_seen = discovery.funnel_candidates.times_seen + 1,
           last_seen_at = now(),
           page_like_count = COALESCE(EXCLUDED.page_like_count,
-                                     discovery.funnel_candidates.page_like_count)
+                                     discovery.funnel_candidates.page_like_count),
+          body_text = COALESCE(discovery.funnel_candidates.body_text, EXCLUDED.body_text)
         RETURNING id, (xmax = 0) AS was_new
     """), row).one()
     return got.id, bool(got.was_new)
