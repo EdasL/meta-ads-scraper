@@ -34,7 +34,9 @@ Env:
   AGF_MIN_GEM_SCORE            enrich gems at/above this score       (default 70)
   AGF_SWEEP_INTERVAL_SEC       sleep between sweeps                  (default 3600; ignored if once)
   AGF_FUNNEL_DAILY             run the daily funnel sweep+confirm    (default 1; 0 disables)
-  AGF_FUNNEL_MAX_PAGES         SERP pages per funnel keyword         (default 3)
+  AGF_FUNNEL_MAX_PAGES         SERP pages per funnel keyword         (default 8; funnel
+                               phrases keep yielding NEW advertisers on deep pages —
+                               the smaller/emerging ones rank below the big spenders)
   AGF_FUNNEL_CONFIRM_LIMIT     funnel candidates confirmed per day   (default 50)
   AGF_FUNNEL_REPAIR_PER_CYCLE  feed apps probed for a missing funnel (default 3; 0 off)
   AGF_FLYWHEEL_DAILY           run the daily keyword flywheel        (default 1; 0 disables)
@@ -579,6 +581,7 @@ def _summary_line(s: dict) -> str:
     if s.get("funnel") is not None:
         fs, fco = s["funnel"]["sweep"], s["funnel"]["confirm"]
         line += (f" funnel(new={fs['candidates_new']} seen={fs['candidates_seen']} "
+                 f"bridged={fs.get('bridged_app_new', 0)} "
                  f"confirmed={fco['confirmed']}/{fco['examined']})")
     if s.get("flywheel") is not None:
         fw = s["flywheel"]
@@ -628,7 +631,7 @@ def main(argv=None) -> None:
         min_score=_env_float("AGF_MIN_GEM_SCORE", ALERT_THRESHOLD),
         continuous_discovery=continuous,
         funnel_daily=_env_bool("AGF_FUNNEL_DAILY", True),
-        funnel_pages=_env_int("AGF_FUNNEL_MAX_PAGES", 3),
+        funnel_pages=_env_int("AGF_FUNNEL_MAX_PAGES", 8),
         funnel_confirm_limit=_env_int("AGF_FUNNEL_CONFIRM_LIMIT", 50),
         flywheel_daily=_env_bool("AGF_FLYWHEEL_DAILY", True),
         flywheel_pages=_env_int("AGF_FLYWHEEL_MAX_PAGES", 2),

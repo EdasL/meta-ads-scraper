@@ -178,7 +178,7 @@ def _entries(words, layer, search_type, max_pages):
 def all_entries(layer: str | None = None) -> list[TaxonomyEntry]:
     """All taxonomy entries, optionally filtered to one layer."""
     entries = (
-        _entries(FUNNEL_PHRASES, "funnel_phrase", "KEYWORD_EXACT_PHRASE", 3)
+        _entries(FUNNEL_PHRASES, "funnel_phrase", "KEYWORD_EXACT_PHRASE", 8)
         + _entries(NICHE_TERMS, "niche_term", "KEYWORD_UNORDERED", 4)
         + _entries(STORE_FRAGMENTS, "store_fragment", "KEYWORD_UNORDERED", 3)
     )

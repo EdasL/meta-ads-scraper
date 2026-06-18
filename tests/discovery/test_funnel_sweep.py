@@ -25,7 +25,6 @@ def test_web_funnel_is_a_candidate():
 
 def test_funnel_drops():
     cases = [
-        (ad("https://apps.apple.com/us/app/x/id12345"), "app"),           # store link -> app pipeline
         (ad("https://www.instagram.com/x"), "social"),
         (ad("https://quiz.example.com/x", likes=5_000_001), "incumbent_likes"),  # only mega-brands
         (ad(None), "no_link"),
@@ -34,6 +33,25 @@ def test_funnel_drops():
     for record, expected in cases:
         d, row = classify_funnel_candidate(record, keyword="k", technique="niche_term")
         assert (d, row) == (expected, None)
+
+
+def test_app_backed_funnel_is_bridged_to_app_pipeline():
+    # A funnel-phrase ad whose link is a direct store URL is an app-backed funnel.
+    # It's dropped from the funnel pipeline ('app') but carries an app-candidate row
+    # so the sweep can route it into discovery.candidates for the normal app pipeline.
+    d, row = classify_funnel_candidate(ad("https://apps.apple.com/us/app/x/id12345"),
+                                       keyword="take the quiz", technique="funnel_phrase")
+    assert d == "app"
+    assert row is not None
+    assert row["store"] == "ios" and row["store_id"] == "12345"
+    assert row["technique"] == "funnel_sweep" and row["source_keyword"] == "take the quiz"
+
+
+def test_store_link_without_parseable_id_is_not_bridged():
+    # No store_id to resolve the app -> nothing to bridge.
+    d, row = classify_funnel_candidate(ad("https://apps.apple.com/us/app/x"),
+                                       keyword="take the quiz", technique="funnel_phrase")
+    assert d == "app" and row is None
 
 
 def test_large_page_funnel_is_kept():
@@ -48,11 +66,12 @@ def test_run_funnel_sweep_persists(_migrated_engine):
     eng = _migrated_engine
     with eng.begin() as conn:
         conn.execute(text("DELETE FROM discovery.funnel_candidates WHERE page_id LIKE 'FUNSWEEP%'"))
+        conn.execute(text("DELETE FROM discovery.candidates WHERE page_id LIKE 'FUNSWEEP%'"))
     try:
         ext = FakeExtractor(keyword_ads={
             "take the quiz": [
                 ad("https://quiz.example.com/start"),
-                ad("https://apps.apple.com/us/app/x/id1", page_id="FUNSWEEP2"),  # app -> drop
+                ad("https://apps.apple.com/us/app/x/id1", page_id="FUNSWEEP2"),  # app -> bridged
             ],
             "personalized plan": [
                 ad("https://quiz.example.com/start"),    # same page+domain -> bump
@@ -65,11 +84,18 @@ def test_run_funnel_sweep_persists(_migrated_engine):
         assert stats["candidates_new"] == 1
         assert stats["candidates_seen"] == 1          # the dup bumped
         assert stats["drops"]["app"] == 1
+        assert stats["bridged_app_new"] == 1          # app-backed funnel routed to app pool
         with eng.connect() as conn:
             row = conn.execute(text(
                 "SELECT times_seen, status, kind FROM discovery.funnel_candidates "
                 "WHERE page_id='FUNSWEEP1' AND landing_domain='quiz.example.com'")).one()
+            cand = conn.execute(text(
+                "SELECT store, store_id, source_keyword, technique FROM discovery.candidates "
+                "WHERE page_id='FUNSWEEP2'")).one()
         assert row.times_seen == 2 and row.status == "new" and row.kind == "unknown"
+        assert cand.store == "ios" and cand.store_id == "1"
+        assert cand.technique == "funnel_sweep" and cand.source_keyword == "take the quiz"
     finally:
         with eng.begin() as conn:
             conn.execute(text("DELETE FROM discovery.funnel_candidates WHERE page_id LIKE 'FUNSWEEP%'"))
+            conn.execute(text("DELETE FROM discovery.candidates WHERE page_id LIKE 'FUNSWEEP%'"))
