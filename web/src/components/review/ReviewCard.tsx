@@ -69,6 +69,36 @@ function AdThumb({ c }: { c: Creative }) {
   );
 }
 
+// Google Play screenshot URLs load more reliably (and smaller) when a size is
+// requested — raw URLs get throttled when several load at once, leaving broken
+// thumbnails. Apple/other CDNs are passed through untouched.
+function sizedShot(url: string): string {
+  if (/googleusercontent\.com/.test(url) && !/=[wh]\d/.test(url)) return `${url}=h300`;
+  return url;
+}
+
+// One store screenshot; hides itself if the image still fails to load.
+function Screenshot({ src, index }: { src: string; index: number }) {
+  const [broken, setBroken] = useState(false);
+  if (broken) return null;
+  return (
+    <img
+      src={sizedShot(src)}
+      alt={`Screenshot ${index + 1}`}
+      loading="lazy"
+      onError={() => setBroken(true)}
+      style={{
+        height: 150,
+        width: "auto",
+        border: "1px solid var(--line)",
+        borderRadius: 6,
+        flexShrink: 0,
+        display: "block",
+      }}
+    />
+  );
+}
+
 // One label/value row in the facts grid (mirrors a Discover-table column).
 function Fact({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -260,20 +290,7 @@ export function ReviewCard({
           </div>
           <div style={{ display: "flex", gap: "var(--sp-2)", overflowX: "auto", paddingBottom: 4 }}>
             {screenshots.map((src, i) => (
-              <img
-                key={i}
-                src={src}
-                alt={`Screenshot ${i + 1}`}
-                loading="lazy"
-                style={{
-                  height: 150,
-                  width: "auto",
-                  border: "1px solid var(--line)",
-                  borderRadius: 6,
-                  flexShrink: 0,
-                  display: "block",
-                }}
-              />
+              <Screenshot key={i} src={src} index={i} />
             ))}
           </div>
         </div>
