@@ -574,14 +574,19 @@ def test_score_user_writes_ranked_scores(_migrated_engine):
     email = "pref-test@fielddesk.local"
     with begin(_migrated_engine) as conn:
         _seed(conn, email)
-        # Insert directly into the matview-backed read path: score_user reads the
-        # matview; for the test, score_user accepts any matview rows present. We
-        # assert it writes a row per matview advertiser with a queue_rank.
+        # score_user reads the matview to score apps. Guard against a vacuous pass
+        # on a pristine DB: require matview rows so the assertions are meaningful.
+        mv = conn.execute(text(
+            "SELECT count(*) FROM frontend.emerging_scaling_apps")).scalar()
+        if not mv:
+            import pytest
+            pytest.skip("test DB has no matview rows to score")
         n = score_user(conn, email)
-        assert n >= 0
+        assert n == mv                      # one score row per matview app
         rows = conn.execute(text(
             "SELECT p_like, uncertainty, queue_rank FROM frontend.preference_scores "
             "WHERE user_email = :e"), {"e": email}).fetchall()
+        assert len(rows) == mv
         # ranks are a contiguous 0..n-1 set
         ranks = sorted(r[2] for r in rows)
         assert ranks == list(range(len(rows)))
