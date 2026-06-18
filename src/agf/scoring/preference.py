@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
+
 # Feature order is fixed; everything downstream relies on it.
 FEATURES = ["has_funnel", "whitespace", "funnel_intent",
             "scaling_velocity", "under_radar", "demand"]
@@ -42,10 +44,6 @@ def feature_vector(features: dict) -> list[float]:
         else:
             out.append(float(v))
     return out
-
-
-import numpy as np
-
 MIN_LABELS = 30
 L1_ALPHA = 1.0
 
@@ -88,8 +86,12 @@ class PreferenceModel:
             Xc = _add_constant(Xs, has_constant="add")
             alpha = np.array([0.0] + [L1_ALPHA] * len(FEATURES))
             model = _Logit(np.array(ys), Xc)
-            # Patch cov_params_func_l1 to use pinv instead of inv — avoids
-            # LinAlgError on perfectly-separable / small datasets (numpy 2+).
+            # Monkey-patch cov_params_func_l1 to use pinv instead of inv.
+            # Why: statsmodels 0.14.4 computes covariance via inv, which fails
+            # on singular matrices (perfectly-separable data). We only use
+            # res.params, never the covariance, so pinv is safe. Fragility:
+            # if a future statsmodels version renames this method, the except
+            # branch will silently fall back to the heuristic model.
             def _safe_cov(self, lm, xopt, retvals):
                 H = lm.hessian(xopt)
                 trimmed = retvals["trimmed"]
