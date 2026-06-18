@@ -17,6 +17,9 @@ def test_embed_apps_is_incremental(monkeypatch):
         calls["n"] += len(texts)
         return [[1.0] + [0.0] * 767 for _ in texts]
     with eng.begin() as conn:
+        # Hermetic: a prior committed run leaves app_embeddings populated, so the first
+        # embed_apps below would find 0 new and the assert would drift. Clear it first.
+        conn.execute(text("DELETE FROM frontend.app_embeddings"))
         # Use a real advertiser already present in the matview (test DB is seeded by Go IT).
         row = conn.execute(text(
             "SELECT advertiser_id FROM frontend.emerging_scaling_apps LIMIT 1")).first()

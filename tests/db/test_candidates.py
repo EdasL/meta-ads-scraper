@@ -53,9 +53,10 @@ def test_mark_kept_records_advertiser(pg_conn):
 
 
 def test_sweep_run_gate(pg_conn):
-    # open_sweep_run stamps started_at=now(), so the gate must be checked
-    # against the real current date — a pinned date breaks at midnight
-    today = date.today()
+    # open_sweep_run stamps started_at=now() (DB clock), so the gate must be checked
+    # against the DB's date, not the host's — host date.today() vs DB now()::date can
+    # differ by a day at the UTC/local midnight boundary (TZ skew → flaky failure).
+    today = pg_conn.execute(text("SELECT now()::date")).scalar()
     assert cand.sweep_ran_today(pg_conn, today) is False
     run_id = cand.open_sweep_run(pg_conn)
     assert cand.sweep_ran_today(pg_conn, today) is False   # unfinished run doesn't gate
