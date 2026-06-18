@@ -19,6 +19,9 @@ export function ReviewDeck() {
     if (!userEmail) return;
     let alive = true;
     setLoading(true);
+    setIdx(0);
+    // Fetch the whole unrated queue at once so review feels continuous — no
+    // page size, no counter. Already-rated apps are excluded server-side.
     getPreferenceQueue(userEmail)
       .then((c) => {
         if (alive) setCards(c);
@@ -72,17 +75,11 @@ export function ReviewDeck() {
   if (!current) {
     return (
       <p style={{ padding: "var(--sp-8)" }}>
-        No more apps to review. New ones appear as discovery runs.
+        All caught up — you’ve reviewed every app in the queue. New ones appear as
+        discovery runs.
       </p>
     );
   }
 
-  return (
-    <ReviewCard
-      card={current}
-      position={idx + 1}
-      total={cards.length}
-      onRate={rate}
-    />
-  );
+  return <ReviewCard card={current} onRate={rate} />;
 }

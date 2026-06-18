@@ -23,8 +23,11 @@ func (c *PreferenceController) Queue(ctx *gin.Context) {
 		helpers.Detail(ctx, http.StatusUnprocessableEntity, "user_email is required.")
 		return
 	}
+	// The review page fetches the whole unrated queue at once (continuous,
+	// page-size-free review), so allow a high ceiling — the scored set is only
+	// a few hundred apps. 5000 is a sane backstop, not a paging window.
 	limit, err := helpers.QueryInt(ctx, "limit", 50)
-	if err != nil || limit <= 0 || limit > 200 {
+	if err != nil || limit <= 0 || limit > 5000 {
 		helpers.Detail(ctx, http.StatusUnprocessableEntity, "bad limit.")
 		return
 	}
@@ -32,7 +35,7 @@ func (c *PreferenceController) Queue(ctx *gin.Context) {
 	defer cancel()
 	rows, err := repositories.PreferenceQueue(rctx, db.DB(), email, limit)
 	if err != nil {
-		helpers.Detail(ctx, http.StatusInternalServerError, "could not load review queue.")
+		helpers.Detail(ctx, http.StatusInternalServerError, "could not load the review queue.")
 		return
 	}
 	ctx.JSON(http.StatusOK, rows)

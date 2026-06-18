@@ -231,13 +231,9 @@ const btnActive: React.CSSProperties = {
 
 export function ReviewCard({
   card,
-  position,
-  total,
   onRate,
 }: {
   card: PreferenceCard;
-  position: number;
-  total: number;
   onRate: (rating: Rating, comment?: string) => void;
 }) {
   const [note, setNote] = useState("");
@@ -305,10 +301,6 @@ export function ReviewCard({
 
   return (
     <div style={{ maxWidth: 660, margin: "0 auto", padding: "var(--sp-6)" }}>
-      <div className="t-sm" style={{ color: "var(--ink-soft)", marginBottom: "var(--sp-4)" }}>
-        {position} / {total}
-      </div>
-
       {/* Identity row — small logo + name + cohort */}
       <div style={{ display: "flex", gap: "var(--sp-3)", alignItems: "center" }}>
         <AppIcon src={iconUrl} name={name} size={44} />
