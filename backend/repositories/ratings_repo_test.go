@@ -38,7 +38,21 @@ var ratingsAdvID int64
 // seed() owns the full suite; here we just need a minimal fixture.
 func seedRatings(g *gorm.DB) {
 	must(g.Exec(`TRUNCATE frontend.app_ratings RESTART IDENTITY`).Error)
-	// Remove any stale test advertiser.
+	// Remove any stale test advertiser and its dependents in FK-safe order.
+	must(g.Exec(`DELETE FROM public.creatives
+		WHERE ad_id IN (
+			SELECT a.id FROM public.ads a
+			JOIN public.advertisers adv ON adv.id = a.advertiser_id
+			WHERE adv.page_id = 'RATINGS_TEST'
+		)`).Error)
+	must(g.Exec(`DELETE FROM public.ads
+		WHERE advertiser_id IN (
+			SELECT id FROM public.advertisers WHERE page_id = 'RATINGS_TEST'
+		)`).Error)
+	must(g.Exec(`DELETE FROM adtech.advertiser_scores
+		WHERE advertiser_id IN (
+			SELECT id FROM public.advertisers WHERE page_id = 'RATINGS_TEST'
+		)`).Error)
 	must(g.Exec(`DELETE FROM public.advertisers WHERE page_id = 'RATINGS_TEST'`).Error)
 
 	must(g.Raw(`INSERT INTO public.advertisers (page_id, page_name, page_like_count)
