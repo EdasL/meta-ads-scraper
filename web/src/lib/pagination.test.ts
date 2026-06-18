@@ -4,7 +4,14 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { clampPage, pageItems } from "./pagination.ts";
+import { PAGE_SIZE, PAGE_SIZE_OPTIONS, clampPage, clampPageSize, pageItems } from "./pagination.ts";
+
+test("clampPageSize keeps supported sizes, falls back otherwise", () => {
+  for (const n of PAGE_SIZE_OPTIONS) assert.equal(clampPageSize(n), n);
+  assert.equal(clampPageSize(0), PAGE_SIZE, "junk falls back to default");
+  assert.equal(clampPageSize(37), PAGE_SIZE, "unsupported size falls back to default");
+  assert.equal(PAGE_SIZE_OPTIONS[0], PAGE_SIZE, "default is the first option");
+});
 
 test("no pages / single page", () => {
   assert.deepEqual(pageItems(1, 0), []);

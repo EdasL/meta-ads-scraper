@@ -7,7 +7,7 @@ import type { ApiRatingEntry, Rating } from "@/lib/api";
 import { useSession } from "next-auth/react";
 import { Fallback } from "@/components/Fallback";
 import { ActivationChecklist, EmptyState, Pagination } from "@/components/ui";
-import { PAGE_SIZE, clampPage } from "@/lib/pagination";
+import { PAGE_SIZE, PAGE_SIZE_OPTIONS, clampPage, clampPageSize } from "@/lib/pagination";
 import { SORT_DEFAULT_DIR, shortlistParams } from "@/lib/query";
 import { clearReturnTo, loadReturnTo, saveReturnTo } from "@/lib/returnTo";
 import type { CategoryCount, ShortlistQuery, ShortlistRow } from "@/types/contracts";
@@ -26,7 +26,7 @@ function SkeletonTable() {
 
 /** The whole filter set + page lives in the URL (shareable, back-button-able);
  * defaults are omitted so the bare /discover stays clean. */
-function readUrl(sp: URLSearchParams): { filters: Filters; page: number } {
+function readUrl(sp: URLSearchParams): { filters: Filters; page: number; perPage: number } {
   const num = (key: string) => {
     const n = Number(sp.get(key));
     return Number.isFinite(n) && n > 0 ? Math.trunc(n) : 0;
@@ -48,10 +48,12 @@ function readUrl(sp: URLSearchParams): { filters: Filters; page: number } {
     // Capped so a hand-mangled page param can't overflow the offset the API
     // accepts; anything past the real last page walks back after the fetch.
     page: Math.min(Math.max(1, num("page")), 9999),
+    // A hand-mangled ?per= falls back to the default page size.
+    perPage: clampPageSize(num("per")),
   };
 }
 
-function writeUrl(f: Filters, page: number): string {
+function writeUrl(f: Filters, page: number, perPage: number): string {
   const sp = new URLSearchParams();
   if (f.q) sp.set("q", f.q);
   if (f.category) sp.set("category", f.category);
@@ -61,6 +63,7 @@ function writeUrl(f: Filters, page: number): string {
   if (f.minAdAge > 0) sp.set("age", String(f.minAdAge));
   if (f.hasFunnel) sp.set("funnel", "1");
   if (page > 1) sp.set("page", String(page));
+  if (perPage !== PAGE_SIZE) sp.set("per", String(perPage));
   return sp.toString();
 }
 
@@ -73,13 +76,14 @@ interface FeedResult {
   total: number;
   key: string;
   page: number;
+  perPage: number;
 }
 
 export function DiscoverFeed() {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const { filters, page } = useMemo(() => readUrl(searchParams), [searchParams]);
+  const { filters, page, perPage } = useMemo(() => readUrl(searchParams), [searchParams]);
 
   const [result, setResult] = useState<FeedResult | null>(null);
   const [error, setError] = useState(false);
@@ -100,10 +104,10 @@ export function DiscoverFeed() {
       min_ad_age: filters.minAdAge || undefined,
       sort: filters.sort,
       dir: filters.dir,
-      limit: PAGE_SIZE,
-      offset: (page - 1) * PAGE_SIZE,
+      limit: perPage,
+      offset: (page - 1) * perPage,
     }),
-    [filters, page],
+    [filters, page, perPage],
   );
   const queryKey = useMemo(() => shortlistParams(query).toString(), [query]);
 
@@ -112,11 +116,15 @@ export function DiscoverFeed() {
     getShortlist(query, ctrl.signal)
       .then(({ rows, total }) => {
         if (ctrl.signal.aborted) return;
+        // Tag the result with the page size that fetched it so the pager renders
+        // from one consistent epoch even while a new ?per= is in flight.
+        const epochPer = query.limit ?? PAGE_SIZE;
         setResult({
           rows,
           total,
           key: shortlistParams(query).toString(),
-          page: (query.offset ?? 0) / PAGE_SIZE + 1,
+          page: (query.offset ?? 0) / epochPer + 1,
+          perPage: epochPer,
         });
         setError(false);
       })
@@ -182,18 +190,28 @@ export function DiscoverFeed() {
   );
 
   const navigate = useCallback(
-    (f: Filters, p: number) => {
-      const qs = writeUrl(f, p);
+    (f: Filters, p: number, pp: number) => {
+      const qs = writeUrl(f, p, pp);
       router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
     },
     [router, pathname],
   );
 
   // Any filter edit restarts at page 1; an explicit page change scrolls back up.
-  const setFilters = useCallback((f: Filters) => navigate(f, 1), [navigate]);
+  const setFilters = useCallback((f: Filters) => navigate(f, 1, perPage), [navigate, perPage]);
   const setPage = useCallback(
     (p: number) => {
-      navigate(filters, p);
+      navigate(filters, p, perPage);
+      const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      window.scrollTo({ top: 0, behavior: still ? "auto" : "smooth" });
+    },
+    [navigate, filters, perPage],
+  );
+  // Changing the page size restarts at page 1 (the old offset is meaningless at
+  // the new size) and scrolls back to the top.
+  const setPerPage = useCallback(
+    (pp: number) => {
+      navigate(filters, 1, pp);
       const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
       window.scrollTo({ top: 0, behavior: still ? "auto" : "smooth" });
     },
@@ -211,9 +229,9 @@ export function DiscoverFeed() {
   // last page that exists.
   useEffect(() => {
     if (error || result === null || result.key !== queryKey) return;
-    const last = clampPage(page, result.total);
-    if (page > last) navigate(filters, last);
-  }, [error, result, queryKey, page, filters, navigate]);
+    const last = clampPage(page, result.total, result.perPage);
+    if (page > last) navigate(filters, last, perPage);
+  }, [error, result, queryKey, page, perPage, filters, navigate]);
 
   const retry = () => {
     setError(false);
@@ -313,11 +331,14 @@ export function DiscoverFeed() {
               </div>
               <Pagination
                 page={result.page}
-                pageCount={Math.max(1, Math.ceil(result.total / PAGE_SIZE))}
+                pageCount={Math.max(1, Math.ceil(result.total / result.perPage))}
                 total={result.total}
-                rangeStart={(result.page - 1) * PAGE_SIZE + 1}
-                rangeEnd={(result.page - 1) * PAGE_SIZE + rows.length}
+                rangeStart={(result.page - 1) * result.perPage + 1}
+                rangeEnd={(result.page - 1) * result.perPage + rows.length}
                 onPage={setPage}
+                perPage={perPage}
+                perPageOptions={PAGE_SIZE_OPTIONS}
+                onPerPage={setPerPage}
               />
             </>
           )}

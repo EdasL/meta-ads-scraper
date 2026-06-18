@@ -13,6 +13,9 @@ export function Pagination({
   rangeStart,
   rangeEnd,
   onPage,
+  perPage,
+  perPageOptions,
+  onPerPage,
 }: {
   page: number;
   pageCount: number;
@@ -20,8 +23,15 @@ export function Pagination({
   rangeStart: number;
   rangeEnd: number;
   onPage: (page: number) => void;
+  perPage: number;
+  perPageOptions: readonly number[];
+  onPerPage: (perPage: number) => void;
 }) {
-  if (pageCount <= 1) return null;
+  // Hidden only when even the smallest page size fits everything on one page —
+  // otherwise the per-page control stays reachable so a large size can be
+  // dialled back down.
+  const minOption = Math.min(...perPageOptions);
+  if (pageCount <= 1 && total <= minOption) return null;
 
   const box = (active: boolean, disabled = false): React.CSSProperties => ({
     minWidth: 30,
@@ -50,10 +60,35 @@ export function Pagination({
         marginTop: 28,
       }}
     >
-      <span className="t-xs nums" style={{ color: "var(--muted)" }}>
-        {rangeStart}–{rangeEnd} of {total}
-      </span>
+      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <span className="t-xs nums" style={{ color: "var(--muted)" }}>
+          {rangeStart}–{rangeEnd} of {total}
+        </span>
+        <label className="t-xs" style={{ display: "inline-flex", alignItems: "center", gap: 6, color: "var(--muted)" }}>
+          Per page
+          <select
+            value={perPage}
+            onChange={(e) => onPerPage(Number(e.target.value))}
+            style={{
+              height: 30,
+              padding: "0 6px",
+              border: "1px solid var(--line)",
+              background: "transparent",
+              color: "var(--ink)",
+              fontSize: "var(--fs-xs)",
+              cursor: "pointer",
+            }}
+          >
+            {perPageOptions.map((n) => (
+              <option key={n} value={n}>
+                {n}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
 
+      {pageCount > 1 && (
       <div className="font-mono nums" style={{ display: "flex", alignItems: "center", gap: 4 }}>
         {/* aria-disabled (not disabled) keeps the button focusable at the
             boundary — a native disabled control silently drops keyboard focus
@@ -95,6 +130,7 @@ export function Pagination({
           ›
         </button>
       </div>
+      )}
     </nav>
   );
 }

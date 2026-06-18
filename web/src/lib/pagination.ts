@@ -3,8 +3,16 @@
  * (unit-tested in `pagination.test.ts`, run with `node --test`).
  */
 
-/** Gems per Discover page. */
+/** Default gems per Discover page. */
 export const PAGE_SIZE = 24;
+
+/** Selectable page sizes for the "per page" control (first entry is the default). */
+export const PAGE_SIZE_OPTIONS = [24, 48, 96] as const;
+
+/** A page size the user picked back to a supported value (default on anything else). */
+export function clampPageSize(size: number): number {
+  return (PAGE_SIZE_OPTIONS as readonly number[]).includes(size) ? size : PAGE_SIZE;
+}
 
 export type PageItem = number | "gap";
 
