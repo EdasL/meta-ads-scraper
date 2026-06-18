@@ -3,9 +3,13 @@ pages to candidates. Verifies in-scope-genre filtering, known-page skipping, inc
 typeahead veto, the budget cap, and that survivors land in discovery.candidates via the
 sweep's classify->upsert path. Engine fixture + fake extractor (zero network); sentinel
 'RELX' page ids only (shared agf_it DB holds other rows)."""
+import json
+
 from sqlalchemy import text
 
-from agf.discovery.release_mint import expand_releases_via_typeahead
+from agf.db.candidates import upsert_sweep_candidate
+from agf.discovery.release_mint import (app_graph_seed_apps,
+                                        expand_releases_via_typeahead)
 
 
 class _FakeAd:
@@ -79,6 +83,63 @@ def test_resolves_new_advertiser_pages_and_skips_incumbents(_migrated_engine):
         assert row.store_id == "555111"
         assert row.technique == "release_typeahead"
         assert row.source_keyword == "Fastic App"
+    finally:
+        _clean()
+
+
+def test_app_graph_seeds_from_kept_android_similar(_migrated_engine):
+    eng = _migrated_engine
+
+    def _clean():
+        with eng.begin() as conn:
+            conn.execute(text("DELETE FROM discovery.candidates WHERE page_id LIKE 'AGT%'"))
+    _clean()
+    try:
+        with eng.begin() as conn:
+            upsert_sweep_candidate(conn, {
+                "page_id": "AGT_SEED", "page_name": "Seed", "page_like_count": 100,
+                "store": "android", "store_id": "com.agt.seed",
+                "link_url": "https://play.google.com/store/apps/details?id=com.agt.seed",
+                "cta_type": "INSTALL_MOBILE_APP", "ad_start_date": None,
+                "source_keyword": "seed", "technique": "niche_term"})
+            conn.execute(text("UPDATE discovery.candidates SET status='kept' "
+                              "WHERE page_id='AGT_SEED'"))
+
+        def runner(cmd, arg):
+            assert cmd == "similar" and arg == "com.agt.seed"
+            return json.dumps([
+                {"appId": "com.n.a", "title": "Neighbor A", "genre": "Health & Fitness"},
+                {"appId": "com.n.b", "title": "Neighbor B", "genre": "Education"}])
+
+        seeds = app_graph_seed_apps(eng, runner=runner, max_seeds=5)
+        # the kept Android app's Play 'similar' neighbours become seed apps
+        assert {s["store_id"] for s in seeds} == {"com.n.a", "com.n.b"}
+        assert {"store_id": "com.n.a", "name": "Neighbor A",
+                "genre": "Health & Fitness"} in seeds
+    finally:
+        _clean()
+
+
+def test_extra_seeds_are_typeaheaded_and_deduped(_migrated_engine):
+    eng = _migrated_engine
+
+    def _clean():
+        with eng.begin() as conn:
+            conn.execute(text("DELETE FROM discovery.candidates WHERE page_id LIKE 'RELX%'"))
+    _clean()
+    try:
+        # new-releases fetch returns nothing; the app-graph extra_seed drives discovery
+        extra = [{"store_id": "g1", "name": "Graph App", "genre": "Education"}]
+        pages_by_name = {"Graph App": [{"page_id": "RELX_G", "page_like_count": 600}]}
+        ext = _FakeExtractor(pages_by_name, store_by_page={"RELX_G": "777222"})
+        stats = expand_releases_via_typeahead(
+            eng, ext, client=None, fetch=_fetch_factory([]), extra_seeds=extra)
+        assert ext.typeahead_calls == ["Graph App"]
+        assert stats["candidates_new"] == 1
+        with eng.connect() as conn:
+            tech = conn.execute(text(
+                "SELECT technique FROM discovery.candidates WHERE page_id='RELX_G'")).scalar()
+        assert tech == "release_typeahead"
     finally:
         _clean()
 

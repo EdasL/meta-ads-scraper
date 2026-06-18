@@ -18,7 +18,7 @@ from sqlalchemy import text
 from agf.db.candidates import upsert_sweep_candidate
 from agf.db.engine import begin
 from agf.discovery.sweep import classify_candidate
-from agf.enrich_full.appstore import fetch_itunes_new_releases
+from agf.enrich_full.appstore import fetch_itunes_new_releases, gplay_similar
 from agf.scoring.vetoes import INCUMBENT_PAGE_LIKES_MAX
 
 # Scrape EVERY App Store category, not just the ones the user has liked — a hidden gem
@@ -38,17 +38,47 @@ def _known_page_ids(conn) -> set:
         "UNION SELECT page_id::text FROM public.advertisers")).all()}
 
 
+def app_graph_seed_apps(engine, *, runner=None, max_seeds=20) -> list[dict]:
+    """Seed apps from the app-graph of recently-kept Android apps: each one's Google Play
+    'similar apps'. A winning app's neighbours jump vocabulary basins keyword search can't
+    reach — feed these to expand_releases_via_typeahead's `extra_seeds`. Returns
+    [{store_id, name, genre}] (deduped). Zero Meta traffic (Play sidecar only); `runner`
+    is injectable for tests."""
+    with engine.connect() as conn:
+        pkgs = [r[0] for r in conn.execute(text(
+            "SELECT store_id FROM discovery.candidates "
+            "WHERE store = 'android' AND status = 'kept' "
+            "ORDER BY last_seen_at DESC LIMIT :n"), {"n": max_seeds}).all()]
+    out, seen = [], set()
+    for pkg in pkgs:
+        for app in gplay_similar(pkg, runner=runner):
+            sid = app.get("store_id")
+            if not sid or sid in seen:
+                continue
+            seen.add(sid)
+            out.append(app)
+    return out
+
+
 def expand_releases_via_typeahead(engine, extractor, client, *,
                                   exclude_genres=OUT_OF_SCOPE_GENRES,
                                   country="us", limit=200, listing_pages=2,
                                   max_listings=120, like_ceiling=INCUMBENT_PAGE_LIKES_MAX,
-                                  fetch=fetch_itunes_new_releases) -> dict:
-    """One pass: fetch new releases across ALL categories, typeahead each name, resolve the
-    new advertiser pages to candidates. `fetch` is injectable for tests; `extractor` provides
+                                  extra_seeds=(), fetch=fetch_itunes_new_releases) -> dict:
+    """One pass: gather seed apps (new releases across ALL categories, plus any
+    `extra_seeds` — e.g. app-graph neighbours), typeahead each name, resolve the new
+    advertiser pages to candidates. `fetch` is injectable for tests; `extractor` provides
     async `typeahead` and `search_listing`. Returns stats. Bounds Meta spend via `max_listings`
     (page-listing scrapes per run) and by skipping already-known pages and typeahead-incumbents."""
-    apps = [a for a in fetch(client, country=country, genre=None, limit=limit)
-            if a.get("genre") not in exclude_genres]
+    seeds = list(fetch(client, country=country, genre=None, limit=limit)) + list(extra_seeds)
+    apps, seen_store = [], set()
+    for a in seeds:                                   # dedup by store_id, drop out-of-scope
+        sid = a.get("store_id")
+        if a.get("genre") in exclude_genres or (sid and sid in seen_store):
+            continue
+        if sid:
+            seen_store.add(sid)
+        apps.append(a)
     with engine.connect() as conn:
         skip = _known_page_ids(conn)
     stats = {"apps": len(apps), "typeahead_pages": 0, "incumbent_skipped": 0,
