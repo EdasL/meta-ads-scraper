@@ -87,6 +87,7 @@ from agf.enrich_full.media_repair import (repair_advertiser,
 from agf.enrich_full.run_enrich import make_enrich_handler, EnrichDeps
 from agf.extract.errors import ExtractError
 from agf.scoring.run_scoring import run_scoring, ALERT_THRESHOLD
+from scripts.score_preferences import score_all_users  # preference re-scoring
 from agf.tracker.snapshots import snapshot_advertiser_week
 from agf.workers.runner import run_worker
 
@@ -563,6 +564,18 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
 
     # 2) scoring — optional; its own committed txn + CONCURRENT matview refresh
     scored = run_scoring(engine, as_of) if score_after else None
+
+    # 2b) preference re-scoring — per-user P(like) for the /review queue. Runs
+    #     after the matview refresh so it scores current features. Best-effort:
+    #     a model failure must not stall the worker cycle.
+    if score_after and os.environ.get("AGF_SCORE_PREFERENCES", "1") != "0":
+        try:
+            with begin(engine) as conn:
+                pref_counts = score_all_users(conn)
+            print(f"[worker] preference scoring: {pref_counts}", flush=True)
+        except Exception as exc:
+            print(f"[worker] preference scoring failed: {exc!r}",
+                  file=sys.stderr, flush=True)
 
     # 3) enrich — keepers first (they have no ad history yet, so they can't score
     #    until enriched), then flagged gems due for their TTL refresh; both under a
