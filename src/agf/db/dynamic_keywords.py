@@ -27,7 +27,12 @@ def trial_sweeps() -> int:
 
 
 def promote_min_new() -> int:
-    return _env_int("AGF_FLYWHEEL_PROMOTE_MIN_NEW", 3)
+    # Default lowered 3 -> 1 (2026-06-18): at real per-keyword yields, requiring 3 new
+    # candidates across the trial budget was unreachable and retired ~94% of app trials
+    # and 100% of funnel trials, stalling the renewal engine. A keyword that finds even
+    # one new candidate now survives; saturated keywords are retired later by the
+    # novelty-decay logic (P3). Revert with AGF_FLYWHEEL_PROMOTE_MIN_NEW=3.
+    return _env_int("AGF_FLYWHEEL_PROMOTE_MIN_NEW", 1)
 
 
 # Back-compat aliases (some callers/tests import these names). These are the

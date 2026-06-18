@@ -28,6 +28,30 @@ def test_trial_cadence_reads_env(monkeypatch):
     assert dk.trial_sweeps() == 4   # default
 
 
+def test_promote_bar_default_is_one(monkeypatch):
+    # The renewal-engine fix: a starved flywheel must keep any keyword that found
+    # at least one new candidate. The default bar was 3 (unreachable at real yields,
+    # which retired ~94% of app trials and 100% of funnel trials).
+    monkeypatch.delenv("AGF_FLYWHEEL_PROMOTE_MIN_NEW", raising=False)
+    assert dk.promote_min_new() == 1
+
+
+def test_single_new_candidate_promotes_under_default(pg_conn, monkeypatch):
+    monkeypatch.setenv("AGF_FLYWHEEL_TRIAL_SWEEPS", "4")
+    monkeypatch.delenv("AGF_FLYWHEEL_PROMOTE_MIN_NEW", raising=False)   # default = 1
+    dk.add_trial_keywords(pg_conn, ["FWTEST barely", "FWTEST barren"])
+    _set_sweeps(pg_conn, "FWTEST barely", sweeps_used=3, new_total=1)   # one short of budget
+    _set_sweeps(pg_conn, "FWTEST barren", sweeps_used=3, new_total=0)
+
+    # The 4th sweep pushes both to the budget; only the one with a candidate survives.
+    barely_id = pg_conn.execute(text(
+        "SELECT id FROM discovery.dynamic_keywords WHERE keyword='FWTEST barely'")).scalar()
+    barren_id = pg_conn.execute(text(
+        "SELECT id FROM discovery.dynamic_keywords WHERE keyword='FWTEST barren'")).scalar()
+    assert dk.record_keyword_sweep(pg_conn, barely_id, new_candidates=0) == "active"
+    assert dk.record_keyword_sweep(pg_conn, barren_id, new_candidates=0) == "retired"
+
+
 def test_apply_verdicts_frees_budget_reached_trials(pg_conn, monkeypatch):
     # A lowered budget (the actual fix): trials stuck at sweeps_used=2 must now verdict.
     monkeypatch.setenv("AGF_FLYWHEEL_TRIAL_SWEEPS", "2")
