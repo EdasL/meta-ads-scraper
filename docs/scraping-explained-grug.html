@@ -740,6 +740,15 @@ to candidates through the <strong>exact same path the keyword sweep uses</strong
 listings it scrapes per run (<code>AGF_RELEASE_MINT_MAX_LISTINGS</code>). Shipped in commit <code>a76b391</code>,
 daily-gated by migration 134.
 </p>
+<div class="grug" style="border-left-color:var(--good)">
+<strong>scrape ALL categories, rank narrow.</strong> The new door pulls new-releases from <em>every</em> store
+category — not just the health/self-improvement ones grug has liked before — minus only games (out of
+product scope) and stickers. Why: a hidden gem is by definition in a category you're <em>not</em> already
+looking at, so if your 👍/👎 decided what gets <em>scraped</em>, you'd loop forever on the same apps. Preference
+belongs at the <strong>feed</strong> (the <code>p_like</code> model picks what surfaces to you); the scrape gate stays
+blind to taste and only enforces <em>structural</em> limits (emerging-only via the incumbent veto, no games).
+Look everywhere; show what you'd like.
+</div>
 <div class="grug">
 big idea: <strong>don't dig the same hole deeper — open a new door.</strong> The flywheel eats its own ad copy,
 so it can only ever find more of what it already found. The App Store new-releases list is a fresh stream

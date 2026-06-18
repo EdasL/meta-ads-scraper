@@ -21,14 +21,13 @@ from agf.discovery.sweep import classify_candidate
 from agf.enrich_full.appstore import fetch_itunes_new_releases
 from agf.scoring.vetoes import INCUMBENT_PAGE_LIKES_MAX
 
-# In-scope App Store category labels (as Apple's RSS returns them) — the consumer /
-# self-improvement basins. Games, B2B (Business/Developer Tools), Stickers and system
-# utilities are out of scope, so their new releases don't burn typeahead/scrape budget.
-IN_SCOPE_GENRES = frozenset({
-    "Health & Fitness", "Education", "Food & Drink", "Lifestyle", "Productivity",
-    "Finance", "Photo & Video", "Music", "Travel", "Shopping", "Social Networking",
-    "Reference", "Entertainment", "Medical", "Sports", "Books", "News", "Weather",
-})
+# Scrape EVERY App Store category, not just the ones the user has liked — a hidden gem
+# is by definition in a category you aren't already looking at, so preference must filter
+# the FEED (the p_like model), never the scrape gate. The only exclusions are structural,
+# not preferential: Games are out of product scope (already vetoed via is_game, so scraping
+# them just burns budget on rows triage will drop), and Stickers aren't standalone apps.
+# Everything else consumer is in. Emerging-only is still enforced by the incumbent veto.
+OUT_OF_SCOPE_GENRES = frozenset({"Games", "Stickers"})
 
 
 def _known_page_ids(conn) -> set:
@@ -39,16 +38,17 @@ def _known_page_ids(conn) -> set:
         "UNION SELECT page_id::text FROM public.advertisers")).all()}
 
 
-def expand_releases_via_typeahead(engine, extractor, client, *, genres=IN_SCOPE_GENRES,
+def expand_releases_via_typeahead(engine, extractor, client, *,
+                                  exclude_genres=OUT_OF_SCOPE_GENRES,
                                   country="us", limit=200, listing_pages=2,
                                   max_listings=120, like_ceiling=INCUMBENT_PAGE_LIKES_MAX,
                                   fetch=fetch_itunes_new_releases) -> dict:
-    """One pass: fetch new releases, typeahead each name, resolve the new advertiser pages
-    to candidates. `fetch` is injectable for tests; `extractor` provides async `typeahead`
-    and `search_listing`. Returns stats. Bounds Meta spend via `max_listings` (page-listing
-    scrapes per run) and by skipping already-known pages and typeahead-incumbents."""
+    """One pass: fetch new releases across ALL categories, typeahead each name, resolve the
+    new advertiser pages to candidates. `fetch` is injectable for tests; `extractor` provides
+    async `typeahead` and `search_listing`. Returns stats. Bounds Meta spend via `max_listings`
+    (page-listing scrapes per run) and by skipping already-known pages and typeahead-incumbents."""
     apps = [a for a in fetch(client, country=country, genre=None, limit=limit)
-            if a.get("genre") in genres]
+            if a.get("genre") not in exclude_genres]
     with engine.connect() as conn:
         skip = _known_page_ids(conn)
     stats = {"apps": len(apps), "typeahead_pages": 0, "incumbent_skipped": 0,
