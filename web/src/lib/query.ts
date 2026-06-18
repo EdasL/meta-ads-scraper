@@ -11,6 +11,7 @@ export const SORT_DEFAULT_DIR: Record<ShortlistSort, SortDir> = {
   gemscore: "desc",
   fastest: "desc",
   newest: "asc",
+  foryou: "desc",
 };
 
 export function shortlistParams(query: ShortlistQuery): URLSearchParams {
@@ -24,6 +25,8 @@ export function shortlistParams(query: ShortlistQuery): URLSearchParams {
   if (query.incubating) params.set("incubating", "true");
   if (query.sort && query.sort !== "gemscore") params.set("sort", query.sort);
   if (query.dir && query.dir !== SORT_DEFAULT_DIR[query.sort ?? "gemscore"]) params.set("dir", query.dir);
+  // The "for you" sort ranks by the user's preference_scores, so it needs the email.
+  if (query.sort === "foryou" && query.user_email) params.set("user_email", query.user_email);
   if (query.limit != null) params.set("limit", String(query.limit));
   if (query.offset) params.set("offset", String(query.offset));
   return params;

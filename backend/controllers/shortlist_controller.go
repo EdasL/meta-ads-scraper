@@ -77,6 +77,12 @@ func (c *ShortlistController) List(ctx *gin.Context) {
 		helpers.Detail(ctx, http.StatusUnprocessableEntity, "bad dir.")
 		return
 	}
+	// The "for you" sort ranks by the caller's own preference_scores, so it
+	// needs to know who's asking.
+	if p.UserEmail = ctx.Query("user_email"); p.Sort == "foryou" && p.UserEmail == "" {
+		helpers.Detail(ctx, http.StatusUnprocessableEntity, "user_email is required for the 'for you' sort.")
+		return
+	}
 	var err error
 	if p.Limit, err = helpers.QueryInt(ctx, "limit", 50); err != nil || p.Limit < 0 {
 		helpers.Detail(ctx, http.StatusUnprocessableEntity, "bad limit.")

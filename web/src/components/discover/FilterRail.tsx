@@ -37,6 +37,7 @@ export const DEFAULT_FILTERS: Filters = {
 };
 
 const SORT_LABEL: Record<Sort, string> = {
+  foryou: "For you",
   gemscore: "Best score",
   fastest: "Fastest climb",
   newest: "Newest",

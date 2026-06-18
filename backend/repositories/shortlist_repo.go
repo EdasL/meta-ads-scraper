@@ -23,8 +23,11 @@ type ShortlistParams struct {
 	// nil → confirmed feed only (incubating=false, the default); true → incubating
 	// only (the Fresh view); false → also confirmed only (explicit).
 	Incubating *bool
-	Sort      string // sort key; see shortlistOrder
+	Sort      string // sort key; see shortlistOrder (plus "foryou")
 	Dir       string // "asc"/"desc"; "" = the key's natural direction
+	// UserEmail scopes the "foryou" sort to one user's preference_scores; the
+	// other sorts ignore it.
+	UserEmail string
 	Limit     int
 	Offset    int
 }
@@ -42,10 +45,28 @@ var shortlistOrder = map[string]struct {
 	"newest":   {"max_longevity_days", "ASC", true},
 }
 
-// ValidSort reports whether s is a known shortlist sort key.
+// ValidSort reports whether s is a known shortlist sort key. "foryou" is valid
+// too but isn't in shortlistOrder — it's built specially (see buildShortlistOrder).
 func ValidSort(s string) bool {
+	if s == "foryou" {
+		return true
+	}
 	_, ok := shortlistOrder[s]
 	return ok
+}
+
+// buildShortlistOrder returns the ORDER BY clause and any params it binds.
+// "foryou" orders by the user's predicted-like score via a correlated subquery
+// (no join keeps the bare mvCols unambiguous); apps the model hasn't scored for
+// this user sort last.
+func buildShortlistOrder(p ShortlistParams) (string, []any) {
+	if p.Sort == "foryou" {
+		return `(SELECT ps.p_like FROM frontend.preference_scores ps
+		         WHERE ps.user_email = ?
+		           AND ps.advertiser_id = frontend.emerging_scaling_apps.advertiser_id)
+		        DESC NULLS LAST, advertiser_id`, []any{p.UserEmail}
+	}
+	return orderClause(p.Sort, p.Dir), nil
 }
 
 // ValidDir reports whether d is a sort direction ("" = the key's default).
@@ -136,7 +157,7 @@ func shortlistConds(p ShortlistParams) ([]string, []any) {
 func Shortlist(ctx context.Context, g *gorm.DB, p ShortlistParams) ([]models.ShortlistRow, int, error) {
 	conds, args := shortlistConds(p)
 	where := strings.Join(conds, "\n   AND ")
-	order := orderClause(p.Sort, p.Dir)
+	order, orderArgs := buildShortlistOrder(p)
 
 	rows := make([]models.ShortlistRow, 0)
 	total := 0
@@ -152,7 +173,7 @@ func Shortlist(ctx context.Context, g *gorm.DB, p ShortlistParams) ([]models.Sho
 			 WHERE `+where+`
 			 ORDER BY `+order+`
 			 LIMIT ? OFFSET ?`,
-			append(append([]any{}, args...), p.Limit, p.Offset)...,
+			append(append(append([]any{}, args...), orderArgs...), p.Limit, p.Offset)...,
 		).Scan(&scanned).Error; err != nil {
 			return err
 		}

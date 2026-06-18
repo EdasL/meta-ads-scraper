@@ -243,7 +243,7 @@ export interface ReviewDecision {
 }
 
 /** Server-side sort keys for the gems feed (validated by the API). */
-export type ShortlistSort = "gemscore" | "fastest" | "newest";
+export type ShortlistSort = "gemscore" | "fastest" | "newest" | "foryou";
 
 /** Sort direction; omitted means the sort key's natural direction. */
 export type SortDir = "asc" | "desc";
@@ -264,6 +264,8 @@ export interface ShortlistQuery {
   incubating?: boolean;
   sort?: ShortlistSort;
   dir?: SortDir;
+  /** Required when sort === "foryou" — scopes the preference ranking to a user. */
+  user_email?: string;
   limit?: number;
   offset?: number;
 }

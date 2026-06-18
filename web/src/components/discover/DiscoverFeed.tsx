@@ -32,7 +32,10 @@ function readUrl(sp: URLSearchParams): { filters: Filters; page: number; perPage
     return Number.isFinite(n) && n > 0 ? Math.trunc(n) : 0;
   };
   const sortParam = sp.get("sort");
-  const sort = sortParam === "fastest" || sortParam === "newest" ? sortParam : "gemscore";
+  const sort: Filters["sort"] =
+    sortParam === "fastest" || sortParam === "newest" || sortParam === "foryou"
+      ? sortParam
+      : "gemscore";
   const dir = sp.get("dir");
   const age = num("age");
   return {
@@ -104,14 +107,19 @@ export function DiscoverFeed() {
       min_ad_age: filters.minAdAge || undefined,
       sort: filters.sort,
       dir: filters.dir,
+      // "For you" ranks by this user's preference model; other sorts ignore it.
+      user_email: filters.sort === "foryou" ? userEmail ?? undefined : undefined,
       limit: perPage,
       offset: (page - 1) * perPage,
     }),
-    [filters, page, perPage],
+    [filters, page, perPage, userEmail],
   );
   const queryKey = useMemo(() => shortlistParams(query).toString(), [query]);
 
   useEffect(() => {
+    // "For you" needs the signed-in email; wait for the session rather than
+    // firing a request the server would 422.
+    if (query.sort === "foryou" && !query.user_email) return;
     const ctrl = new AbortController();
     getShortlist(query, ctrl.signal)
       .then(({ rows, total }) => {
