@@ -1,9 +1,12 @@
 "use client";
 
-import { useState } from "react";
-import type { PreferenceCard } from "@/types/contracts";
+import { useEffect, useState } from "react";
+import type { PreferenceCard, GemDossier } from "@/types/contracts";
+import { getGem } from "@/lib/api";
 import type { Rating } from "@/lib/api";
 import { MIN_PCT_BASE } from "@/lib/why";
+import { AppIcon } from "@/components/ui";
+import { AdsSection } from "@/components/detail/EvidenceReel";
 
 const btnBase: React.CSSProperties = {
   display: "inline-flex",
@@ -39,13 +42,34 @@ export function ReviewCard({
   const [showNote, setShowNote] = useState(false);
   const [pending, setPending] = useState<Rating | null>(null);
 
-  // Hero image: ad creative snapshot, fall back to app icon.
-  const heroUrl = card.hero_creative?.snapshot_image_url ?? card.icon_url;
+  // The queue payload is lightweight (one hero creative). Fetch the full
+  // dossier for the current app so the card mirrors the gem page's main info:
+  // the real ad set + store data. Loads per card; the core info renders
+  // immediately from `card` while the ads stream in.
+  const [dossier, setDossier] = useState<GemDossier | null>(null);
+  const [loadingDossier, setLoadingDossier] = useState(true);
+
+  useEffect(() => {
+    let alive = true;
+    setDossier(null);
+    setLoadingDossier(true);
+    getGem(card.advertiser_id)
+      .then((d) => alive && setDossier(d))
+      .catch(() => alive && setDossier(null))
+      .finally(() => alive && setLoadingDossier(false));
+    return () => {
+      alive = false;
+    };
+  }, [card.advertiser_id]);
 
   function handleRate(rating: Rating) {
     setPending(rating);
     onRate(rating, note);
   }
+
+  const name = card.app_name ?? card.page_name ?? "Untitled";
+  const iconUrl = dossier?.icon_url ?? card.icon_url;
+  const funnelUrl = dossier?.funnel_url ?? card.funnel_url;
 
   const growthLine =
     card.growth?.pct_change != null && card.growth.first_count >= MIN_PCT_BASE
@@ -53,50 +77,38 @@ export function ReviewCard({
       : null;
 
   return (
-    <div style={{ maxWidth: 520, margin: "0 auto", padding: "var(--sp-6)" }}>
+    <div style={{ maxWidth: 660, margin: "0 auto", padding: "var(--sp-6)" }}>
       <div className="t-sm" style={{ color: "var(--ink-soft)", marginBottom: "var(--sp-4)" }}>
         {position} / {total}
       </div>
 
-      {heroUrl ? (
-        <img
-          src={heroUrl}
-          alt={card.app_name ?? card.page_name}
-          style={{
-            width: "100%",
-            aspectRatio: "1 / 1",
-            objectFit: "cover",
-            border: "1.5px solid var(--ink)",
-            boxShadow: "var(--shadow-hard)",
-            display: "block",
-          }}
-        />
-      ) : null}
-
-      <h1 className="t-2xl w-strong" style={{ marginTop: "var(--sp-4)", marginBottom: 0 }}>
-        {card.app_name ?? card.page_name}
-      </h1>
-      <div className="t-sm" style={{ color: "var(--ink-soft)", marginTop: "var(--sp-1)" }}>
-        {card.cohort}
+      {/* Identity row — small logo + name + cohort */}
+      <div style={{ display: "flex", gap: "var(--sp-3)", alignItems: "center" }}>
+        <AppIcon src={iconUrl} name={name} size={44} />
+        <div style={{ minWidth: 0 }}>
+          <h1 className="t-xl w-strong" style={{ margin: 0, lineHeight: 1.15 }}>
+            {name}
+          </h1>
+          <div className="t-sm" style={{ color: "var(--ink-soft)", marginTop: 2 }}>
+            {card.cohort}
+          </div>
+        </div>
       </div>
+
       {card.tagline ? (
-        <p className="t-base" style={{ marginTop: "var(--sp-2)" }}>
+        <p className="t-base" style={{ marginTop: "var(--sp-3)", marginBottom: 0 }}>
           {card.tagline}
         </p>
       ) : null}
 
+      {/* Signal row */}
       <div
         className="t-sm"
-        style={{ display: "flex", gap: "var(--sp-6)", marginTop: "var(--sp-4)", flexWrap: "wrap" }}
+        style={{ display: "flex", gap: "var(--sp-6)", marginTop: "var(--sp-3)", flexWrap: "wrap" }}
       >
         <span className="nums">{card.active_ad_count} active ads</span>
         <span className="nums">GemScore {Math.round(card.gem_score)}</span>
         {growthLine ? <span className="nums">{growthLine}</span> : null}
-        {card.funnel_url ? (
-          <a href={card.funnel_url} target="_blank" rel="noreferrer" className="t-sm">
-            Funnel
-          </a>
-        ) : null}
       </div>
 
       {card.why ? (
@@ -105,6 +117,40 @@ export function ReviewCard({
         </div>
       ) : null}
 
+      {/* Quiz / funnel — prominent, opens in a new tab so it can be checked */}
+      {funnelUrl ? (
+        <a
+          href={funnelUrl}
+          target="_blank"
+          rel="noreferrer"
+          className="t-sm w-strong"
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 6,
+            marginTop: "var(--sp-4)",
+            padding: "6px 14px",
+            border: "1.5px solid var(--ink)",
+            color: "var(--ink)",
+            textDecoration: "none",
+          }}
+        >
+          Open quiz funnel ↗
+        </a>
+      ) : null}
+
+      {/* The ads — reuses the gem page's active-ads section */}
+      <div style={{ marginTop: "var(--sp-5)" }}>
+        {dossier ? (
+          <AdsSection gem={dossier} />
+        ) : loadingDossier ? (
+          <div className="t-sm" style={{ color: "var(--ink-soft)" }}>
+            Loading ads…
+          </div>
+        ) : null}
+      </div>
+
+      {/* Rating controls */}
       <div style={{ display: "flex", gap: "var(--sp-3)", marginTop: "var(--sp-6)" }}>
         <button
           type="button"
