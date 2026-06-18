@@ -89,7 +89,8 @@ from agf.enrich_full.media_repair import (repair_advertiser,
 from agf.enrich_full.run_enrich import make_enrich_handler, EnrichDeps
 from agf.extract.errors import ExtractError
 from agf.scoring.run_scoring import run_scoring, ALERT_THRESHOLD
-from scripts.score_preferences import score_all_users  # preference re-scoring
+from scripts.embed_apps import embed_apps                       # content embeddings
+from scripts.score_content_preferences import score_all_users   # content preference scoring
 from agf.tracker.snapshots import snapshot_advertiser_week
 from agf.workers.runner import run_worker
 
@@ -604,9 +605,18 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
     # 2) scoring — optional; its own committed txn + CONCURRENT matview refresh
     scored = run_scoring(engine, as_of) if score_after else None
 
-    # 2b) preference re-scoring — per-user P(like) for the /review queue. Runs
-    #     after the matview refresh so it scores current features. Best-effort:
-    #     a model failure must not stall the worker cycle.
+    # 2a) content embeddings — embed new/changed apps so the preference scorer
+    #     ranks on current content. Best-effort: a failure must not stall the cycle.
+    if score_after and os.environ.get("AGF_EMBED_APPS", "1") != "0":
+        try:
+            with begin(engine) as conn:
+                emb_stats = embed_apps(conn)
+            print(f"[worker] embeddings: {emb_stats}", flush=True)
+        except Exception as exc:
+            print(f"[worker] embedding stage failed: {exc!r}",
+                  file=sys.stderr, flush=True)
+
+    # 2b) preference re-scoring — per-user similarity-to-likes over embeddings.
     if score_after and os.environ.get("AGF_SCORE_PREFERENCES", "1") != "0":
         try:
             with begin(engine) as conn:
