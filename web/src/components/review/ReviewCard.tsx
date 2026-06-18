@@ -168,6 +168,12 @@ export function ReviewCard({
     .sort((a, b) => Number(b.ad_active) - Number(a.ad_active))
     .slice(0, TOP_MEDIA);
 
+  // App store screenshots from the richest linked listing (Apple often has
+  // none while Play has the full set).
+  const screenshots = (
+    (dossier?.apps ?? []).find((a) => a.screenshots && a.screenshots.length)?.screenshots ?? []
+  ).slice(0, 6);
+
   return (
     <div style={{ maxWidth: 660, margin: "0 auto", padding: "var(--sp-6)" }}>
       <div className="t-sm" style={{ color: "var(--ink-soft)", marginBottom: "var(--sp-4)" }}>
@@ -245,6 +251,33 @@ export function ReviewCard({
           )}
         </Fact>
       </dl>
+
+      {/* App store screenshots — small strip from the linked listing */}
+      {screenshots.length ? (
+        <div style={{ marginTop: "var(--sp-5)" }}>
+          <div className="t-sm w-strong" style={{ marginBottom: "var(--sp-2)" }}>
+            Screenshots
+          </div>
+          <div style={{ display: "flex", gap: "var(--sp-2)", overflowX: "auto", paddingBottom: 4 }}>
+            {screenshots.map((src, i) => (
+              <img
+                key={i}
+                src={src}
+                alt={`Screenshot ${i + 1}`}
+                loading="lazy"
+                style={{
+                  height: 150,
+                  width: "auto",
+                  border: "1px solid var(--line)",
+                  borderRadius: 6,
+                  flexShrink: 0,
+                  display: "block",
+                }}
+              />
+            ))}
+          </div>
+        </div>
+      ) : null}
 
       {/* Ads-over-time diagram (reused from the gem page) */}
       {dossier ? (
