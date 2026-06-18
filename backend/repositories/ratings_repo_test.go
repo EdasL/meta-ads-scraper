@@ -84,6 +84,7 @@ func TestUpsertAndListRating(t *testing.T) {
 	require.Equal(t, "like", row.Rating)
 	require.Equal(t, "looks promising", row.Comment)
 	require.NotEmpty(t, row.Features, "features snapshot must be populated")
+	require.Contains(t, row.Features, "gem_score", "snapshot must carry scoring signals")
 }
 
 func TestUpsertRatingOverwrites(t *testing.T) {
