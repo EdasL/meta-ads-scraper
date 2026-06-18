@@ -5,7 +5,6 @@ const nextConfig: NextConfig = {
     return [
       // Routes renamed in the 2026 UI redesign.
       { source: "/board", destination: "/discover", permanent: true },
-      { source: "/review", destination: "/saved", permanent: true },
     ];
   },
 };
