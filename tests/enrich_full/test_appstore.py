@@ -1,5 +1,50 @@
 from sqlalchemy import text
-from agf.enrich_full.appstore import lookup_itunes_batch, resolve_pending_app_metadata
+from agf.enrich_full.appstore import (fetch_itunes_new_releases, lookup_itunes_batch,
+                                      parse_itunes_new_releases,
+                                      resolve_pending_app_metadata)
+
+
+def _entry(im_id, name, genre="Health & Fitness"):
+    return {"im:name": {"label": name},
+            "id": {"label": f"https://apps.apple.com/app/id{im_id}",
+                   "attributes": {"im:id": str(im_id), "im:bundleId": "com.x"}},
+            "category": {"attributes": {"im:id": "6013", "term": genre, "label": genre}}}
+
+
+def test_parse_new_releases_extracts_id_name_genre():
+    payload = {"feed": {"entry": [_entry(111, "Calorie Counter"),
+                                  _entry(222, "Sleep Tracker", "Health & Fitness")]}}
+    rows = parse_itunes_new_releases(payload)
+    assert rows == [
+        {"store_id": "111", "name": "Calorie Counter", "genre": "Health & Fitness"},
+        {"store_id": "222", "name": "Sleep Tracker", "genre": "Health & Fitness"}]
+
+
+def test_parse_new_releases_handles_single_entry_and_empty():
+    # a one-app feed arrives as a dict, not a list
+    one = {"feed": {"entry": _entry(333, "Solo App")}}
+    assert parse_itunes_new_releases(one) == [
+        {"store_id": "333", "name": "Solo App", "genre": "Health & Fitness"}]
+    assert parse_itunes_new_releases({"feed": {}}) == []
+    assert parse_itunes_new_releases({}) == []
+
+
+class _FakeRSS:
+    """Records the requested URL; returns a fixed new-releases feed."""
+    def __init__(self):
+        self.urls = []
+
+    def get(self, url):
+        self.urls.append(url)
+        return _Resp({"feed": {"entry": [_entry(111, "Calorie Counter")]}})
+
+
+def test_fetch_new_releases_builds_genre_url_and_parses():
+    cl = _FakeRSS()
+    rows = fetch_itunes_new_releases(cl, country="us", genre="6013", limit=100)
+    assert cl.urls == [
+        "https://itunes.apple.com/us/rss/newapplications/limit=100/genre=6013/json"]
+    assert rows[0]["store_id"] == "111"
 
 
 class FakeITunes:

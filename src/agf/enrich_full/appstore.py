@@ -12,7 +12,51 @@ from agf.enrich import parse_lookup, AppMeta
 from agf.db.repo import _cap_description
 
 _ITUNES_LOOKUP = "https://itunes.apple.com/lookup"
+_ITUNES_NEW_APPS = "https://itunes.apple.com/{country}/rss/{feed}/limit={limit}{genre}/json"
 _SIDECAR = Path(__file__).parent / "sidecar" / "gp_lookup.js"
+
+
+def _rss_dig(node, *keys):
+    """Walk nested dicts; None as soon as a step is missing (RSS JSON is `.label`-heavy)."""
+    cur = node
+    for k in keys:
+        if not isinstance(cur, dict):
+            return None
+        cur = cur.get(k)
+    return cur
+
+
+def parse_itunes_new_releases(payload) -> list[dict]:
+    """Parse an iTunes new-applications RSS JSON feed into {store_id, name, genre} rows.
+    A single-entry feed arrives as a dict (not a list); an empty/missing feed yields []."""
+    entries = _rss_dig(payload or {}, "feed", "entry") or []
+    if isinstance(entries, dict):
+        entries = [entries]
+    out: list[dict] = []
+    for e in entries:
+        store_id = _rss_dig(e, "id", "attributes", "im:id")
+        name = _rss_dig(e, "im:name", "label")
+        if not store_id or not name:
+            continue
+        out.append({"store_id": str(store_id), "name": str(name),
+                    "genre": _rss_dig(e, "category", "attributes", "label")})
+    return out
+
+
+def fetch_itunes_new_releases(client, *, country="us", genre=None, limit=100,
+                              free_only=False) -> list[dict]:
+    """Fetch iTunes new-release apps (optionally scoped to one genre id) ->
+    [{store_id, name, genre}]. New apps carry userRatingCount=0 on launch day, so this is
+    an emerging-by-construction discovery source (Apple RSS — zero Meta traffic). A bad
+    feed / non-JSON body degrades to []."""
+    feed = "newfreeapplications" if free_only else "newapplications"
+    genre_seg = f"/genre={genre}" if genre else ""
+    url = _ITUNES_NEW_APPS.format(country=country, feed=feed, limit=limit, genre=genre_seg)
+    try:
+        payload = client.get(url).json() or {}
+    except (ValueError, TypeError):
+        return []
+    return parse_itunes_new_releases(payload)
 
 
 def _chunks(seq, n):

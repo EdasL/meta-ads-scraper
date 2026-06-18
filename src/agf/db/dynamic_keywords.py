@@ -143,3 +143,27 @@ def close_flywheel_run(conn, run_id: int, *, stats: dict | None = None,
         "stats = CAST(:stats AS jsonb), error = :err WHERE id = :id"),
         {"stats": json.dumps(stats) if stats is not None else None,
          "err": error, "id": run_id})
+
+
+# --- release-mint run log (the App Store new-releases keyword-mint daily gate) ---------
+def release_mint_ran_today(conn, as_of) -> bool:
+    """True when a release-mint run FINISHED on `as_of` (blocks re-running that day even
+    if it minted nothing; a crashed/open run does not block)."""
+    return bool(conn.execute(text(
+        "SELECT EXISTS(SELECT 1 FROM discovery.release_mint_runs "
+        "WHERE started_at::date = :d AND finished_at IS NOT NULL)"),
+        {"d": as_of}).scalar())
+
+
+def open_release_mint_run(conn) -> int:
+    return conn.execute(text(
+        "INSERT INTO discovery.release_mint_runs DEFAULT VALUES RETURNING id")).scalar_one()
+
+
+def close_release_mint_run(conn, run_id: int, *, stats: dict | None = None,
+                           error: str | None = None) -> None:
+    conn.execute(text(
+        "UPDATE discovery.release_mint_runs SET finished_at = now(), "
+        "stats = CAST(:stats AS jsonb), error = :err WHERE id = :id"),
+        {"stats": json.dumps(stats) if stats is not None else None,
+         "err": error, "id": run_id})

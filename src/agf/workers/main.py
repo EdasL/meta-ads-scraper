@@ -67,10 +67,12 @@ from agf.db.engine import get_engine, begin
 from agf.db.candidates import (close_sweep_run, kept_advertiser_ids,
                                open_sweep_run, reap_open_runs, sweep_ran_today)
 from agf.db.dynamic_keywords import (add_trial_keywords, apply_verdicts,
-                                     close_flywheel_run, flywheel_ran_today,
-                                     flywheel_ran_within, live_keywords,
-                                     open_flywheel_run, record_keyword_sweep,
-                                     tried_keywords, trial_count)
+                                     close_flywheel_run, close_release_mint_run,
+                                     flywheel_ran_today, flywheel_ran_within,
+                                     live_keywords, open_flywheel_run,
+                                     open_release_mint_run, record_keyword_sweep,
+                                     release_mint_ran_today, tried_keywords,
+                                     trial_count)
 from agf.db.funnel_candidates import (close_funnel_sweep_run, funnel_sweep_ran_today,
                                       funnel_sweep_ran_within, open_funnel_sweep_run)
 from agf.discovery.funnel_confirm import run_funnel_confirm
@@ -335,6 +337,14 @@ def flywheel_due(conn, as_of, *, dry_run, continuous=False) -> bool:
     return not flywheel_ran_today(conn, as_of)
 
 
+def release_mint_due(conn, as_of, *, dry_run) -> bool:
+    """Whether this tick runs the App Store new-releases keyword mint. Daily regardless of
+    continuous mode (the RSS feeds barely change within a day); never in a dry-run."""
+    if dry_run:
+        return False
+    return not release_mint_ran_today(conn, as_of)
+
+
 # --- keyword flywheel ------------------------------------------------------------
 def run_flywheel_stage(engine, extractor, *, max_pages=2, kw_delay=3.0,
                        mine_min_score=40.0, max_trials=40, min_advertisers=3,
@@ -402,6 +412,7 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
              funnel_flywheel_min_advertisers=2,
              flywheel_daily=True, flywheel_pages=2, flywheel_max_trials=40,
              flywheel_min_advertisers=3, mine_min_score=40.0,
+             release_mint_enabled=False, release_mint_max_listings=120,
              media_repair_per_cycle=5, funnel_repair_per_cycle=3) -> dict:
     """One sweep→triage→(score)→enrich pass. Returns a summary dict (no printing).
     http_client is the sweep-scoped httpx.Client for the production triage/enrich path
@@ -534,6 +545,34 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
                       flush=True)
         _touch_heartbeat()  # funnel renders landing pages — another long, blocking stage
 
+    # 1.93) release-expand — daily discovery of emerging advertisers from App Store
+    #       new-releases (emerging by construction, span every store genre). Breaks the
+    #       flywheel's topical-locality trap with an EXTERNAL surface: each new app's name
+    #       is looked up in Meta typeahead, and the ones that actually buy ads resolve to
+    #       candidates through the same classify->upsert->triage path the sweep uses. Off
+    #       by default (AGF_RELEASE_MINT); isolated like the funnel stage — a failure lands
+    #       on the run row and never aborts the tick. Daily-gated even in continuous mode;
+    #       Meta spend bounded by max_listings + skipping known/incumbent pages.
+    release_mint = None
+    if release_mint_enabled and not dry_run and http_client is not None:
+        with engine.connect() as conn:
+            rm_due = release_mint_due(conn, as_of, dry_run=dry_run)
+        if rm_due:
+            with begin(engine) as conn:
+                rm_run_id = open_release_mint_run(conn)
+            try:
+                from agf.discovery.release_mint import expand_releases_via_typeahead
+                release_mint = expand_releases_via_typeahead(
+                    engine, extractor, http_client, max_listings=release_mint_max_listings)
+                with begin(engine) as conn:
+                    close_release_mint_run(conn, rm_run_id, stats=release_mint)
+            except Exception as exc:
+                with begin(engine) as conn:
+                    close_release_mint_run(conn, rm_run_id, error=repr(exc))
+                print(f"[worker] release-expand stage failed: {exc!r}", file=sys.stderr,
+                      flush=True)
+        _touch_heartbeat()
+
     # 1.95) keyword flywheel — daily self-expansion of the discovery surface: mine
     #       recurring phrases from scored gems' ad copy into trial keywords, sweep
     #       every live dynamic keyword shallow, promote earners / retire duds.
@@ -638,6 +677,7 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
             funnel_repair["error"] = repr(exc)
     return {"sweep": sweep_stats, "triage": triage_stats,
             "keeper_history": keeper_history, "funnel": funnel, "flywheel": flywheel,
+            "release_mint": release_mint,
             "snapshot_weeks": snapshot_weeks, "apps_refreshed": apps_refreshed,
             "scored": scored, "enrich_candidates": cand_ids, "enriched": enriched,
             "media_repair": media_repair, "funnel_repair": funnel_repair}
@@ -690,6 +730,10 @@ def _summary_line(s: dict) -> str:
         fw = s["flywheel"]
         line += (f" flywheel(kw={fw['keywords_swept']} mined={len(fw['mined'])} "
                  f"new={fw['candidates_new']})")
+    if s.get("release_mint") is not None:
+        rm = s["release_mint"]
+        line += (f" release_expand(apps={rm['apps']} pages={rm['typeahead_pages']} "
+                 f"scraped={rm['scraped_pages']} new={rm['candidates_new']})")
     line += (f" weekly_snapshots={s['snapshot_weeks']} "
             f"apps_refreshed={s.get('apps_refreshed', 0)} "
             f"enriched={len(s['enriched'])}/{len(s['enrich_candidates'])}")
@@ -745,6 +789,8 @@ def main(argv=None) -> None:
         flywheel_max_trials=_env_int("AGF_FLYWHEEL_MAX_TRIALS", 40),
         flywheel_min_advertisers=_env_int("AGF_MINE_MIN_ADVERTISERS", 3),
         mine_min_score=_env_float("AGF_MINE_MIN_SCORE", 40.0),
+        release_mint_enabled=_env_bool("AGF_RELEASE_MINT", False),
+        release_mint_max_listings=_env_int("AGF_RELEASE_MINT_MAX_LISTINGS", 120),
         media_repair_per_cycle=_env_int("AGF_MEDIA_REPAIR_PER_CYCLE", 5),
         funnel_repair_per_cycle=_env_int("AGF_FUNNEL_REPAIR_PER_CYCLE", 3),
     )
