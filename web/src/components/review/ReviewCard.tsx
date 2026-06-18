@@ -72,13 +72,14 @@ function AdThumb({ c }: { c: Creative }) {
 // Google Play screenshot URLs load more reliably (and smaller) when a size is
 // requested — raw URLs get throttled when several load at once, leaving broken
 // thumbnails. Apple/other CDNs are passed through untouched.
-function sizedShot(url: string): string {
-  if (/googleusercontent\.com/.test(url) && !/=[wh]\d/.test(url)) return `${url}=h300`;
+function sizedShot(url: string, h = 300): string {
+  if (/googleusercontent\.com/.test(url) && !/=[wh]\d/.test(url)) return `${url}=h${h}`;
   return url;
 }
 
-// One store screenshot; hides itself if the image still fails to load.
-function Screenshot({ src, index }: { src: string; index: number }) {
+// One store screenshot thumbnail; hides itself if the image fails to load.
+// Clicking opens the full-size lightbox.
+function Screenshot({ src, index, onOpen }: { src: string; index: number; onOpen: () => void }) {
   const [broken, setBroken] = useState(false);
   if (broken) return null;
   return (
@@ -87,6 +88,7 @@ function Screenshot({ src, index }: { src: string; index: number }) {
       alt={`Screenshot ${index + 1}`}
       loading="lazy"
       onError={() => setBroken(true)}
+      onClick={onOpen}
       style={{
         height: 150,
         width: "auto",
@@ -94,8 +96,103 @@ function Screenshot({ src, index }: { src: string; index: number }) {
         borderRadius: 6,
         flexShrink: 0,
         display: "block",
+        cursor: "zoom-in",
       }}
     />
+  );
+}
+
+// Full-screen screenshot viewer. Owns its own ←/→/Esc keys; the deck's rating
+// keys stand down while it's open (it marks itself with data-review-lightbox).
+function ScreenshotLightbox({
+  shots,
+  index,
+  onIndex,
+  onClose,
+}: {
+  shots: string[];
+  index: number;
+  onIndex: (i: number) => void;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+      else if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        onIndex((index - 1 + shots.length) % shots.length);
+      } else if (e.key === "ArrowRight") {
+        e.preventDefault();
+        onIndex((index + 1) % shots.length);
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [index, shots.length, onIndex, onClose]);
+
+  const navBtn: React.CSSProperties = {
+    position: "absolute",
+    top: "50%",
+    transform: "translateY(-50%)",
+    fontSize: 40,
+    lineHeight: 1,
+    color: "#fff",
+    background: "transparent",
+    border: "none",
+    cursor: "pointer",
+    padding: "0 var(--sp-4)",
+    userSelect: "none",
+  };
+
+  return (
+    <div
+      data-review-lightbox
+      onClick={onClose}
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 50,
+        background: "rgba(0,0,0,0.85)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+      }}
+    >
+      <button
+        type="button"
+        aria-label="Previous screenshot"
+        style={{ ...navBtn, left: 0 }}
+        onClick={(e) => {
+          e.stopPropagation();
+          onIndex((index - 1 + shots.length) % shots.length);
+        }}
+      >
+        ‹
+      </button>
+      <img
+        src={sizedShot(shots[index], 1000)}
+        alt={`Screenshot ${index + 1}`}
+        onClick={(e) => e.stopPropagation()}
+        style={{ maxHeight: "90vh", maxWidth: "80vw", objectFit: "contain" }}
+      />
+      <button
+        type="button"
+        aria-label="Next screenshot"
+        style={{ ...navBtn, right: 0 }}
+        onClick={(e) => {
+          e.stopPropagation();
+          onIndex((index + 1) % shots.length);
+        }}
+      >
+        ›
+      </button>
+      <div
+        className="t-sm"
+        style={{ position: "absolute", bottom: 16, color: "#fff", userSelect: "none" }}
+      >
+        {index + 1} / {shots.length} · ← → to move · Esc to close
+      </div>
+    </div>
   );
 }
 
@@ -153,11 +250,13 @@ export function ReviewCard({
   // immediately from `card` while the ads stream in.
   const [dossier, setDossier] = useState<GemDossier | null>(null);
   const [loadingDossier, setLoadingDossier] = useState(true);
+  const [lightbox, setLightbox] = useState<number | null>(null);
 
   useEffect(() => {
     let alive = true;
     setDossier(null);
     setLoadingDossier(true);
+    setLightbox(null);
     getGem(card.advertiser_id)
       .then((d) => alive && setDossier(d))
       .catch(() => alive && setDossier(null))
@@ -290,7 +389,7 @@ export function ReviewCard({
           </div>
           <div style={{ display: "flex", gap: "var(--sp-2)", overflowX: "auto", paddingBottom: 4 }}>
             {screenshots.map((src, i) => (
-              <Screenshot key={i} src={src} index={i} />
+              <Screenshot key={i} src={src} index={i} onOpen={() => setLightbox(i)} />
             ))}
           </div>
         </div>
@@ -391,6 +490,15 @@ export function ReviewCard({
       <div className="t-xs" style={{ marginTop: "var(--sp-4)", color: "var(--ink-soft)" }}>
         ← dislike · ↓ neutral · → like
       </div>
+
+      {lightbox != null && screenshots[lightbox] ? (
+        <ScreenshotLightbox
+          shots={screenshots}
+          index={lightbox}
+          onIndex={setLightbox}
+          onClose={() => setLightbox(null)}
+        />
+      ) : null}
     </div>
   );
 }

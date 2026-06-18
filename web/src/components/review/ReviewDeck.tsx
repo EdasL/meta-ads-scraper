@@ -52,6 +52,8 @@ export function ReviewDeck() {
     function onKey(e: KeyboardEvent) {
       const t = e.target as HTMLElement | null;
       if (t && (t.tagName === "TEXTAREA" || t.tagName === "INPUT" || t.isContentEditable)) return;
+      // The screenshot lightbox owns the arrow keys while it's open.
+      if (document.querySelector("[data-review-lightbox]")) return;
       if (!current) return;
       if (e.key === "ArrowRight") rate("like");
       else if (e.key === "ArrowLeft") rate("dislike");
