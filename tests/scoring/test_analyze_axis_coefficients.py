@@ -9,7 +9,7 @@ pytestmark = pytest.mark.skipif(
     not os.environ.get("AGF_TEST_DB_URL"), reason="needs AGF_TEST_DB_URL")
 
 
-def test_analyze_returns_coefficients_without_writing(monkeypatch):
+def test_analyze_returns_coefficients_without_writing():
     eng = get_engine(os.environ["AGF_TEST_DB_URL"])
     with eng.begin() as conn:
         before = conn.execute(text("SELECT count(*) FROM frontend.preference_scores")).scalar()
