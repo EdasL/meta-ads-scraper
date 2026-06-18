@@ -2,7 +2,9 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { getCategories, getShortlist } from "@/lib/api";
+import { getCategories, getRatings, getShortlist } from "@/lib/api";
+import type { ApiRatingEntry, Rating } from "@/lib/api";
+import { useSession } from "next-auth/react";
 import { Fallback } from "@/components/Fallback";
 import { ActivationChecklist, EmptyState, Pagination } from "@/components/ui";
 import { PAGE_SIZE, clampPage } from "@/lib/pagination";
@@ -84,6 +86,11 @@ export function DiscoverFeed() {
   const [categories, setCategories] = useState<CategoryCount[]>([]);
   const [reload, setReload] = useState(0);
 
+  // Ratings: fetched once per session per user. Keyed by advertiser_id.
+  const { data: sessionData } = useSession();
+  const userEmail = sessionData?.user?.email ?? null;
+  const [ratings, setRatings] = useState<Record<number, ApiRatingEntry>>({});
+
   const query: ShortlistQuery = useMemo(
     () => ({
       category: filters.category || undefined,
@@ -142,6 +149,37 @@ export function DiscoverFeed() {
       alive = false;
     };
   }, [categoriesQuery]);
+
+  // Fetch ratings once when the user email is known.
+  useEffect(() => {
+    if (!userEmail) return;
+    let alive = true;
+    getRatings(userEmail)
+      .then((r) => {
+        if (alive) setRatings(r);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [userEmail]);
+
+  const handleRatingChange = useCallback(
+    (advertiserId: number, rating: Rating | null, comment: string) => {
+      setRatings((prev) => {
+        if (rating === null && !comment) {
+          const next = { ...prev };
+          delete next[advertiserId];
+          return next;
+        }
+        return {
+          ...prev,
+          [advertiserId]: { rating: rating ?? "none", comment },
+        };
+      });
+    },
+    [],
+  );
 
   const navigate = useCallback(
     (f: Filters, p: number) => {
@@ -268,6 +306,9 @@ export function DiscoverFeed() {
                   dir={filters.dir}
                   onSort={(sort, dir) => setFilters({ ...filters, sort, dir })}
                   onOpen={rememberPosition}
+                  ratings={ratings}
+                  userEmail={userEmail}
+                  onRatingChange={handleRatingChange}
                 />
               </div>
               <Pagination

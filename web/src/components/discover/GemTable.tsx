@@ -7,6 +7,8 @@ import { growthLine, monthLabel } from "@/lib/why";
 import { compactCount } from "@/lib/format";
 import { SORT_DEFAULT_DIR } from "@/lib/query";
 import { AppIcon, SaveToggle, ScoreBadge, Trend } from "@/components/ui";
+import type { Rating, ApiRatingEntry } from "@/lib/api";
+import { RatingControl } from "./RatingControl";
 
 /**
  * The Discover comparison table: one gem per row, the numbers that matter
@@ -23,12 +25,18 @@ export function GemTable({
   dir,
   onSort,
   onOpen,
+  ratings,
+  userEmail,
+  onRatingChange,
 }: {
   rows: ShortlistRow[];
   sort: ShortlistSort;
   dir: SortDir;
   onSort: (sort: ShortlistSort, dir: SortDir) => void;
   onOpen?: (row: ShortlistRow) => void;
+  ratings?: Record<number, ApiRatingEntry>;
+  userEmail?: string | null;
+  onRatingChange?: (advertiserId: number, rating: Rating | null, comment: string) => void;
 }) {
   return (
     <div style={{ overflowX: "auto" }}>
@@ -47,11 +55,19 @@ export function GemTable({
             </th>
             <SortHeader id="newest" label="First ad" sort={sort} dir={dir} onSort={onSort} />
             <th aria-label="Save" />
+            <th aria-label="Rating" />
           </tr>
         </thead>
         <tbody>
           {rows.map((row) => (
-            <GemRow key={row.advertiser_id} row={row} onOpen={onOpen} />
+            <GemRow
+              key={row.advertiser_id}
+              row={row}
+              onOpen={onOpen}
+              ratingEntry={ratings?.[row.advertiser_id]}
+              userEmail={userEmail ?? null}
+              onRatingChange={onRatingChange}
+            />
           ))}
         </tbody>
       </table>
@@ -99,7 +115,19 @@ function SortHeader({
   );
 }
 
-function GemRow({ row, onOpen }: { row: ShortlistRow; onOpen?: (row: ShortlistRow) => void }) {
+function GemRow({
+  row,
+  onOpen,
+  ratingEntry,
+  userEmail,
+  onRatingChange,
+}: {
+  row: ShortlistRow;
+  onOpen?: (row: ShortlistRow) => void;
+  ratingEntry?: ApiRatingEntry;
+  userEmail: string | null;
+  onRatingChange?: (advertiserId: number, rating: Rating | null, comment: string) => void;
+}) {
   const router = useRouter();
   const name = row.app_name || row.page_name;
   const href = `/gems/${row.advertiser_id}`;
@@ -162,6 +190,15 @@ function GemRow({ row, onOpen }: { row: ShortlistRow; onOpen?: (row: ShortlistRo
       </td>
       <td onClick={(e) => e.stopPropagation()}>
         <SaveToggle row={row} size="sm" />
+      </td>
+      <td onClick={(e) => e.stopPropagation()}>
+        <RatingControl
+          advertiserId={row.advertiser_id}
+          userEmail={userEmail}
+          rating={ratingEntry?.rating ?? null}
+          comment={ratingEntry?.comment ?? ""}
+          onChange={(id, rating, comment) => onRatingChange?.(id, rating, comment)}
+        />
       </td>
     </tr>
   );

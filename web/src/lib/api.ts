@@ -136,6 +136,38 @@ export async function postReviewDecision(
   return { ok: true } as const;
 }
 
+// --- Ratings (per-advertiser like/neutral/dislike + comment) ---
+// These hit the Go backend directly: ratings are fully backend-persisted.
+
+export type Rating = "like" | "neutral" | "dislike" | "none";
+
+export interface ApiRatingEntry {
+  rating: Rating;
+  comment: string;
+}
+
+/** Fetch all ratings for the given user. Returns a map keyed by advertiser_id. */
+export async function getRatings(
+  userEmail: string,
+): Promise<Record<number, ApiRatingEntry>> {
+  return live<Record<number, ApiRatingEntry>>(
+    `/ratings?user_email=${encodeURIComponent(userEmail)}`,
+  );
+}
+
+/** Set (or clear, when rating==="none") a rating for one advertiser. */
+export async function setRating(
+  advertiserId: number,
+  userEmail: string,
+  rating: Rating,
+  comment: string,
+): Promise<void> {
+  await live(`/ratings/${advertiserId}`, {
+    method: "POST",
+    body: JSON.stringify({ user_email: userEmail, rating, comment }),
+  });
+}
+
 // --- Saved gems (server-side watchlist) ---
 // These hit the Go backend directly: the watchlist is fully backend-persisted.
 
