@@ -36,6 +36,7 @@ Env:
   AGF_FUNNEL_DAILY             run the daily funnel sweep+confirm    (default 1; 0 disables)
   AGF_FUNNEL_MAX_PAGES         SERP pages per funnel keyword         (default 3)
   AGF_FUNNEL_CONFIRM_LIMIT     funnel candidates confirmed per day   (default 50)
+  AGF_FUNNEL_REPAIR_PER_CYCLE  feed apps probed for a missing funnel (default 3; 0 off)
   AGF_FLYWHEEL_DAILY           run the daily keyword flywheel        (default 1; 0 disables)
   AGF_FLYWHEEL_EVERY_SEC        flywheel cadence in seconds           (default 0 = once/day)
   AGF_FLYWHEEL_MAX_PAGES       SERP pages per dynamic keyword        (default 2)
@@ -318,7 +319,7 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
              funnel_daily=True, funnel_pages=3, funnel_confirm_limit=50,
              flywheel_daily=True, flywheel_pages=2, flywheel_max_trials=40,
              flywheel_min_advertisers=3, mine_min_score=40.0,
-             media_repair_per_cycle=5) -> dict:
+             media_repair_per_cycle=5, funnel_repair_per_cycle=3) -> dict:
     """One sweep→triage→(score)→enrich pass. Returns a summary dict (no printing).
     http_client is the sweep-scoped httpx.Client for the production triage/enrich path
     (None in a dry-run, which uses offline lookups and the no-network fake deps)."""
@@ -513,11 +514,32 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
         except Exception as exc:  # noqa: BLE001 — repair must not kill the cycle
             print(f"[worker] media repair failed: {exc!r}", file=sys.stderr, flush=True)
             media_repair["error"] = repr(exc)
+
+    # 3.6) funnel repair — drain the funnel-coverage backlog a few feed apps per
+    #      cycle. Feed apps below the enrich/alert threshold are never enriched, so
+    #      their funnel ads never produce a public.funnels row and the directory
+    #      shows no Quiz link. Same bounded + isolated contract as media repair:
+    #      never in a dry run, failures don't abort the cycle. 0 disables.
+    funnel_repair = {}
+    if not dry_run and funnel_repair_per_cycle > 0:
+        try:
+            from agf.enrich_full.funnel_repair import (funnel_gap_advertisers,
+                                                       repair_advertiser_funnels)
+            from agf.storage.s3 import get_s3, put_bytes
+            fdeps = EnrichDeps(extractor=extractor, put=put_bytes, s3=get_s3(),
+                               proxy=os.environ.get("AGF_FUNNEL_PROXY"), capture=True)
+            with engine.connect() as conn:
+                gap_ids = funnel_gap_advertisers(conn, funnel_repair_per_cycle)
+            for aid in gap_ids:
+                repair_advertiser_funnels(engine, fdeps, aid, funnel_repair)
+        except Exception as exc:  # noqa: BLE001 — repair must not kill the cycle
+            print(f"[worker] funnel repair failed: {exc!r}", file=sys.stderr, flush=True)
+            funnel_repair["error"] = repr(exc)
     return {"sweep": sweep_stats, "triage": triage_stats,
             "keeper_history": keeper_history, "funnel": funnel, "flywheel": flywheel,
             "snapshot_weeks": snapshot_weeks, "apps_refreshed": apps_refreshed,
             "scored": scored, "enrich_candidates": cand_ids, "enriched": enriched,
-            "media_repair": media_repair}
+            "media_repair": media_repair, "funnel_repair": funnel_repair}
 
 
 def _heartbeat_path() -> str:
@@ -568,6 +590,9 @@ def _summary_line(s: dict) -> str:
     mr = s.get("media_repair")
     if mr and mr.get("downloaded"):
         line += f" media_repair={mr.get('downloaded', 0)}"
+    fr = s.get("funnel_repair")
+    if fr and fr.get("recorded"):
+        line += f" funnel_repair={fr.get('recorded', 0)}"
     if s["scored"] is not None:
         line += f" scored={s['scored']}"
     return line
@@ -611,6 +636,7 @@ def main(argv=None) -> None:
         flywheel_min_advertisers=_env_int("AGF_MINE_MIN_ADVERTISERS", 3),
         mine_min_score=_env_float("AGF_MINE_MIN_SCORE", 40.0),
         media_repair_per_cycle=_env_int("AGF_MEDIA_REPAIR_PER_CYCLE", 5),
+        funnel_repair_per_cycle=_env_int("AGF_FUNNEL_REPAIR_PER_CYCLE", 3),
     )
     # In continuous mode a full taxonomy sweep already takes many minutes (kw_delay ×
     # 305 keywords), so the inter-sweep sleep is just a short breather, not an hour.

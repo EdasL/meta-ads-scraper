@@ -225,6 +225,65 @@ def test_enrich_gem_floats_funnel_ad_past_budget(pg_conn):
     assert got == 1
 
 
+class FakeFlatLanding:
+    """A single-screen web landing the quiz-probe can't confirm: no question
+    screen, no checkout/store/pixel signature. This is the bulk of the real
+    web-to-app funnels the strict classifier dropped at write time."""
+
+    def __init__(self, url, html="<html><body><h1>Learn French in 10 minutes</h1></body></html>"):
+        self._url, self._html = url, html
+
+    def goto(self, url): pass
+    @property
+    def url(self): return self._url
+    def title(self): return "Landing"
+    def content(self): return self._html
+    def wait_for_load_state(self, *a, **k): pass
+    def wait_for_timeout(self, ms): pass
+    def query_selector(self, sel): return None
+
+
+def test_enrich_gem_records_w2a_funnel_even_when_probe_cannot_confirm(pg_conn):
+    # A textbook web-to-app funnel (siiites builder, w2a_meta + AppsFlyer params)
+    # that lives on '/' and shows no quiz — classify_funnel scores it 'dropped'.
+    # The ad's web destination IS the funnel (matview 129), so the row must still
+    # be written, just without paying for a screenshot.
+    url = "https://10mf.siiites.com/?pid=w2a_meta&af_adset=set&af_ad=ad"
+    ar = _ad("W2A-WEB", url)
+    adv = repo.upsert_advertiser(pg_conn, ar)
+    ad_web = repo.upsert_ad(pg_conn, ar, adv, None)
+    ex = FakeExtractor(links={url: ResolvedLink(url, AppIntent("web", None))})
+    deps = EnrichDeps(extractor=ex, page=FakeFlatLanding(url), capture=True,
+                      put=lambda key, d, ct, client=None: key)
+
+    res = asyncio.run(enrich_gem(pg_conn, adv, top_n=5, deps=deps))
+
+    assert res.funnels == 1
+    fr = pg_conn.execute(text("SELECT screenshot_s3_key, final_url_after_redirect "
+                              "FROM public.funnels WHERE ad_id=:i"), {"i": ad_web}).first()
+    assert fr is not None
+    assert fr.screenshot_s3_key is None                # unconfirmed -> no screenshot cost
+    assert fr.final_url_after_redirect.startswith("https://10mf.siiites.com/")
+
+
+def test_enrich_gem_skips_bare_homepage_without_funnel_intent(pg_conn):
+    # A plain brand homepage with no funnel/w2a markers and no quiz: NOT a funnel,
+    # must not be written (so the Quiz column isn't flooded with non-funnels).
+    url = "https://brandco.example/"
+    ar = _ad("HOME-WEB", url)
+    adv = repo.upsert_advertiser(pg_conn, ar)
+    ad_web = repo.upsert_ad(pg_conn, ar, adv, None)
+    ex = FakeExtractor(links={url: ResolvedLink(url, AppIntent("web", None))})
+    deps = EnrichDeps(extractor=ex, page=FakeFlatLanding(url), capture=True,
+                      put=lambda key, d, ct, client=None: key)
+
+    res = asyncio.run(enrich_gem(pg_conn, adv, top_n=5, deps=deps))
+
+    assert res.funnels == 0
+    assert pg_conn.execute(text("SELECT count(*) FROM public.funnels WHERE ad_id=:i"),
+                           {"i": ad_web}).scalar() == 0
+
+
 def _png_colored(seed: int):
     import io
     from PIL import Image

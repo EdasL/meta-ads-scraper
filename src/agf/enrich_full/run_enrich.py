@@ -56,6 +56,36 @@ def _domain_of(url):
         return None
 
 
+# Web-to-app funnel markers an advertiser stamps on the ad's destination. A paid
+# Meta ad pointing off-store to a web page carrying any of these (or a deep path)
+# is a conversion funnel even when the landing is a single screen the quiz-probe
+# can't confirm — exactly the rows the strict classifier dropped at write time
+# (e.g. 10mf.siiites.com/?pid=w2a_meta&af_ad=...). A bare brand homepage with none
+# of these stays out, so the directory's Quiz column isn't flooded with non-funnels.
+_FUNNEL_URL_MARKERS = ("w2a", "web2app", "af_ad", "af_adset", "af_channel",
+                       "pid=", "utm_", "deep_link", "campaign")
+
+
+def _looks_like_funnel(link_url, final_url, confirmed) -> bool:
+    """Whether an off-store web landing should be recorded as the app's funnel.
+    True when the classifier confirmed it, or the ad's link/landing shows
+    web-to-app intent (a funnel marker or a deep, non-homepage path)."""
+    if confirmed:
+        return True
+    for u in (link_url, final_url):
+        if not u:
+            continue
+        low = u.lower()
+        if any(m in low for m in _FUNNEL_URL_MARKERS):
+            return True
+        try:
+            if urlparse(u).path.strip("/"):       # deep path beyond the bare homepage
+                return True
+        except Exception:
+            pass
+    return False
+
+
 def _is_emerging(release_date, now):
     try:
         return emerging_from_release(release_date, now) if release_date else None
@@ -107,6 +137,55 @@ def _media_only_pass(conn, advertiser_id, deps: EnrichDeps, *, done, cap) -> int
     return n
 
 
+async def record_web_funnel(conn, ad_id, link_url, target, deps: EnrichDeps) -> int:
+    """Probe a resolved web landing and record it as the app's funnel when it shows
+    web-to-app intent. `target` is an already-resolved ResolvedTarget. Returns 1 if a
+    public.funnels row was written, else 0.
+
+    The ad's web destination IS the funnel (matview 129's directive): record it for
+    any landing that shows web-to-app intent and let the matview's store/social/MMP
+    regex be the only gate. render_and_probe still runs to look for a payoff — a
+    verified multi-step quiz, a checkout/paywall, or a pixel-tracked page — which both
+    EARNS a screenshot (the only added cost, so unconfirmed funnels stay cheap) and
+    stores kind/quiz_steps for transparency. The earlier write-gate required a
+    confirmed payoff and silently dropped the bulk of real funnels (single-screen w2a
+    landings that trip no quiz). Shared by enrich_gem and the funnel-repair stage."""
+    if target.kind != "web" or not target.final_url:
+        return 0
+    funnel_host = _domain_of(target.final_url)
+    if funnel_host in SOCIAL_HOSTS or funnel_host in STORE_HOSTS:
+        return 0
+    kind = quiz_steps = shot = None
+    confirmed = False
+    # Playwright's SYNC API can't run inside the asyncio loop → offload.
+    try:
+        probe = await asyncio.to_thread(
+            render_and_probe, target.final_url, page=deps.page, proxy=deps.proxy)
+    except Exception as e:
+        probe = None              # a slow/dead landing must not kill the advertiser
+        # ...but never silently: a swallowed probe means the funnel probe fails
+        # invisibly (e.g. browser launch dying on a bad TMPDIR).
+        log.warning("funnel probe failed for %s: %s: %s",
+                    target.final_url, type(e).__name__, e)
+    if probe is not None:
+        kind, status, _store, _sid, _drop = classify_funnel(
+            probe.landing_html, target, funnel_host=funnel_host,
+            quiz_steps=probe.quiz_steps, funnel_url=target.final_url)
+        quiz_steps = probe.quiz_steps
+        confirmed = status == "confirmed" and kind in ("subscribe", "unknown")
+        if confirmed:
+            # Confirmed funnel — only now pay for the screenshot capture.
+            steps = await asyncio.to_thread(
+                capture_funnel, target.final_url, page=deps.page, put=deps.put,
+                s3=deps.s3, proxy=deps.proxy)
+            shot = steps[0].screenshot_s3_key if steps else None
+    if confirmed or _looks_like_funnel(link_url, target.final_url, confirmed):
+        repo.upsert_funnel(conn, ad_id, link_url, target.final_url, shot,
+                           kind=kind, quiz_steps=quiz_steps)
+        return 1
+    return 0
+
+
 async def enrich_gem(conn, advertiser_id, *, top_n=5, media_cap=120,
                      deps: EnrichDeps) -> EnrichResult:
     rows = conn.execute(text(
@@ -156,42 +235,8 @@ async def enrich_gem(conn, advertiser_id, *, top_n=5, media_cap=120,
                     company_html = deps.fetch_text(target.final_url)
                 except Exception:
                     company_html = None
-            funnel_host = _domain_of(target.final_url)
-            probeable = funnel_host not in SOCIAL_HOSTS and funnel_host not in STORE_HOSTS
-            if deps.capture and probeable:
-                # A web landing is only a FUNNEL if it proves a payoff: a verified
-                # multi-step quiz (>=2 distinct question screens), a checkout/paywall,
-                # or a pixel-tracked paid-traffic page. render_and_probe renders the
-                # landing and click-probes the quiz; classify_funnel turns that into a
-                # verdict. Homepages and deep app-links score 'dropped' and never reach
-                # public.funnels — that ungated upsert was why most "Quiz" links opened
-                # a homepage instead of a quiz. 'install' (store bounce) is handled by
-                # the store branch above, so it's not a funnel here either.
-                # Playwright's SYNC API can't run inside the asyncio loop → offload.
-                try:
-                    probe = await asyncio.to_thread(
-                        render_and_probe, target.final_url, page=deps.page, proxy=deps.proxy)
-                except Exception as e:
-                    probe = None          # a slow/dead landing must not kill the advertiser
-                    # ...but never silently: a swallowed probe means the whole funnel
-                    # stage fails invisibly (e.g. browser launch dying on a bad TMPDIR).
-                    log.warning("funnel probe failed for %s: %s: %s",
-                                target.final_url, type(e).__name__, e)
-                if probe is not None:
-                    kind, status, _store, _sid, _drop = classify_funnel(
-                        probe.landing_html, target,
-                        funnel_host=funnel_host,
-                        quiz_steps=probe.quiz_steps,
-                        funnel_url=target.final_url)
-                    if status == "confirmed" and kind in ("subscribe", "unknown"):
-                        # Confirmed funnel — only now pay for the screenshot capture.
-                        steps = await asyncio.to_thread(
-                            capture_funnel, target.final_url, page=deps.page, put=deps.put,
-                            s3=deps.s3, proxy=deps.proxy)
-                        shot = steps[0].screenshot_s3_key if steps else None
-                        repo.upsert_funnel(conn, ad.id, ad.link_url, target.final_url, shot,
-                                           kind=kind, quiz_steps=probe.quiz_steps)
-                        n_funnels += 1
+            if deps.capture:
+                n_funnels += await record_web_funnel(conn, ad.id, ad.link_url, target, deps)
 
         for ctype, url in (deps.creative_urls or {}).get(str(ad.external_ad_id), []):
             try:                              # fbcdn URLs expire → a dead one mustn't kill the gem
