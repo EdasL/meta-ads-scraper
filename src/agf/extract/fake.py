@@ -36,6 +36,12 @@ class FakeExtractor:
         n = len({a.ad_archive_id for a in ads})
         return (min(n, cap), True) if n >= cap else (n, False)
 
+    async def search_listing(self, *, page_id, countries=("US",), max_pages=12):
+        """An advertiser's full ALL-status listing + has_next, mirroring the facade
+        (the keeper-history / corpus-refresh / release-expand path). Never truncated
+        in-fixture, so has_next is always False."""
+        return list(self.page_ads.get(page_id, [])), False
+
     async def ad_details(self, ad_archive_id):
         raise NotImplementedError("FakeExtractor has no ad_details")
 
