@@ -1,7 +1,29 @@
+import json
+
 from sqlalchemy import text
-from agf.enrich_full.appstore import (fetch_itunes_new_releases, lookup_itunes_batch,
+from agf.enrich_full.appstore import (fetch_itunes_new_releases, gplay_developer,
+                                      gplay_similar, lookup_itunes_batch,
                                       parse_itunes_new_releases,
                                       resolve_pending_app_metadata)
+
+
+def test_gplay_similar_parses_to_release_shape():
+    def runner(cmd, arg):
+        assert cmd == "similar" and arg == "com.seed"
+        return json.dumps([
+            {"appId": "com.a", "title": "App A", "genre": "Health & Fitness"},
+            {"appId": "com.b", "title": "App B", "genre": "Education"},
+            {"error": "boom"}])                       # error rows dropped
+    assert gplay_similar("com.seed", runner=runner) == [
+        {"store_id": "com.a", "name": "App A", "genre": "Health & Fitness"},
+        {"store_id": "com.b", "name": "App B", "genre": "Education"}]
+
+
+def test_gplay_developer_passes_cmd_and_degrades_on_bad_json():
+    def runner(cmd, arg):
+        assert cmd == "developer" and arg == "DevCo"
+        return "not json at all"
+    assert gplay_developer("DevCo", runner=runner) == []
 
 
 def _entry(im_id, name, genre="Health & Fitness"):

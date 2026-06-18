@@ -150,6 +150,46 @@ def lookup_google_play(package_ids, *, runner=None) -> dict:
     return out
 
 
+_GRAPH_SIDECAR = Path(__file__).parent / "sidecar" / "gp_graph.js"
+
+
+def _default_graph_runner(cmd, arg):
+    return subprocess.run(["node", str(_GRAPH_SIDECAR), cmd, str(arg)],
+                          capture_output=True, text=True, timeout=90).stdout
+
+
+def _gplay_graph(cmd, arg, *, runner=None) -> list[dict]:
+    """Run the app-graph sidecar and normalize to the new-releases discovery shape
+    [{store_id, name, genre}] so graph results feed the SAME typeahead expander as
+    new-releases. `runner(cmd, arg) -> stdout` is injectable for tests; a crashed
+    sidecar / non-JSON / error rows degrade to []."""
+    runner = runner or _default_graph_runner
+    raw = runner(cmd, arg) or "[]"
+    try:
+        rows = json.loads(raw)
+    except (ValueError, TypeError):
+        return []
+    out: list[dict] = []
+    for r in rows:
+        if not isinstance(r, dict) or r.get("error") or not r.get("appId"):
+            continue
+        out.append({"store_id": str(r["appId"]), "name": r.get("title") or "",
+                    "genre": r.get("genre")})
+    return out
+
+
+def gplay_similar(package_id, *, runner=None) -> list[dict]:
+    """Google Play 'similar apps' for a package id — the app-graph breadth channel that
+    jumps vocabulary basins keyword mining can't reach. -> [{store_id, name, genre}]."""
+    return _gplay_graph("similar", package_id, runner=runner)
+
+
+def gplay_developer(dev_id, *, runner=None) -> list[dict]:
+    """Same-developer apps for a developer id/name (a winning dev often ships more
+    winners). -> [{store_id, name, genre}]."""
+    return _gplay_graph("developer", dev_id, runner=runner)
+
+
 def resolve_pending_app_metadata(conn, itunes_client, *, gplay_runner=None) -> int:
     """Fill name/genre/release/ratings for linked apps still missing a name (iTunes batch +
     gplay sidecar). Cheap — no Meta traffic — so it can run every sweep: it makes discovered
