@@ -8,9 +8,9 @@ from __future__ import annotations
 import json
 import os
 import time
-import urllib.error
-import urllib.request
 from dataclasses import dataclass, field
+
+from agf.net.http_backoff import HttpBackoffError, post_json
 
 _GEN_URL = ("https://generativelanguage.googleapis.com/v1beta/models/"
             "{model}:generateContent?key={key}")
@@ -47,36 +47,17 @@ class MiningError(RuntimeError):
     pass
 
 
-_RETRIABLE_STATUS = frozenset({429, 500, 503})
-
-
 def _http_post(url: str, body: dict, *, max_retries: int = 6,
                _open=None, _sleep=time.sleep) -> dict:
     """POST with exponential backoff on rate limits (429) and transient 5xx —
     a mining call right after a bulk embed can trip the shared per-minute quota.
     Honors Retry-After when present, else backs off 1,2,4,…s (capped 60).
     _open/_sleep are injectable for tests. Exhausted/non-retriable -> MiningError."""
-    req = urllib.request.Request(
-        url, data=json.dumps(body).encode(),
-        headers={"Content-Type": "application/json"})
-    opener = _open or (lambda r: urllib.request.urlopen(r, timeout=60))
-    for attempt in range(max_retries + 1):
-        try:
-            with opener(req) as resp:
-                return json.loads(resp.read())
-        except urllib.error.HTTPError as exc:
-            if exc.code in _RETRIABLE_STATUS and attempt < max_retries:
-                retry_after = exc.headers.get("Retry-After") if exc.headers else None
-                try:
-                    delay = float(retry_after) if retry_after else min(2 ** attempt, 60)
-                except (TypeError, ValueError):
-                    delay = min(2 ** attempt, 60)
-                _sleep(delay)
-                continue
-            raise MiningError(f"gemini mining POST failed: {exc!r}") from exc
-        except Exception as exc:  # noqa: BLE001 - surface any transport failure uniformly
-            raise MiningError(f"gemini mining POST failed: {exc!r}") from exc
-    raise MiningError("gemini mining POST failed: retries exhausted")
+    try:
+        return post_json(url, body, max_retries=max_retries, timeout=60,
+                         _open=_open, _sleep=_sleep)
+    except HttpBackoffError as exc:
+        raise MiningError(f"gemini mining POST failed: {exc!r}") from exc
 
 
 def dedup_candidates(candidates: list[Candidate], existing: set[str]) -> list[Candidate]:
