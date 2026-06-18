@@ -63,6 +63,17 @@ def funnel_sweep_ran_today(conn, as_of) -> bool:
         {"d": as_of}).scalar())
 
 
+def funnel_sweep_ran_within(conn, seconds: int) -> bool:
+    """True when a funnel run FINISHED within the last `seconds`. The time-based gate
+    for a continuous cadence (several funnel runs/day) instead of once-per-calendar-day.
+    A crashed/open run doesn't count. Mirrors dynamic_keywords.flywheel_ran_within."""
+    return bool(conn.execute(text(
+        "SELECT EXISTS(SELECT 1 FROM discovery.funnel_sweep_runs "
+        "WHERE finished_at IS NOT NULL "
+        "AND finished_at > now() - make_interval(secs => :s))"),
+        {"s": seconds}).scalar())
+
+
 def open_funnel_sweep_run(conn) -> int:
     return conn.execute(text(
         "INSERT INTO discovery.funnel_sweep_runs DEFAULT VALUES RETURNING id")).scalar_one()

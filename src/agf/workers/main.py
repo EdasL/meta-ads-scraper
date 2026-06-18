@@ -37,7 +37,9 @@ Env:
   AGF_FUNNEL_MAX_PAGES         SERP pages per funnel keyword         (default 8; funnel
                                phrases keep yielding NEW advertisers on deep pages —
                                the smaller/emerging ones rank below the big spenders)
-  AGF_FUNNEL_CONFIRM_LIMIT     funnel candidates confirmed per day   (default 50)
+  AGF_FUNNEL_CONFIRM_LIMIT     funnel candidates confirmed per run    (default 50)
+  AGF_FUNNEL_EVERY_SEC         funnel-stage cadence in seconds       (0 = continuous
+                               every tick when AGF_CONTINUOUS_DISCOVERY, else once/day)
   AGF_FUNNEL_REPAIR_PER_CYCLE  feed apps probed for a missing funnel (default 3; 0 off)
   AGF_FUNNEL_FLYWHEEL          grow the funnel keyword vocabulary    (default 1; 0 off)
   AGF_FUNNEL_FLYWHEEL_MAX_PAGES   pages per funnel trial keyword     (default 4)
@@ -70,7 +72,7 @@ from agf.db.dynamic_keywords import (add_trial_keywords, apply_verdicts,
                                      open_flywheel_run, record_keyword_sweep,
                                      tried_keywords, trial_count)
 from agf.db.funnel_candidates import (close_funnel_sweep_run, funnel_sweep_ran_today,
-                                      open_funnel_sweep_run)
+                                      funnel_sweep_ran_within, open_funnel_sweep_run)
 from agf.discovery.funnel_confirm import run_funnel_confirm
 from agf.discovery.keyword_mining import fetch_funnel_copy, fetch_gem_copy, mine_phrases
 from agf.discovery.funnel_sweep import run_funnel_sweep
@@ -219,11 +221,20 @@ def discovery_due(conn, as_of, *, dry_run, continuous) -> bool:
     return dry_run or continuous or not sweep_ran_today(conn, as_of)
 
 
-def funnel_due(conn, as_of, *, dry_run) -> bool:
-    """Whether this tick runs the funnel stage. Once per day (a FINISHED
-    discovery.funnel_sweep_runs row gates the rest of the day); never in a dry-run
-    (the confirm stage renders real landing pages — there is no offline fake)."""
-    return not dry_run and not funnel_sweep_ran_today(conn, as_of)
+def funnel_due(conn, as_of, *, dry_run, continuous=False) -> bool:
+    """Whether this tick runs the funnel stage. Never in a dry-run (the confirm stage
+    renders real landing pages — there is no offline fake). In continuous mode it runs
+    EVERY tick (the 24/7 build-the-DB setting, like app discovery); with
+    AGF_FUNNEL_EVERY_SEC it runs on that interval; otherwise once per calendar day
+    (a FINISHED discovery.funnel_sweep_runs row gates the rest of the day)."""
+    if dry_run:
+        return False
+    every = _env_int("AGF_FUNNEL_EVERY_SEC", 0)
+    if every > 0:
+        return not funnel_sweep_ran_within(conn, every)
+    if continuous:
+        return True
+    return not funnel_sweep_ran_today(conn, as_of)
 
 
 # --- funnel stage --------------------------------------------------------------
@@ -290,10 +301,15 @@ def run_funnel_stage(engine, extractor, *, max_pages=8, kw_delay=3.0,
     if probe is None:
         from agf.enrich_full.funnel_capture import render_and_probe
         probe = render_and_probe
+    # Each sub-stage is long (deep sweep, 50 Playwright confirms, the flywheel's
+    # per-keyword sweeps); touch the heartbeat between them so a continuous-mode funnel
+    # run that exceeds the healthcheck window isn't falsely flagged down mid-stage.
     sweep = asyncio.run(run_funnel_sweep(engine, extractor,
                                          max_pages=max_pages, kw_delay=kw_delay))
+    _touch_heartbeat()
     confirm = run_funnel_confirm(engine, resolve=resolve, probe=probe,
                                  limit=confirm_limit)
+    _touch_heartbeat()
     fly = None
     if flywheel:
         fly = run_funnel_flywheel_stage(engine, extractor, max_pages=flywheel_pages,
@@ -302,16 +318,19 @@ def run_funnel_stage(engine, extractor, *, max_pages=8, kw_delay=3.0,
     return {"sweep": sweep, "confirm": confirm, "flywheel": fly}
 
 
-def flywheel_due(conn, as_of, *, dry_run) -> bool:
-    """Whether this tick runs the keyword flywheel. Never in a dry-run. With
-    AGF_FLYWHEEL_EVERY_SEC set, runs on that interval (several times/day) so the
-    trial pool turns over quickly; otherwise falls back to once-per-calendar-day
-    (a FINISHED discovery.flywheel_runs row gates the rest of the day)."""
+def flywheel_due(conn, as_of, *, dry_run, continuous=False) -> bool:
+    """Whether this tick runs the keyword flywheel. Never in a dry-run. In continuous
+    mode it runs EVERY tick (the 24/7 build-the-DB setting). With AGF_FLYWHEEL_EVERY_SEC
+    set, runs on that interval (several times/day) so the trial pool turns over quickly;
+    otherwise falls back to once-per-calendar-day (a FINISHED discovery.flywheel_runs
+    row gates the rest of the day)."""
     if dry_run:
         return False
     every = _env_int("AGF_FLYWHEEL_EVERY_SEC", 0)
     if every > 0:
         return not flywheel_ran_within(conn, every)
+    if continuous:
+        return True
     return not flywheel_ran_today(conn, as_of)
 
 
@@ -492,7 +511,8 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
     funnel = None
     if funnel_daily:
         with engine.connect() as conn:
-            f_due = funnel_due(conn, as_of, dry_run=dry_run)
+            f_due = funnel_due(conn, as_of, dry_run=dry_run,
+                               continuous=continuous_discovery)
         if f_due:
             with begin(engine) as conn:
                 f_run_id = open_funnel_sweep_run(conn)
@@ -521,7 +541,8 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
     flywheel = None
     if flywheel_daily:
         with engine.connect() as conn:
-            fw_due = flywheel_due(conn, as_of, dry_run=dry_run)
+            fw_due = flywheel_due(conn, as_of, dry_run=dry_run,
+                                  continuous=continuous_discovery)
         if fw_due:
             with begin(engine) as conn:
                 fw_run_id = open_flywheel_run(conn)

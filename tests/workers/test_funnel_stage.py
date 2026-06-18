@@ -27,6 +27,21 @@ def test_funnel_gate_one_finished_run_per_day(pg_conn):
     close_funnel_sweep_run(pg_conn, run_id, stats={"sweep": {"keywords_swept": 1}})
     assert funnel_due(pg_conn, TODAY, dry_run=False) is False
     assert funnel_sweep_ran_today(pg_conn, TODAY) is True
+    # ...but continuous mode (the 24/7 build-the-DB setting) runs every tick anyway,
+    # and a dry-run never renders landing pages so it never runs.
+    assert funnel_due(pg_conn, TODAY, dry_run=False, continuous=True) is True
+    assert funnel_due(pg_conn, TODAY, dry_run=True, continuous=True) is False
+
+
+def test_funnel_due_every_sec_throttles_a_recent_run(pg_conn, monkeypatch):
+    monkeypatch.setenv("AGF_FUNNEL_EVERY_SEC", "3600")
+    run_id = open_funnel_sweep_run(pg_conn)
+    close_funnel_sweep_run(pg_conn, run_id, stats={})     # finished just now
+    assert funnel_due(pg_conn, TODAY, dry_run=False) is False        # within the last hour
+    pg_conn.execute(text("UPDATE discovery.funnel_sweep_runs "
+                         "SET finished_at = now() - interval '2 hours' WHERE id=:i"),
+                    {"i": run_id})
+    assert funnel_due(pg_conn, TODAY, dry_run=False) is True         # interval elapsed
 
 
 def test_close_run_records_stats_and_error(pg_conn):
