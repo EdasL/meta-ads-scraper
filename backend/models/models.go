@@ -503,3 +503,11 @@ type EnrichJobOut struct {
 	StartedAt  APITime  `json:"started_at"`
 	FinishedAt *APITime `json:"finished_at"`
 }
+
+// PreferenceCardRow is one app in the /review queue: a shortlist row plus the
+// user's predicted-like score and the short "why shown" string.
+type PreferenceCardRow struct {
+	ShortlistRow
+	PLike float64 `json:"p_like" gorm:"column:p_like"`
+	Why   string  `json:"why" gorm:"column:why"`
+}
