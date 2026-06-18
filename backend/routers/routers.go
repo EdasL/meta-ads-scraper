@@ -25,6 +25,7 @@ func Init(r *gin.Engine) {
 	enrich := controllers.NewEnrichController()
 	saved := controllers.NewSavedGemsController()
 	ratings := controllers.NewRatingsController()
+	preference := controllers.NewPreferenceController()
 	health := controllers.NewHealthController()
 	media := controllers.NewMediaController(storage.Client(), storage.Bucket())
 
@@ -36,6 +37,7 @@ func Init(r *gin.Engine) {
 		api.GET("/gems/:advertiser_id/scaling", gems.Scaling)
 		api.GET("/gems/:advertiser_id/app-metrics", gems.AppMetrics)
 		api.GET("/review/queue", review.Queue)
+		api.GET("/preference-queue", preference.Queue)
 		// The single write is guarded by an optional bearer token (no-op unless
 		// AGF_API_TOKEN is set), so production can require auth on mutations.
 		api.POST("/review/:advertiser_id/decision", middlewares.RequireToken(), review.Decision)
