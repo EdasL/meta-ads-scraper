@@ -7,7 +7,6 @@ Run:
     PYTHONPATH=src AGF_DATABASE_URL=postgresql://agf:agf@localhost:5433/agf \\
     .venv/bin/python scripts/score_content_preferences.py
 """
-import os
 import sys
 
 from sqlalchemy import text
@@ -40,6 +39,10 @@ def score_user(conn, user_email, emb, meta) -> int:
 
     scored = []
     for a, vec in emb.items():
+        if a in labels:
+            continue          # already-rated apps are decided — don't rank them
+                              # (avoids the self-referential "similar to <itself>"
+                              # why-string and rated apps leaking into the For-you sort)
         if model.version == "coldstart":
             gs = meta.get(a, ("", 0))[1] or 0.0
             scored.append((a, float(gs) / 100.0, "", float(gs)))
