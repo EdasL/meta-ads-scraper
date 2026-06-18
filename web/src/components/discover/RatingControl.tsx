@@ -53,6 +53,10 @@ export function RatingControl({
     const next: Rating = displayRating === clicked ? "none" : clicked;
     const nextRating = next === "none" ? null : next;
 
+    // Capture pre-write values before the optimistic update changes props.
+    const preRating = propRating;
+    const preComment = propComment;
+
     setPending({ rating: nextRating, comment: displayComment });
     onChange(advertiserId, nextRating, displayComment);
 
@@ -60,8 +64,7 @@ export function RatingControl({
       await setRating(advertiserId, userEmail, next, displayComment);
     } catch (err) {
       console.error("Rating update failed — reverting", err);
-      setPending(null);
-      onChange(advertiserId, propRating, propComment);
+      onChange(advertiserId, preRating, preComment);
     } finally {
       setPending(null);
     }
@@ -71,6 +74,10 @@ export function RatingControl({
     if (!userEmail) return;
     const effectiveRating: Rating = displayRating ?? "none";
 
+    // Capture pre-write values before the optimistic update changes props.
+    const preRating = propRating;
+    const preComment = propComment;
+
     setPending({ rating: displayRating, comment: value });
     onChange(advertiserId, displayRating, value);
 
@@ -78,8 +85,7 @@ export function RatingControl({
       await setRating(advertiserId, userEmail, effectiveRating, value);
     } catch (err) {
       console.error("Comment save failed — reverting", err);
-      setPending(null);
-      onChange(advertiserId, propRating, propComment);
+      onChange(advertiserId, preRating, preComment);
     } finally {
       setPending(null);
     }
