@@ -1,6 +1,24 @@
 """Pure funnel-classification helpers, promoted from scripts/discover_experiment.py so the
 funnel pipeline can share them. No DB, no network. The app pipeline never imports this."""
+import re
 from urllib.parse import urlparse, parse_qs
+
+_IOS_ID_RE = re.compile(r'(?:apps\.apple\.com|itunes\.apple\.com)/[^"\'<\s]*/id(\d+)', re.IGNORECASE)
+_ANDROID_PKG_RE = re.compile(r'play\.google\.com/store/apps/details[^"\'<\s]*[?&]id=([A-Za-z0-9._]+)', re.IGNORECASE)
+
+
+def store_ref_from_html(html: str | None) -> tuple[str, str] | None:
+    """Extract the first app-store reference from rendered HTML.
+    Returns ("ios", "<app_id>") or ("android", "<package>"), or None."""
+    if not html:
+        return None
+    m = _IOS_ID_RE.search(html)
+    if m:
+        return ("ios", m.group(1))
+    m = _ANDROID_PKG_RE.search(html)
+    if m:
+        return ("android", m.group(1))
+    return None
 
 from agf.classify import unwrap_fb_shim
 

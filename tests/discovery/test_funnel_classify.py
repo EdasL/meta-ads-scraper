@@ -54,3 +54,33 @@ def test_funnel_signal_true_paths():
 
 def test_funnel_signal_false_for_plain_web():
     assert fc.funnel_signal(_ad("https://example.com/p", cta="NO", body="just words"), "niche_term") is False
+
+
+# --- unit 2: store_ref_from_html ---
+
+def test_store_ref_from_html_ios():
+    html = '<a href="https://apps.apple.com/us/app/betterme/id1234567890">Download</a>'
+    assert fc.store_ref_from_html(html) == ("ios", "1234567890")
+
+
+def test_store_ref_from_html_itunes():
+    html = '<a href="https://itunes.apple.com/app/id9876543">get it</a>'
+    assert fc.store_ref_from_html(html) == ("ios", "9876543")
+
+
+def test_store_ref_from_html_android():
+    html = '<a href="https://play.google.com/store/apps/details?id=com.betterme.health">Android</a>'
+    assert fc.store_ref_from_html(html) == ("android", "com.betterme.health")
+
+
+def test_store_ref_from_html_ios_wins_over_android():
+    # iOS link appears first — first match wins
+    html = ('<a href="https://apps.apple.com/us/app/x/id111">ios</a>'
+            '<a href="https://play.google.com/store/apps/details?id=com.x">android</a>')
+    assert fc.store_ref_from_html(html) == ("ios", "111")
+
+
+def test_store_ref_from_html_none_when_absent():
+    assert fc.store_ref_from_html("<html>no app links here</html>") is None
+    assert fc.store_ref_from_html("") is None
+    assert fc.store_ref_from_html(None) is None
