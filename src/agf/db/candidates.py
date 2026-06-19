@@ -90,7 +90,8 @@ def kept_with_embeddings(conn):
         "SELECT c.kept_advertiser_id, e.embedding "
         "FROM discovery.candidates c "
         "JOIN discovery.candidate_embeddings e ON e.candidate_id = c.id "
-        "WHERE c.status='kept' AND c.kept_advertiser_id IS NOT NULL")).all()
+        "WHERE c.status='kept' AND c.kept_advertiser_id IS NOT NULL "
+        "AND e.dim > 0")).all()
     return {a: [float(x) for x in v] for a, v in rows}
 
 
@@ -102,7 +103,9 @@ def taste_prioritized_kept(conn, *, user, explore_frac=0.25):
     if not fifo:
         return fifo
     emb = {a: [float(x) for x in v] for a, v in conn.execute(text(
-        "SELECT advertiser_id, embedding FROM frontend.app_embeddings"))}
+        "SELECT advertiser_id, embedding FROM frontend.app_embeddings "
+        "WHERE advertiser_id IN (SELECT advertiser_id FROM frontend.app_ratings WHERE user_email=:e)"),
+        {"e": user})}
     labels = {a: r for a, r in conn.execute(text(
         "SELECT advertiser_id, rating FROM frontend.app_ratings WHERE user_email=:e"),
         {"e": user})}

@@ -38,13 +38,20 @@ def embed_candidates(conn, *, itunes_client, gplay_runner=None,
         meta.update(lookup_play(android, runner=gplay_runner))  # {package_id(str): AppMeta}
 
     embedded = 0
+    sentinel = 0
     for r in rows:
         m = meta.get(str(r.store_id))
         if m is None:                                            # delisted / not found
+            conn.execute(_UPSERT, {"c": r.id, "e": [], "h": "unfetchable",
+                                   "d": 0, "m": "unfetchable"})
+            sentinel += 1
             continue
         t = build_embed_text(app_name=m.name or "", tagline=None,
                              genre=m.genre, description=m.description, ad_copy=[])
         if not t.strip():
+            conn.execute(_UPSERT, {"c": r.id, "e": [], "h": "unfetchable",
+                                   "d": 0, "m": "unfetchable"})
+            sentinel += 1
             continue
         vec = embed_fn([t])[0]
         conn.execute(_UPSERT, {"c": r.id, "e": vec, "h": content_hash(t),
@@ -52,4 +59,5 @@ def embed_candidates(conn, *, itunes_client, gplay_runner=None,
         embedded += 1
         if commit_every and embedded % commit_every == 0:
             conn.commit()
-    return {"embedded": embedded, "fetched": len(meta), "pending": len(rows)}
+    return {"embedded": embedded, "sentinel": sentinel, "fetched": len(meta),
+            "pending": len(rows)}

@@ -648,7 +648,8 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
         try:
             from agf.discovery.candidate_embed import embed_candidates
             with engine.connect() as conn:
-                cstats = embed_candidates(conn, itunes_client=http_client, commit_every=25)
+                cstats = embed_candidates(conn, itunes_client=http_client, commit_every=25,
+                                          limit=int(os.environ.get("AGF_TRIAGE_EMBED_PER_CYCLE", "200")))
                 conn.commit()
             print(f"[worker] candidate embeddings: {cstats}", flush=True)
         except Exception as exc:
