@@ -118,6 +118,19 @@ def test_classify_payoff_kind_leadgen():
     assert payoff == "leadgen"
 
 
+# --- unit: physical + app badge — no bridge (FIX 3) ---
+
+def test_classify_physical_with_app_badge_not_bridged():
+    # A Shopify/cart page that also embeds an App Store badge must NOT get a store_id
+    # via DOM extraction — physical signal wins and store_ref_from_html is suppressed.
+    html = ('cdn.shopify.com js.stripe.com/v3 '
+            '<a href="https://apps.apple.com/us/app/myshop/id5555555555">Download App</a>')
+    k, s, store, sid, reason, payoff = classify_funnel(html, _resolved("web"))
+    assert payoff == "physical", "Shopify page must be classified physical"
+    assert sid is None, "store_id must be None — DOM extraction suppressed for physical pages"
+    assert store is None
+
+
 # --- orchestrator (fakes; uses the migrated DB only for the candidate rows) ---
 def _ids(eng, prefix):
     with eng.connect() as c:
@@ -206,3 +219,66 @@ def test_run_funnel_confirm_bridges_app(_migrated_engine):
         with eng.begin() as conn:
             conn.execute(text("DELETE FROM discovery.funnel_candidates WHERE page_id = 'FBRIDGE_APP'"))
             conn.execute(text("DELETE FROM discovery.candidates WHERE page_id = 'FBRIDGE_APP'"))
+    # Verify payoff_kind is persisted on the funnel_candidates row itself (not just candidates).
+    with eng.begin() as conn:
+        conn.execute(text("DELETE FROM discovery.funnel_candidates WHERE page_id = 'FBRIDGE_PKIND'"))
+        conn.execute(text("DELETE FROM discovery.candidates WHERE page_id = 'FBRIDGE_PKIND'"))
+        upsert_funnel_candidate(conn, {**BASE, "page_id": "FBRIDGE_PKIND", "funnel_host": None,
+                                       "landing_url": "https://fbridge-pkind.io/quiz",
+                                       "landing_domain": "fbridge-pkind.io"})
+    try:
+        stats2 = run_funnel_confirm(eng, resolve=lambda _: _resolved("web"),
+                                    probe=lambda _: _probed(APP_HTML),
+                                    ids=_ids(eng, "FBRIDGE_PKIND"))
+        with eng.connect() as c:
+            fc_row = c.execute(text(
+                "SELECT payoff_kind, store_id FROM discovery.funnel_candidates WHERE page_id = 'FBRIDGE_PKIND'"
+            )).first()
+        assert fc_row is not None
+        assert fc_row.payoff_kind == "app", "payoff_kind must be persisted on funnel_candidates"
+        assert fc_row.store_id == "9876543"
+    finally:
+        with eng.begin() as conn:
+            conn.execute(text("DELETE FROM discovery.funnel_candidates WHERE page_id = 'FBRIDGE_PKIND'"))
+            conn.execute(text("DELETE FROM discovery.candidates WHERE page_id = 'FBRIDGE_PKIND'"))
+
+
+def test_run_funnel_confirm_physical_no_bridge(_migrated_engine):
+    """A physical/Shopify funnel must not produce a discovery.candidates bridge row.
+    Stats bridged_app_new and bridged_app_seen must both be 0."""
+    eng = _migrated_engine
+    from agf.db.funnel_candidates import upsert_funnel_candidate
+    PHYSICAL_HTML = ('cdn.shopify.com js.stripe.com/v3 fbq("init") '
+                     '<a href="https://apps.apple.com/us/app/shop/id9999999999">Download</a>')
+    BASE = dict(page_name="PhysShop", page_like_count=10,
+                cta_type="SHOP_NOW", utm_source=None, utm_medium=None,
+                utm_campaign=None, utm_content=None, ad_start_date=None,
+                source_keyword="organic dog food", technique="funnel_phrase")
+    with eng.begin() as conn:
+        conn.execute(text("DELETE FROM discovery.funnel_candidates WHERE page_id = 'FPHYS'"))
+        conn.execute(text("DELETE FROM discovery.candidates WHERE page_id = 'FPHYS'"))
+        upsert_funnel_candidate(conn, {**BASE, "page_id": "FPHYS", "funnel_host": None,
+                                       "landing_url": "https://fphys.io/shop",
+                                       "landing_domain": "fphys.io"})
+    try:
+        stats = run_funnel_confirm(eng, resolve=lambda _: _resolved("web"),
+                                   probe=lambda _: _probed(PHYSICAL_HTML),
+                                   ids=_ids(eng, "FPHYS"))
+        assert stats.get("bridged_app_new", 0) == 0, "physical funnel must not bridge to candidates"
+        assert stats.get("bridged_app_seen", 0) == 0
+        with eng.connect() as c:
+            cand = c.execute(text(
+                "SELECT id FROM discovery.candidates WHERE page_id = 'FPHYS'"
+            )).first()
+        assert cand is None, "no discovery.candidates row must exist for a physical funnel"
+        # Verify payoff_kind persisted on funnel_candidates
+        with eng.connect() as c:
+            fc_row = c.execute(text(
+                "SELECT payoff_kind, store_id FROM discovery.funnel_candidates WHERE page_id = 'FPHYS'"
+            )).first()
+        assert fc_row.payoff_kind == "physical"
+        assert fc_row.store_id is None, "store_id must not be set for physical funnel"
+    finally:
+        with eng.begin() as conn:
+            conn.execute(text("DELETE FROM discovery.funnel_candidates WHERE page_id = 'FPHYS'"))
+            conn.execute(text("DELETE FROM discovery.candidates WHERE page_id = 'FPHYS'"))

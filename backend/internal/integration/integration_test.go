@@ -442,7 +442,7 @@ func TestHealthCoverage(t *testing.T) {
 	require.EqualValues(t, 3, m.ConfirmedFeed, "confirmed (incubating=false) rows")
 	require.EqualValues(t, 1, m.Incubating, "the longevity-floored gem")
 	require.EqualValues(t, 1, m.WithFunnel, "only advID has funnel_intent >= 0.7")
-	require.EqualValues(t, 3, m.FunnelsConfirmed, "FP1/FP2/FP3 confirmed funnels")
+	require.EqualValues(t, 2, m.FunnelsConfirmed, "FP1(app)+FP2(web_sub) counted; FP3(physical) excluded by digital-only filter")
 	// advID's only active ad (AD1) carries an s3 creative, so no confirmed
 	// advertiser is fully textless on its active ads.
 	require.EqualValues(t, 0, m.MediaTextless, "no confirmed advertiser missing all active media")
@@ -639,15 +639,17 @@ func seed(g *gorm.DB) {
 	// row reports advertiser_count=2 and has_quiz=true, from the quiz_steps=2
 	// page); spotandtango.com has one. A 'new' and a 'dropped' row must NOT
 	// appear — the endpoint serves confirmed funnels only.
+	// payoff_kind set explicitly to prove the digital-only filter (app/web_sub counted, physical excluded).
+	// FP1=app, FP2=web_sub → both counted; FP3=physical → excluded from FunnelsConfirmed.
 	must(g.Exec(`INSERT INTO discovery.funnel_candidates
 		(page_id, page_name, landing_url, landing_domain, cta_type, times_seen,
-		 quiz_steps, status, confirmed_at, first_seen_at, last_seen_at)
+		 quiz_steps, status, payoff_kind, confirmed_at, first_seen_at, last_seen_at)
 		VALUES
-		('FP1','Relatio Ad A','https://quiz.getrelatio.com/start','getrelatio.com','SHOP_NOW',5,2,'confirmed',now(),now()-interval '3 days',now()-interval '1 hour'),
-		('FP2','Relatio Ad B','https://quiz.getrelatio.com/v2','getrelatio.com','LEARN_MORE',3,0,'confirmed',now(),now()-interval '5 days',now()-interval '2 days'),
-		('FP3','Spot & Tango','https://spotandtango.com/lp','spotandtango.com','SIGN_UP',7,0,'confirmed',now(),now()-interval '6 days',now()-interval '6 hours'),
-		('FP4','Pending Page','https://pending.example/x','pending.example',NULL,1,NULL,'new',NULL,now(),now()),
-		('FP5','Dropped Page','https://dropped.example/y','dropped.example',NULL,1,NULL,'dropped',NULL,now(),now())`).Error)
+		('FP1','Relatio Ad A','https://quiz.getrelatio.com/start','getrelatio.com','SHOP_NOW',5,2,'confirmed','app',now(),now()-interval '3 days',now()-interval '1 hour'),
+		('FP2','Relatio Ad B','https://quiz.getrelatio.com/v2','getrelatio.com','LEARN_MORE',3,0,'confirmed','web_sub',now(),now()-interval '5 days',now()-interval '2 days'),
+		('FP3','Spot & Tango','https://spotandtango.com/lp','spotandtango.com','SIGN_UP',7,0,'confirmed','physical',now(),now()-interval '6 days',now()-interval '6 hours'),
+		('FP4','Pending Page','https://pending.example/x','pending.example',NULL,1,NULL,'new',NULL,NULL,now(),now()),
+		('FP5','Dropped Page','https://dropped.example/y','dropped.example',NULL,1,NULL,'dropped',NULL,NULL,now(),now())`).Error)
 }
 
 func must(err error) {

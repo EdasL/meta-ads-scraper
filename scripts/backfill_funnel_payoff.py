@@ -20,6 +20,7 @@ from agf.db.candidates import upsert_sweep_candidate
 from agf.db.engine import begin, get_engine
 from agf.discovery.firehose_fingerprint import classify_payoff
 from agf.discovery.funnel_classify import store_ref_from_html
+from agf.discovery.funnel_confirm import build_funnel_bridge_row
 
 
 def _fetch_unclassified(conn, limit):
@@ -78,18 +79,7 @@ def run(limit: int, dry_run: bool = False):
         with begin(engine) as conn:
             _write_payoff(conn, r.id, payoff_kind=payoff_kind, store=store, store_id=store_id)
             if payoff_kind == "app" and store_id:
-                bridge_row = {
-                    "page_id": r.page_id,
-                    "page_name": r.page_name,
-                    "page_like_count": r.page_like_count,
-                    "store": store,
-                    "store_id": store_id,
-                    "link_url": r.landing_url,
-                    "cta_type": None,
-                    "ad_start_date": None,
-                    "source_keyword": r.source_keyword,
-                    "technique": "funnel_confirm",
-                }
+                bridge_row = build_funnel_bridge_row(r, store=store, store_id=store_id)
                 _, was_new = upsert_sweep_candidate(conn, bridge_row)
                 counts["bridged_new" if was_new else "bridged_seen"] += 1
 

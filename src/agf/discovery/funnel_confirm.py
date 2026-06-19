@@ -42,12 +42,17 @@ def classify_funnel(html, resolved, funnel_host=None, quiz_steps=None, funnel_ur
     funnel_url: the resolved landing URL — a bare-homepage path can't confirm on pixel."""
     sigs = detect_signatures(html or "")
 
-    # Resolve store reference: deeplink resolver wins; fall back to DOM extraction.
+    # Resolve store reference: deeplink resolver wins (genuine ad destination).
+    # DOM extraction is a fallback ONLY when the page is not physical — a Shopify/cart
+    # page may embed an App Store badge without being an app funnel.
     if resolved is not None and resolved.kind in ("ios", "android") and resolved.store_id:
         store, store_id = resolved.kind, resolved.store_id
     else:
-        dom_ref = store_ref_from_html(html)
-        store, store_id = (dom_ref[0], dom_ref[1]) if dom_ref else (None, None)
+        if "physical" not in sigs:
+            dom_ref = store_ref_from_html(html)
+            store, store_id = (dom_ref[0], dom_ref[1]) if dom_ref else (None, None)
+        else:
+            store, store_id = None, None
 
     payoff_kind = classify_payoff(html or "", store_id=store_id)
 
@@ -62,6 +67,23 @@ def classify_funnel(html, resolved, funnel_host=None, quiz_steps=None, funnel_ur
     if "pixel" in sigs and funnel_host and _has_funnel_path(funnel_url):
         return ("unknown", "confirmed", None, None, None, payoff_kind)
     return ("unknown", "dropped", None, None, "no_quiz_no_payoff", payoff_kind)
+
+
+def build_funnel_bridge_row(r, *, store, store_id, technique="funnel_confirm"):
+    """Return a discovery.candidates upsert dict for a funnel candidate bridged to an app.
+    `r` must have page_id, page_name, page_like_count, source_keyword, landing_url attrs."""
+    return {
+        "page_id": r.page_id,
+        "page_name": r.page_name,
+        "page_like_count": r.page_like_count,
+        "store": store,
+        "store_id": store_id,
+        "link_url": r.landing_url,
+        "cta_type": None,
+        "ad_start_date": None,
+        "source_keyword": r.source_keyword,
+        "technique": technique,
+    }
 
 
 def _new_rows(conn, ids):
@@ -103,18 +125,7 @@ def run_funnel_confirm(engine, *, resolve, probe, ids=None, limit=None) -> dict:
                                   store=store, store_id=store_id, drop_reason=reason,
                                   quiz_steps=quiz_steps, payoff_kind=payoff_kind)
             if status == "confirmed" and payoff_kind == "app" and store_id:
-                bridge_row = {
-                    "page_id": r.page_id,
-                    "page_name": r.page_name,
-                    "page_like_count": r.page_like_count,
-                    "store": store,
-                    "store_id": store_id,
-                    "link_url": r.landing_url,
-                    "cta_type": None,
-                    "ad_start_date": None,
-                    "source_keyword": r.source_keyword,
-                    "technique": "funnel_confirm",
-                }
+                bridge_row = build_funnel_bridge_row(r, store=store, store_id=store_id)
                 _, was_new = upsert_sweep_candidate(conn, bridge_row)
                 stats["bridged_app_new" if was_new else "bridged_app_seen"] += 1
         if status == "confirmed":

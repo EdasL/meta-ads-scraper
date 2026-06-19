@@ -16,8 +16,8 @@ def main() -> None:
     host = matched_funnel_host(url)
     probed = render_and_probe(url)
     sigs = detect_signatures(probed.landing_html)
-    kind, status, _, _, reason = classify_funnel(probed.landing_html, None, host,
-                                                 probed.quiz_steps)
+    kind, status, _, _, reason, _ = classify_funnel(probed.landing_html, None, host,
+                                                   probed.quiz_steps)
     verdict = f"{kind}/{status}" + (f"({reason})" if reason else "")
     print(f"{url}\n  host_hint={host} path_hint={matched_funnel_path(url)} "
           f"sigs={sorted(sigs)} quiz_steps={probed.quiz_steps} verdict={verdict}")
