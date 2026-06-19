@@ -6,7 +6,8 @@ _IOS_UA = ("Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) "
 _DESKTOP_UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
                "(KHTML, like Gecko) Chrome/124.0 Safari/537.36")
 # MMP / smart-banner wrappers that need an iOS-UA redirect to reveal the store link
-_MMP_HOSTS = ("app.link", "onelink.to", "apple.co", "go.link", "adj.st", "lnk.to")
+_MMP_HOSTS = ("app.link", "onelink.me", "onelink.to", "apple.co", "go.link", "adj.st",
+              "lnk.to", "app.adjust.com", "adjust.com", "branch.io", "bnc.lt")
 
 
 @dataclass

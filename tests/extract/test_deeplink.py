@@ -51,3 +51,30 @@ def test_plain_web_funnel_not_chased():
     out = resolve_deeplink(session, "https://getgem.com/quiz")
     assert out.intent == AppIntent(kind="web", store_id=None)
     assert session.get_called is False
+
+
+# --- unit 3: extended MMP host list ---
+
+def test_onelink_me_is_followed():
+    session = RedirectSession("https://apps.apple.com/us/app/x/id99")
+    out = resolve_deeplink(session, "https://brand.onelink.me/abc?pid=meta")
+    assert session.get_called is True
+    assert out.intent.kind == "ios"
+
+
+def test_adjust_com_is_followed():
+    session = RedirectSession("https://apps.apple.com/us/app/x/id88")
+    out = resolve_deeplink(session, "https://app.adjust.com/abc123")
+    assert session.get_called is True
+
+
+def test_branch_io_is_followed():
+    session = RedirectSession("https://apps.apple.com/us/app/x/id77")
+    out = resolve_deeplink(session, "https://myapp.branch.io/abc")
+    assert session.get_called is True
+
+
+def test_bnc_lt_is_followed():
+    session = RedirectSession("https://apps.apple.com/us/app/x/id66")
+    out = resolve_deeplink(session, "https://bnc.lt/xyz")
+    assert session.get_called is True
