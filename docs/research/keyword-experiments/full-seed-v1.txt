@@ -1,0 +1,322 @@
+# Full category-balanced seed v1 — C recipe (app suffix + common wording), ~9/category.
+# Source for NICHE_TERMS_BY_CATEGORY (spec 2026-06-19 §5). No brands, no games.
+# Art & Design
+ai logo maker app
+coloring book app
+ai art generator app
+drawing tutorial app
+calligraphy practice app
+tattoo design app
+color palette app
+vision board app
+ai avatar maker app
+# Auto & Vehicles
+car maintenance app
+obd2 scanner app
+mileage tracker app
+fuel log app
+car wash booking app
+vehicle history app
+parking reminder app
+ev charging map app
+dash cam app
+# Beauty
+ai hairstyle app
+skincare routine app
+face yoga app
+makeup tutorial app
+nail design app
+skin analysis app
+hair color try on app
+glow up app
+perfume finder app
+# Books
+book summaries app
+reading tracker app
+ai reading coach app
+audiobook player app
+ebook reader app
+book club app
+speed reading app
+quote of the day app
+reading challenge app
+# Business
+ai resume builder app
+invoice maker app
+business card scanner app
+expense report app
+time tracking app
+freelance contract app
+cold email app
+networking crm app
+ai cover letter app
+# Comics
+comic reader app
+webtoon app
+manga reader app
+ai comic maker app
+manhwa app
+comic collection tracker app
+graphic novel app
+comic strip maker app
+anime news app
+# Communication
+ai voice translator app
+private messenger app
+walkie talkie app
+video call app
+group chat app
+voice changer app
+anonymous chat app
+language exchange app
+ai email writer app
+# Dating
+relationship quiz app
+ai dating photos app
+attachment style app
+couples connection app
+flirting coach app
+long distance couple app
+blind date app
+dating profile review app
+love language app
+# Education
+learn spanish app
+math homework app
+ai tutor app
+flashcards app
+language learning app
+study planner app
+ielts prep app
+handwriting practice app
+ai essay helper app
+# Entertainment
+ai companion app
+short drama app
+fan fiction app
+trivia quiz app
+celebrity news app
+karaoke app
+movie tracker app
+fanfic reader app
+roleplay chat app
+# Events
+wedding planning app
+party countdown app
+event guest list app
+birthday reminder app
+rsvp tracker app
+seating chart app
+festival schedule app
+baby shower planner app
+save the date app
+# Finance
+budgeting app
+debt payoff app
+expense tracker app
+savings challenge app
+bill reminder app
+net worth tracker app
+subscription tracker app
+ai money coach app
+paycheck planner app
+# Food & Drink
+macro tracker app
+recipe organizer app
+meal prep planner app
+calorie counter app
+grocery list app
+ai recipe app
+intermittent fasting app
+wine pairing app
+cocktail recipes app
+# Health & Fitness
+wall pilates app
+workout planner app
+step counter app
+sleep tracker app
+water reminder app
+menopause app
+pelvic floor app
+breathwork app
+mobility routine app
+# House & Home
+home renovation app
+interior design app
+home inventory app
+cleaning schedule app
+plant care app
+moving checklist app
+room planner app
+ai decor app
+home maintenance app
+# Lifestyle
+manifestation app
+habit tracker app
+gratitude journal app
+daily affirmations app
+self care app
+capsule wardrobe app
+declutter app
+morning routine app
+bucket list app
+# Medical
+blood pressure log app
+migraine tracker app
+symptom tracker app
+medication reminder app
+period tracker app
+glucose log app
+pill identifier app
+doctor visit notes app
+hearing test app
+# Music
+learn piano app
+ai song maker app
+guitar tuner app
+ear training app
+metronome app
+music theory app
+beat maker app
+vocal warmup app
+playlist maker app
+# Navigation
+road trip planner app
+offline maps app
+hiking trail app
+rv trip app
+gps speedometer app
+find my car app
+transit map app
+ev route planner app
+compass app
+# News
+local news app
+ai news summary app
+news digest app
+breaking news app
+financial news app
+fact check app
+newsletter reader app
+world news app
+tech news app
+# Parenting
+baby sleep app
+potty training app
+baby milestones app
+contraction timer app
+breastfeeding tracker app
+kids chore app
+co parenting app
+baby names app
+pregnancy tracker app
+# Personalization
+widget maker app
+lock screen themes app
+live wallpaper app
+icon pack app
+keyboard themes app
+ringtone maker app
+home screen setup app
+custom font app
+aesthetic widgets app
+# Photo & Video
+ai headshot app
+photo restoration app
+video editor app
+photo collage app
+ai photo enhancer app
+background remover app
+slideshow maker app
+photo organizer app
+ai profile photo app
+# Productivity
+ai meeting notes app
+adhd planner app
+focus timer app
+daily planner app
+note taking app
+voice memo app
+task manager app
+pomodoro app
+ai writing assistant app
+# Reference
+plant identifier app
+bird identifier app
+ai scanner app
+dictionary app
+mushroom identifier app
+rock identifier app
+star map app
+sign language app
+unit converter app
+# Shopping
+price tracker app
+ai outfit app
+coupon finder app
+wishlist app
+receipt scanner app
+deal alerts app
+thrift finder app
+barcode scanner app
+package tracker app
+# Social
+anonymous q and a app
+private journal app
+close friends app
+find friends app
+community chat app
+confession app
+mood sharing app
+group planning app
+social challenge app
+# Sports
+pickleball app
+marathon training app
+golf gps app
+running coach app
+soccer scores app
+fantasy league app
+climbing log app
+tennis tracker app
+cycling tracker app
+# Travel
+ai itinerary app
+cheap flights app
+packing list app
+travel journal app
+currency converter app
+trip budget app
+layover guide app
+road trip app
+visa requirement app
+# Utilities
+document scanner app
+wifi analyzer app
+file manager app
+qr code scanner app
+battery saver app
+phone cleaner app
+screen mirror app
+flashlight app
+noise meter app
+# Video Players
+video subtitle app
+screen recorder app
+video compressor app
+video downloader app
+video to mp3 app
+video speed app
+loop video app
+ai video maker app
+subtitle translator app
+# Weather
+rain alert app
+hyperlocal weather app
+aurora forecast app
+storm tracker app
+pollen count app
+uv index app
+marine weather app
+snow forecast app
+weather widget app
