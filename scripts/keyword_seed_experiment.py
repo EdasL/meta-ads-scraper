@@ -44,17 +44,23 @@ VETO_LIKES = int(os.environ.get("AGF_VETO_LIKES", str(INCUMBENT_PAGE_LIKES_MAX))
 COUNTRIES = ["US"]
 
 
+def _env_skip_genre():
+    return os.environ.get("AGF_SKIP_GENRE", "").lower() in ("1", "true", "yes")
+
+
 def load_keywords(path):
     with open(path) as f:
         return [ln.strip() for ln in f if ln.strip() and not ln.startswith("#")]
 
 
 def sweep(ext, keywords):
-    """Bounded live sweep. Returns (apps, per_kw_counts, raw_ads, errors).
+    """Bounded live sweep. Returns (apps, per_kw_counts, raw_ads, errors, corpus).
     apps: {(store, store_id): {store, store_id, name, keyword, pages:set}} — deduped at
     the APP level (store_id), NOT page_id, so a prolific multi-page advertiser (e.g.
-    PocketFM running 8 ad pages) counts as ONE app, not 8."""
-    apps, per_kw, raw, errors = {}, defaultdict(int), 0, 0
+    PocketFM running 8 ad pages) counts as ONE app, not 8.
+    corpus: [(page_id, body_text)] for every app-candidate ad — the flywheel mining
+    input (page_id is the cross-advertiser author key mine_phrases counts on)."""
+    apps, per_kw, raw, errors, corpus = {}, defaultdict(int), 0, 0, []
     for i, kw in enumerate(keywords):
         try:
             ads = asyncio.run(ext.search(query=kw, countries=COUNTRIES,
@@ -83,11 +89,13 @@ def sweep(ext, keywords):
                 new_here += 1
             else:
                 apps[key]["pages"].add(ad.page_id)
+            if ad.body_text:                         # flywheel mining corpus
+                corpus.append((ad.page_id, ad.body_text))
         per_kw[kw] += new_here
         print(f"  [{i+1}/{len(keywords)}] {kw!r}: {len(ads)} ads, +{new_here} new apps "
               f"(distinct apps {len(apps)})", flush=True)
         time.sleep(DELAY)
-    return apps, per_kw, raw, errors
+    return apps, per_kw, raw, errors, corpus
 
 
 def resolve_genres(apps):
@@ -111,6 +119,31 @@ def resolve_genres(apps):
         except Exception as exc:           # one chunk failing must not drop the rest
             print(f"  (google-play chunk {j//5} skipped: {exc})", flush=True)
     return {k: meta.get(k) for k in apps}
+
+
+def mine(corpus, seed_keywords):
+    """Run the REAL flywheel miner over the seed's catch. Returns how many NEW
+    promotable keywords it yields (phrases clearing the cross-advertiser bar that
+    aren't already swept). exclude = this seed ∪ the existing static taxonomy ∪
+    every dynamic keyword ever tried (so mined phrases are genuinely new)."""
+    from agf.discovery.keyword_mining import mine_phrases
+    from agf.discovery import taxonomy
+    exclude = {k.lower() for k in seed_keywords}
+    exclude |= {e.keyword.lower() for e in taxonomy.all_entries()}
+    if os.environ.get("AGF_DATABASE_URL"):
+        try:
+            from agf.db.engine import get_engine
+            from sqlalchemy import text
+            with get_engine().connect() as c:
+                exclude |= {r[0].lower() for r in c.execute(text(
+                    "SELECT keyword FROM discovery.dynamic_keywords")).all()}
+        except Exception as exc:
+            print(f"  (dynamic_keywords exclude skipped: {exc})", flush=True)
+    advertisers = len({pid for pid, _ in corpus})
+    # limit high so we COUNT all promotable phrases (production caps per-run at 10).
+    mined = mine_phrases(corpus, exclude=exclude, min_advertisers=2, limit=500)
+    return {"corpus_ads": len(corpus), "corpus_advertisers": advertisers,
+            "promotable_keywords": len(mined), "sample": mined[:40]}
 
 
 def novelty(apps):
@@ -174,10 +207,17 @@ def main():
     print(f"=== technique {technique!r}: {len(keywords)} keywords, {PAGES} pages each ===",
           flush=True)
     ext = Extractor()
-    apps, per_kw, raw, errors = sweep(ext, keywords)
-    genre_by_app = resolve_genres(apps)
+    apps, per_kw, raw, errors, corpus = sweep(ext, keywords)
+    # Genre resolution is slow + flaky (android sidecar timeouts). Diversity is
+    # measured by SEED CATEGORY (100% coverage) anyway, so allow skipping it.
+    genre_by_app = {} if _env_skip_genre() else resolve_genres(apps)
     nov = novelty(apps)
     sc = scorecard(technique, keywords, apps, per_kw, raw, errors, genre_by_app, nov)
+    try:
+        sc["flywheel"] = mine(corpus, keywords)
+    except Exception as exc:               # never lose the sweep over a mining bug
+        print(f"  (mining failed: {exc!r})", flush=True)
+        sc["flywheel"] = {"error": repr(exc), "corpus_ads": len(corpus)}
     out = f"/tmp/agf-kwexp-{technique}-{date.today().isoformat()}.json"
     with open(out, "w") as f:
         json.dump(sc, f, indent=2)
@@ -187,6 +227,12 @@ def main():
               "top3_share", "evenness"):
         print(f"  {k:18s} {sc[k]}", flush=True)
     print(f"  genre_hist: {sc['genre_hist']}", flush=True)
+    fw = sc["flywheel"]
+    print(f"\n=== FLYWHEEL ===", flush=True)
+    print(f"  corpus: {fw['corpus_ads']} ads / {fw['corpus_advertisers']} advertisers",
+          flush=True)
+    print(f"  NEW promotable keywords: {fw['promotable_keywords']}", flush=True)
+    print(f"  sample: {fw['sample']}", flush=True)
     print(f"\nwrote {out}", flush=True)
 
 
