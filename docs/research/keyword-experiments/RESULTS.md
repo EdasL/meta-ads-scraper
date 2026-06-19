@@ -61,6 +61,30 @@ it's both complete and truer to whether the seed itself is balanced.
 Optional follow-up: prune the ~31% dead terms (mostly funnel-advertised niches
 the funnel pipeline already catches, plus a few zero-inventory phrasings).
 
+## Flywheel fit — MEASURED (full_mine run)
+
+Ran the REAL miner (`keyword_mining.mine_phrases`) over the new seed's catch
+(1,056 app-candidate ads / 442 advertisers), excluding the seed + existing
+taxonomy + every dynamic keyword ever tried:
+
+- **277 new promotable keywords** at `min_advertisers=2` (vs old seed's flywheel
+  ~24 active / 40 trial). Upper bound — see caveats.
+- **~half are genuine new niches**: `short dramas`, `free short drama`,
+  `suspense comedy`, `manga manhwa`, `fantasy football`, `live football scores`,
+  `new ai photo trend`, `county local news` — verticals (short-drama, sports,
+  manga, local news) the old wellness seed never mined. **This is the flywheel
+  win: a diverse seed feeds diverse new basins, breaking topical locality.**
+- **~half are noise**: ad-speak (`app trusted by millions`, `never miss`) + one
+  RV advertiser's copy fragmented into overlapping n-grams.
+- Caveats (277 is an upper bound): mined at `min_advertisers=2` (production
+  default is 3) and over ALL app-candidates (production mines only scored gems —
+  a smaller, cleaner corpus). Production also caps promotion at 10/run. So the
+  real promote count is lower, but the pool is large and vertical-diverse.
+
+**Full goal answered:** the seed finds stuff (437 apps, 31% novel), isn't biased
+(97.6% category evenness), AND feeds the flywheel (large diverse new-keyword
+pool). Done.
+
 ## Findings
 
 - **A — diversity up, yield down.** Equal per-category coverage raised evenness
