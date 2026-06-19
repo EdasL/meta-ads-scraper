@@ -50,9 +50,11 @@ def load_keywords(path):
 
 
 def sweep(ext, keywords):
-    """Bounded live sweep. Returns (pages_by_id, per_kw_counts, raw_ads, errors).
-    pages_by_id: {page_id: {store, store_id, name, keyword}} — one app-candidate per page."""
-    pages, per_kw, raw, errors = {}, defaultdict(int), 0, 0
+    """Bounded live sweep. Returns (apps, per_kw_counts, raw_ads, errors).
+    apps: {(store, store_id): {store, store_id, name, keyword, pages:set}} — deduped at
+    the APP level (store_id), NOT page_id, so a prolific multi-page advertiser (e.g.
+    PocketFM running 8 ad pages) counts as ONE app, not 8."""
+    apps, per_kw, raw, errors = {}, defaultdict(int), 0, 0
     for i, kw in enumerate(keywords):
         try:
             ads = asyncio.run(ext.search(query=kw, countries=COUNTRIES,
@@ -62,7 +64,7 @@ def sweep(ext, keywords):
             errors += 1
             time.sleep(DELAY * 2)
             continue
-        kept_here = 0
+        new_here = 0
         for ad in ads:
             raw += 1
             if not ad.page_id or not ad.link_url:
@@ -73,37 +75,64 @@ def sweep(ext, keywords):
             intent = classify_url(ad.link_url)
             if intent.kind not in ("ios", "android") or not intent.store_id:
                 continue
-            if ad.page_id not in pages:
-                pages[ad.page_id] = {"store": intent.kind, "store_id": str(intent.store_id),
-                                     "name": ad.page_name or "(unknown)", "keyword": kw}
-                kept_here += 1
-        per_kw[kw] += kept_here
-        print(f"  [{i+1}/{len(keywords)}] {kw!r}: {len(ads)} ads, +{kept_here} app pages "
-              f"(total {len(pages)})", flush=True)
+            key = (intent.kind, str(intent.store_id))
+            if key not in apps:
+                apps[key] = {"store": intent.kind, "store_id": str(intent.store_id),
+                             "name": ad.page_name or "(unknown)", "keyword": kw,
+                             "pages": {ad.page_id}}
+                new_here += 1
+            else:
+                apps[key]["pages"].add(ad.page_id)
+        per_kw[kw] += new_here
+        print(f"  [{i+1}/{len(keywords)}] {kw!r}: {len(ads)} ads, +{new_here} new apps "
+              f"(distinct apps {len(apps)})", flush=True)
         time.sleep(DELAY)
-    return pages, per_kw, raw, errors
+    return apps, per_kw, raw, errors
 
 
-def resolve_genres(pages):
-    """Resolve each app-candidate's store genre. Returns {page_id: genre}."""
-    ios = [p["store_id"] for p in pages.values() if p["store"] == "ios"]
-    android = [p["store_id"] for p in pages.values() if p["store"] == "android"]
+def resolve_genres(apps):
+    """Resolve each distinct app's store genre. Returns {(store,store_id): genre}.
+    Android ids are looked up in small chunks so the node sidecar never times out
+    (the 90s single-call timeout silently dropped ALL android genres in an early run)."""
+    ios = [a["store_id"] for a in apps.values() if a["store"] == "ios"]
+    android = [a["store_id"] for a in apps.values() if a["store"] == "android"]
     meta = {}
     with httpx.Client(timeout=20, follow_redirects=True) as client:
         if ios:
             for tid, m in lookup_itunes_batch(client, ios, pause=3.0).items():
                 meta[("ios", str(tid))] = getattr(m, "genre", None)
-    if android:
+    for j in range(0, len(android), 15):
+        chunk = android[j:j + 15]
         try:
-            for pid, m in lookup_google_play(android).items():
+            for pid, m in lookup_google_play(chunk).items():
                 meta[("android", str(pid))] = getattr(m, "genre", None)
-        except Exception as exc:           # sidecar optional — degrade to ios-only
-            print(f"  (google-play lookup skipped: {exc})", flush=True)
-    return {pid: meta.get((p["store"], p["store_id"])) for pid, p in pages.items()}
+        except Exception as exc:           # one chunk failing must not drop the rest
+            print(f"  (google-play chunk {j//15} skipped: {exc})", flush=True)
+    return {k: meta.get(k) for k in apps}
 
 
-def scorecard(technique, keywords, pages, per_kw, raw, errors, genre_by_page):
-    genres = Counter(g for g in genre_by_page.values() if g)
+def novelty(apps):
+    """How many distinct apps are NOT already in the corpus (discovery.candidates ∪
+    public.apps). Needs AGF_DATABASE_URL; returns None if unavailable."""
+    if not os.environ.get("AGF_DATABASE_URL"):
+        return None
+    try:
+        from agf.db.engine import get_engine
+        from sqlalchemy import text
+        with get_engine().connect() as c:
+            known = {r[0] for r in c.execute(text(
+                "SELECT store_id FROM discovery.candidates "
+                "UNION SELECT store_id FROM public.apps"), ).all()}
+        new = [a for a in apps.values() if a["store_id"] not in known]
+        return {"distinct": len(apps), "new": len(new), "known": len(apps) - len(new),
+                "new_pct": round(len(new) / max(1, len(apps)), 3)}
+    except Exception as exc:
+        print(f"  (novelty check skipped: {exc})", flush=True)
+        return None
+
+
+def scorecard(technique, keywords, apps, per_kw, raw, errors, genre_by_app, nov):
+    genres = Counter(g for g in genre_by_app.values() if g)
     tot = sum(genres.values())
     H = -sum((n / tot) * math.log2(n / tot) for n in genres.values()) if tot else 0.0
     Hmax = math.log2(len(genres)) if len(genres) > 1 else 1.0
@@ -113,17 +142,22 @@ def scorecard(technique, keywords, pages, per_kw, raw, errors, genre_by_page):
         "keywords": len(keywords),
         "raw_ads": raw,
         "errors": errors,
-        "app_candidates": len(pages),
-        "app_with_genre": tot,
-        "yield_per_kw": round(len(pages) / max(1, len(keywords)), 2),
+        "distinct_apps": len(apps),               # deduped by store_id (true app count)
+        "genre_resolved": tot,
+        "genre_coverage": round(tot / max(1, len(apps)), 3),   # <— trust gate
+        "yield_per_kw": round(len(apps) / max(1, len(keywords)), 2),
         "dead_kw": dead,
         "dead_kw_pct": round(dead / max(1, len(keywords)), 3),
+        "novelty": nov,                           # new vs existing corpus
         "n_genres": len(genres),
         "top_genre": genres.most_common(1)[0] if genres else None,
         "top_genre_share": round(genres.most_common(1)[0][1] / tot, 3) if tot else None,
         "top3_share": round(sum(n for _, n in genres.most_common(3)) / tot, 3) if tot else None,
         "evenness": round(H / Hmax, 3) if Hmax else None,
         "genre_hist": genres.most_common(),
+        "apps": [{"store": a["store"], "store_id": a["store_id"], "name": a["name"],
+                  "keyword": a["keyword"], "n_pages": len(a["pages"]),
+                  "genre": genre_by_app.get(k)} for k, a in apps.items()],
     }
     return sc
 
@@ -138,17 +172,19 @@ def main():
     print(f"=== technique {technique!r}: {len(keywords)} keywords, {PAGES} pages each ===",
           flush=True)
     ext = Extractor()
-    pages, per_kw, raw, errors = sweep(ext, keywords)
-    genre_by_page = resolve_genres(pages)
-    sc = scorecard(technique, keywords, pages, per_kw, raw, errors, genre_by_page)
+    apps, per_kw, raw, errors = sweep(ext, keywords)
+    genre_by_app = resolve_genres(apps)
+    nov = novelty(apps)
+    sc = scorecard(technique, keywords, apps, per_kw, raw, errors, genre_by_app, nov)
     out = f"/tmp/agf-kwexp-{technique}-{date.today().isoformat()}.json"
     with open(out, "w") as f:
         json.dump(sc, f, indent=2)
     print("\n=== SCORECARD ===", flush=True)
-    for k in ("technique", "keywords", "app_candidates", "yield_per_kw", "dead_kw_pct",
-              "n_genres", "top_genre", "top_genre_share", "top3_share", "evenness"):
+    for k in ("technique", "keywords", "distinct_apps", "genre_coverage", "yield_per_kw",
+              "dead_kw_pct", "novelty", "n_genres", "top_genre", "top_genre_share",
+              "top3_share", "evenness"):
         print(f"  {k:18s} {sc[k]}", flush=True)
-    print(f"  genre_hist (top 12): {sc['genre_hist'][:12]}", flush=True)
+    print(f"  genre_hist: {sc['genre_hist']}", flush=True)
     print(f"\nwrote {out}", flush=True)
 
 
