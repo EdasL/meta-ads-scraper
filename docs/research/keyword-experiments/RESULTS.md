@@ -12,8 +12,9 @@ baseline — compare techniques to each other, not to the baseline's absolute yi
 | # | Technique | kw | top-genre share | top-3 | evenness | yield/kw | dead-kw |
 |---|---|---|---|---|---|---|---|
 | — | **baseline** niche_term (270, post-triage) | 539 | 26% H&F | 48% | 76% | 1.3 kept | 32% |
-| A | category-balanced LLM, 2/cat, no suffix | 64 | 22% Education | 44% | **87%** | 0.98 | **59%** |
-| B | A + `app` suffix (suffix A/B test) | 64 | _running_ | | | | |
+| A | category-balanced LLM, 2/cat, no suffix | 64 | 22% Education | 44% | 87% | 0.98 | 59% |
+| B | A + `app` suffix (suffix A/B test) | 64 | **13.8% H&F** | **36%** | **91%** | **1.25** | 47% |
+| C | B, dead terms rephrased to common wording | 64 | _running_ | | | | |
 
 ## Findings
 
@@ -22,13 +23,29 @@ baseline — compare techniques to each other, not to the baseline's absolute yi
   niches return funnel/web ads (no direct store link) or nothing in 2 shallow
   pages. Concentration shifted to Education (cross-cutting AI-tutor/learning
   terms pile there). Core tension confirmed: **balance vs. yield**.
-- **B (testing) — does the `app` suffix recover yield?** A's dead terms were
-  mostly bare phrases; the production seed is all `app`-suffixed at 32% dead.
-  B isolates the suffix effect → informs the spec's "suffix optional" call.
+- **B — the `app` suffix wins on every axis.** vs A: yield 0.98→1.25 (+28%),
+  top-genre 22→14%, evenness 87→91%, dead 59→47%. The suffix acts as an
+  app-intent filter, pulling real app advertisers across MORE categories instead
+  of funnel/web ads concentrated in a few. **This contradicts the spec's
+  "suffix optional" relaxation** — for the app seed the suffix does real work.
+  B beats the production baseline decisively on bias (top-genre 14% vs 26%,
+  evenness 91% vs 76%) at comparable yield. **Current leader.**
+- **B's dead terms split two ways** (informs C + architecture):
+  - *9 got 0 ads* (no Meta inventory for that exact wording) → over-specific
+    phrasing, fixable by rephrasing (Technique C).
+  - *~21 got ads but 0 store-links* — known app niches (ai math solver,
+    menopause tracker, manifestation journal) that advertise via FUNNELS. The
+    direct-app keyword sweep structurally can't catch these, but the
+    **category-agnostic funnel-phrase pipeline already does**. So the app seed
+    and the funnel seed are complementary by advertising style — the app seed's
+    "dead rate" overstates true system waste.
+- **C (testing) — is the no-inventory half fixable?** Rephrase dead terms to
+  common ad wording, keep B's productive terms. If diversity holds and dead-rate
+  drops, C is the shippable seed.
 
 ## Technique queue
 
 - [x] A — category-balanced, no suffix
-- [ ] B — category-balanced, `app` suffix  ← running
-- [ ] C — autocomplete/store-grounded terms (cut dead-rate by grounding in real apps)
-- [ ] D — yield-weighted balance (keep diversity, drop categories with no app supply)
+- [x] B — category-balanced, `app` suffix — **current leader**
+- [ ] C — B with dead terms rephrased to common wording  ← running
+- [ ] D — (if needed) drop categories with structurally zero app supply
