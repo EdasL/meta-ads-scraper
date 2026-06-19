@@ -45,7 +45,7 @@ taxonomy — and give every in-scope category an equal quota of narrow keywords.
 
 - **Even coverage = not biased to a category.** Health & Fitness gets the same
   quota as Weather. The wellness pile-up is removed by construction.
-- **Narrow "X app" terms = still emerging-biased.** The probe insight
+- **Narrow niche terms = still emerging-biased.** The probe insight
   (`taxonomy.py:2`) holds: a narrow keyword filters to small emerging
   advertisers even when impression-sorted. We keep the narrowness; we only
   change *which* niches are chosen and *how evenly*.
@@ -101,7 +101,8 @@ enforceable**:
 ```python
 # Layer 2 — app-niche terms, balanced across the store category frame.
 # Each in-scope category holds an equal quota (NICHE_PER_CATEGORY_MIN..MAX) of
-# narrow "X app" terms. Balance is asserted by test_taxonomy_balance so the
+# narrow niche terms (trailing "app" optional). Balance is asserted by
+# test_taxonomy_balance so the
 # frame cannot silently re-skew. Generated per CATEGORY_KEYWORD_GEN_PROMPT
 # (§7); regenerate a category's list when it saturates — do not hand-pile.
 NICHE_TERMS_BY_CATEGORY: dict[str, list[str]] = {
@@ -135,10 +136,11 @@ Add `tests/discovery/test_taxonomy_balance.py` (no DB) asserting:
 2. For every category, `MIN <= len(terms) <= MAX` — no category over- or
    under-represented.
 3. No duplicate terms across the whole frame.
-4. Every term is lowercase and ends in the word `app` (matches the generation
-   rule in §7), contains no obvious brand/app names (lightweight denylist
-   check), and is not a generic ad-copy phrase (a small denylist, e.g. reject
-   "what's your goal").
+4. Every term is lowercase, contains no obvious brand/app names (lightweight
+   denylist check), and is not a generic ad-copy phrase (a small denylist, e.g.
+   reject "what's your goal"). Terms need **not** end in the word `app` — the
+   suffix is optional (see §7); narrowness is enforced by the generation rule
+   and product-owner review, not by a literal-suffix assertion.
 
 This test is the durable guard the research doc called for ("the flywheel may
 drift, the frame cannot").
@@ -158,16 +160,18 @@ saturation refresh is reproducible:
 >
 > Produce **{N} short, narrow search keywords**, one per line, each a specific
 > sub-niche or pain-point in this category, phrased as it would appear in app
-> marketing and ending in the word `app` (e.g. `sleep tracker app`).
+> marketing (e.g. `sleep tracker app`, `wall pilates`, `cycle syncing`).
 >
 > Rules:
-> - **Narrow, not broad.** `wall pilates app`, not `fitness app`. Narrow terms
->   filter to small emerging advertisers; broad terms return incumbents.
+> - **Narrow, not broad.** `wall pilates`, not `fitness`. Narrow terms filter to
+>   small emerging advertisers; broad terms return incumbents.
+> - **The trailing word `app` is optional** — include it where it reads
+>   naturally, omit it where the niche term is already specific enough on its
+>   own. Do not pad every term with `app`.
 > - **Weave in current emerging-modifier variants where they're real for this
->   category** — AI-powered first (`ai {thing} app`), plus where natural:
->   `… tracker app`, `… scanner app`, `… coach app`, `… for couples/seniors/
->   teens app`, `… challenge app`. Do not force a modifier where no such app
->   exists.
+>   category** — AI-powered first (`ai {thing}`), plus where natural:
+>   `… tracker`, `… scanner`, `… coach`, `… for couples/seniors/teens`,
+>   `… challenge`. Do not force a modifier where no such app exists.
 > - **No brand or app names.** Never reference a specific product
 >   (no "Calm", "Duolingo", etc.).
 > - **No generic ad-copy phrases** ("what's your goal", "try the app free").
