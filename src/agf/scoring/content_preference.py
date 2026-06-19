@@ -43,6 +43,11 @@ class ContentPreferenceModel:
         self._liked_vecs = liked_vecs        # np.ndarray (k, dim) or None
         self._liked_names = liked_names or []
 
+    @property
+    def direction(self):
+        """The fitted like−dislike unit vector, or None in cold-start."""
+        return self._dir
+
     @classmethod
     def fit(cls, liked, disliked, min_likes=MIN_LIKES):
         if len(liked) < min_likes:
