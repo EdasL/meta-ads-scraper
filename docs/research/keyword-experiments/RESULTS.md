@@ -40,6 +40,27 @@ for only 43% of apps → diversity computed over an iOS-only subset). Fixed harn
 **Verdict: diverse enough.** Far more even than the baseline, and the new apps —
 the ones that matter for ongoing discovery — are spread, not clustered.
 
+## Full-seed validation (full_v1: 288 terms, 9/category)
+
+The C recipe scaled to production (`full-seed-v1.txt`) swept live:
+- **437 distinct apps**, yield 1.52/kw, **135 new (30.9% novelty)** — yield and
+  novelty hold at scale (novelty even rose vs the bounded run's 24%).
+- **Diversity by SEED CATEGORY (100% coverage, the true metric): top category
+  6.6% (Communication), top-3 17.2%, evenness 97.6%, ZERO empty categories.**
+  The balanced seed produces a near-perfectly balanced catch.
+
+Note on metrics: store-genre coverage was unreliable here — the node google-play
+sidecar times out (~6s/id, and hangs entirely under load), dropping ~210 android
+genres. Store genres also CONFLATE distinct seed categories into catch-all
+buckets (H&F, Education). **Measure diversity by seed category** (each app's
+source keyword → its seed category, 100% coverage) rather than store genre —
+it's both complete and truer to whether the seed itself is balanced.
+
+**SEED VALIDATED → ready for implementation** (wire `full-seed-v1.txt` into
+`taxonomy.py` as `NICHE_TERMS_BY_CATEGORY` + the balance test, per the spec).
+Optional follow-up: prune the ~31% dead terms (mostly funnel-advertised niches
+the funnel pipeline already catches, plus a few zero-inventory phrasings).
+
 ## Findings
 
 - **A — diversity up, yield down.** Equal per-category coverage raised evenness
