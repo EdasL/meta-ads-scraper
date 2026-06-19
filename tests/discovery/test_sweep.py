@@ -3,10 +3,12 @@ DB tests use SWEEPTEST* sentinels on the rolled-back pg_conn-style engine txn.""
 import asyncio
 from datetime import date
 
+import pytest
 from sqlalchemy import text
 
 from agf.discovery.sweep import classify_candidate, run_sweep
 from agf.discovery.taxonomy import TaxonomyEntry
+from agf.extract.errors import ErrorKind, ExtractError
 from agf.parse import AdRecord
 from tests.discovery.conftest import FakeExtractor
 
@@ -90,3 +92,54 @@ def test_run_sweep_persists_and_counts(_migrated_engine):
     finally:
         with eng.begin() as conn:
             conn.execute(text("DELETE FROM discovery.candidates WHERE page_id LIKE 'SWEEPTEST%'"))
+
+
+# --- circuit-breaker (dead-proxy death-march guard) --------------------------
+class _DeadProxyExtractor:
+    """Every search raises — simulates a dead/throttling proxy where the facade has
+    exhausted its retries+rotations for each keyword."""
+    def __init__(self):
+        self.calls = 0
+
+    async def search(self, *, query="", **kw):
+        self.calls += 1
+        raise ExtractError("proxy down", ErrorKind.TRANSIENT)
+
+
+def _entries(n):
+    return [TaxonomyEntry(f"kw{i}", "niche_term", "KEYWORD_UNORDERED", 2) for i in range(n)]
+
+
+def test_sweep_aborts_after_consecutive_errors():
+    # A dead proxy must trip the breaker fast instead of grinding all 20 keywords; the
+    # raise lets run_once fail the cycle and retry next tick (bounds the wasted Meta time).
+    ext = _DeadProxyExtractor()
+    with pytest.raises(ExtractError):
+        asyncio.run(run_sweep(None, ext, entries=_entries(20), sleep=lambda s: None,
+                              max_consecutive_errors=3))
+    assert ext.calls == 3                     # stopped at the threshold, not all 20
+
+
+def test_sweep_breaker_disabled_by_default():
+    # Default (0) preserves the old behavior: every keyword error is swallowed, no raise.
+    ext = _DeadProxyExtractor()
+    stats = asyncio.run(run_sweep(None, ext, entries=_entries(4), sleep=lambda s: None))
+    assert stats["errors"] == 4 and ext.calls == 4
+
+
+def test_sweep_isolated_errors_do_not_trip_breaker():
+    # Errors that never reach N-in-a-row (the consecutive counter resets on each success)
+    # must not abort a healthy sweep that hits the odd transient throttle.
+    class _Flaky:
+        def __init__(self):
+            self.n = 0
+
+        async def search(self, *, query="", **kw):
+            self.n += 1
+            if self.n % 2 == 1:               # odd calls fail, even calls succeed
+                raise ExtractError("blip", ErrorKind.TRANSIENT)
+            return []
+
+    stats = asyncio.run(run_sweep(None, _Flaky(), entries=_entries(8), sleep=lambda s: None,
+                                  max_consecutive_errors=3))
+    assert stats["errors"] == 4 and stats["keywords_swept"] == 4

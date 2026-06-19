@@ -15,7 +15,7 @@ from agf.classify import classify_url
 from agf.db.candidates import upsert_sweep_candidate
 from agf.db.engine import begin
 from agf.discovery.taxonomy import sweep_entries
-from agf.extract.errors import ExtractError
+from agf.extract.errors import ErrorKind, ExtractError
 from agf.scoring.vetoes import INCUMBENT_PAGE_LIKES_MAX
 
 # Destinations that are neither an app nor a funnel — a social page or ad redirect.
@@ -62,10 +62,18 @@ def classify_candidate(ad, *, keyword: str, technique: str) -> tuple[str, dict |
 
 async def run_sweep(engine, extractor, *, entries=None, keywords=None,
                     countries=("US",), max_pages: int = 2, kw_delay: float = 3.0,
-                    sleep=time.sleep) -> dict:
+                    max_consecutive_errors: int = 0, sleep=time.sleep) -> dict:
     """Sweep the taxonomy (or an explicit entry/keyword subset) and persist candidates.
     Returns counters for sweep_runs. `keywords` (list[str]) is a convenience override
-    used by the worker dry-run; it implies KEYWORD_UNORDERED."""
+    used by the worker dry-run; it implies KEYWORD_UNORDERED.
+
+    `max_consecutive_errors` is the dead-proxy circuit-breaker: each keyword's search
+    only raises after the facade exhausts its retries+IP-rotations, so N of them in a row
+    means the proxy/gateway is down (or Meta is hard-throttling). Rather than grind all
+    ~300 keywords at ~one timeout-cycle each (the 2026-06-19 wedge), the sweep RAISES so
+    run_once fails this cycle and the loop retries next tick. 0 disables (the default, so
+    the dry-run and the per-keyword flywheel sweeps are unaffected); the counter resets on
+    any successful keyword, so isolated throttles never trip it."""
     if entries is None:
         entries = sweep_entries()
     if keywords is not None:
@@ -74,6 +82,7 @@ async def run_sweep(engine, extractor, *, entries=None, keywords=None,
              "candidates_new": 0, "candidates_seen": 0, "errors": 0,
              "drops": {"no_link": 0, "social": 0, "incumbent_likes": 0,
                        "non_app": 0, "no_store_id": 0}}
+    consecutive_errors = 0
     for entry in entries:
         # entry.max_pages is the per-keyword ceiling (the experiment harness honors it
         # in full); the production sweep further caps every keyword at `max_pages`
@@ -84,8 +93,15 @@ async def run_sweep(engine, extractor, *, entries=None, keywords=None,
                                          search_type=entry.search_type, max_pages=pages)
         except ExtractError:
             stats["errors"] += 1
+            consecutive_errors += 1
+            if max_consecutive_errors and consecutive_errors >= max_consecutive_errors:
+                raise ExtractError(
+                    f"sweep circuit-breaker: {consecutive_errors} consecutive search "
+                    f"errors — proxy/gateway likely down, aborting cycle",
+                    ErrorKind.TRANSIENT)
             sleep(kw_delay * 2)
             continue
+        consecutive_errors = 0                        # any success clears the streak
         stats["keywords_swept"] += 1
         stats["serp_requests"] += pages              # upper bound; search may stop earlier
         stats["raw_ads"] += len(ads)

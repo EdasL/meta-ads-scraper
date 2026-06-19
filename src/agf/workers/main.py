@@ -33,6 +33,9 @@ Env:
   AGF_SCORE_AFTER_SWEEP=1      run run_scoring after discovery       (default off; cron owns it)
   AGF_MIN_GEM_SCORE            enrich gems at/above this score       (default 70)
   AGF_SWEEP_INTERVAL_SEC       sleep between sweeps                  (default 3600; ignored if once)
+  AGF_SWEEP_MAX_CONSECUTIVE_ERRORS  dead-proxy circuit-breaker: abort the
+                               cycle after this many keywords error in a row    (default 5;
+                               0 disables). Each error = facade retries+rotations exhausted.
   AGF_FUNNEL_DAILY             run the daily funnel sweep+confirm    (default 1; 0 disables)
   AGF_FUNNEL_MAX_PAGES         SERP pages per funnel keyword         (default 8; funnel
                                phrases keep yielding NEW advertisers on deep pages —
@@ -417,7 +420,8 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
              flywheel_daily=True, flywheel_pages=2, flywheel_max_trials=40,
              flywheel_min_advertisers=3, mine_min_score=40.0,
              release_mint_enabled=False, release_mint_max_listings=120,
-             media_repair_per_cycle=5, funnel_repair_per_cycle=3) -> dict:
+             media_repair_per_cycle=5, funnel_repair_per_cycle=3,
+             sweep_max_consecutive_errors=0) -> dict:
     """One sweep→triage→(score)→enrich pass. Returns a summary dict (no printing).
     http_client is the sweep-scoped httpx.Client for the production triage/enrich path
     (None in a dry-run, which uses offline lookups and the no-network fake deps)."""
@@ -444,7 +448,8 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
                 lookup_ios = lookup_android = _demo_lookup
             else:
                 sweep_stats = asyncio.run(run_sweep(
-                    engine, extractor, max_pages=sweep_pages, kw_delay=kw_delay))
+                    engine, extractor, max_pages=sweep_pages, kw_delay=kw_delay,
+                    max_consecutive_errors=sweep_max_consecutive_errors))
                 lookup_ios = partial(lookup_itunes_batch, http_client, pause=3.0)
                 lookup_android = lookup_google_play
             if dry_run or http_client is not None:
@@ -863,6 +868,7 @@ def main(argv=None) -> None:
         release_mint_max_listings=_env_int("AGF_RELEASE_MINT_MAX_LISTINGS", 120),
         media_repair_per_cycle=_env_int("AGF_MEDIA_REPAIR_PER_CYCLE", 5),
         funnel_repair_per_cycle=_env_int("AGF_FUNNEL_REPAIR_PER_CYCLE", 3),
+        sweep_max_consecutive_errors=_env_int("AGF_SWEEP_MAX_CONSECUTIVE_ERRORS", 5),
     )
     # In continuous mode a full taxonomy sweep already takes many minutes (kw_delay ×
     # 305 keywords), so the inter-sweep sleep is just a short breather, not an hour.
