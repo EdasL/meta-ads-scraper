@@ -16,12 +16,42 @@ SIGNATURES = {
                  "onelink.to", "appsflyer", "adjust.com", "app.adjust", "adj.st",
                  "go.link", "sng.link"],
     "store":    ["apps.apple.com", "itunes.apple.com", "play.google.com"],
+    "physical": ["cdn.shopify", "myshopify", "/cart", "add-to-cart", "addtocart",
+                 "/products/", "/collections/"],
+    "service":  ["calendly.com", "acuityscheduling", "as.me/", "squareup.com/appointments",
+                 "book a call", "free consultation", "schedule a call", "get a quote"],
 }
+
+_BILLING_RE = re.compile(
+    r"cancel anytime|per month|/mo\b|a month\b|billed|subscription|day trial|then \$",
+    re.IGNORECASE,
+)
+
+
+def _has_billing_language(html: str) -> bool:
+    return bool(_BILLING_RE.search(html or ""))
+
+
+def classify_payoff(html: str, *, store_id: str | None = None) -> str:
+    """Classify funnel payoff kind. Precedence order is documented in the spec:
+    physical must beat checkout because Shopify pages also load Stripe."""
+    sigs = detect_signatures(html)
+    if store_id:
+        return "app"
+    if "physical" in sigs:
+        return "physical"
+    if "service" in sigs:
+        return "service"
+    if "store" in sigs or "mmp" in sigs:
+        return "app"
+    if "checkout" in sigs and ("pixel" in sigs or _has_billing_language(html)):
+        return "web_sub"
+    return "leadgen"
 
 
 def detect_signatures(html: str) -> set[str]:
-    """Which signature categories ('checkout'|'pixel'|'mmp'|'store') appear in the page source."""
-    html = html or ""
+    """Which signature categories appear in the page source (case-insensitive)."""
+    html = (html or "").lower()
     return {cat for cat, sigs in SIGNATURES.items() if any(s in html for s in sigs)}
 
 
