@@ -71,7 +71,8 @@ from sqlalchemy import text
 
 from agf.db.engine import get_engine, begin
 from agf.db.candidates import (close_sweep_run, kept_advertiser_ids,
-                               open_sweep_run, reap_open_runs, sweep_ran_today)
+                               open_sweep_run, reap_open_runs, sweep_ran_today,
+                               taste_prioritized_kept)
 from agf.db.dynamic_keywords import (add_trial_keywords, apply_verdicts,
                                      close_flywheel_run, close_release_mint_run,
                                      flywheel_ran_today, flywheel_ran_within,
@@ -641,6 +642,19 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
             print(f"[worker] preference scoring failed: {exc!r}",
                   file=sys.stderr, flush=True)
 
+    # 2c) candidate embeddings — fetch each kept candidate's store listing + embed it
+    #     so the enrich budget can be taste-prioritized. Best-effort; never stalls.
+    if os.environ.get("AGF_TRIAGE_PRIOR", "1") != "0" and not dry_run:
+        try:
+            from agf.discovery.candidate_embed import embed_candidates
+            with engine.connect() as conn:
+                cstats = embed_candidates(conn, itunes_client=http_client, commit_every=25)
+                conn.commit()
+            print(f"[worker] candidate embeddings: {cstats}", flush=True)
+        except Exception as exc:
+            print(f"[worker] candidate embed stage failed: {exc!r}",
+                  file=sys.stderr, flush=True)
+
     # 3) enrich — keepers first (they have no ad history yet, so they can't score
     #    until enriched), then flagged gems due for their TTL refresh; both under a
     #    proxy-request budget instead of a fixed count. ~14 Meta requests per gem
@@ -649,7 +663,17 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
     est_requests_per_gem = 14
     enrich_limit = max(1, (enrich_budget - enrich_budget // 2) // est_requests_per_gem)
     with engine.connect() as conn:
-        kept = kept_advertiser_ids(conn)
+        if os.environ.get("AGF_TRIAGE_PRIOR", "1") != "0":
+            try:
+                kept = taste_prioritized_kept(
+                    conn, user=os.environ.get("AGF_TRIAGE_USER", "founder@fielddesk.local"),
+                    explore_frac=float(os.environ.get("AGF_TRIAGE_EXPLORE_FRAC", "0.25")))
+            except Exception as exc:
+                print(f"[worker] triage-prior fell back to FIFO: {exc!r}",
+                      file=sys.stderr, flush=True)
+                kept = kept_advertiser_ids(conn)
+        else:
+            kept = kept_advertiser_ids(conn)
         cand_ids = kept if dry_run else list(dict.fromkeys(
             kept + eligible_gem_ids(conn, min_score)))
         if dry_run:

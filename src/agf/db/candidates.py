@@ -84,6 +84,39 @@ def close_sweep_run(conn, run_id: int, *, sweep: dict | None = None,
            "reasons": json.dumps(reasons), "err": error, "id": run_id})
 
 
+def kept_with_embeddings(conn):
+    """kept_advertiser_id -> candidate embedding (for kept candidates that were embedded)."""
+    rows = conn.execute(text(
+        "SELECT c.kept_advertiser_id, e.embedding "
+        "FROM discovery.candidates c "
+        "JOIN discovery.candidate_embeddings e ON e.candidate_id = c.id "
+        "WHERE c.status='kept' AND c.kept_advertiser_id IS NOT NULL")).all()
+    return {a: [float(x) for x in v] for a, v in rows}
+
+
+def taste_prioritized_kept(conn, *, user, explore_frac=0.25):
+    """kept_advertiser_ids reordered by cosine to `user`'s liked direction, with an
+    explore reserve. Advisory: any cold-start / missing-data path returns plain FIFO."""
+    from agf.discovery.triage_prior import liked_direction, prioritize
+    fifo = kept_advertiser_ids(conn)
+    if not fifo:
+        return fifo
+    emb = {a: [float(x) for x in v] for a, v in conn.execute(text(
+        "SELECT advertiser_id, embedding FROM frontend.app_embeddings"))}
+    labels = {a: r for a, r in conn.execute(text(
+        "SELECT advertiser_id, rating FROM frontend.app_ratings WHERE user_email=:e"),
+        {"e": user})}
+    liked = [(a, "", emb[a]) for a, r in labels.items() if r == "like" and a in emb]
+    disliked = [(a, "", emb[a]) for a, r in labels.items() if r == "dislike" and a in emb]
+    direction = liked_direction(liked, disliked)
+    if direction is None:
+        return fifo
+    cand_emb = kept_with_embeddings(conn)
+    if not cand_emb:
+        return fifo
+    return prioritize(fifo, cand_emb, direction, explore_frac=explore_frac)
+
+
 def reap_open_runs(conn) -> dict[str, int]:
     """Close run rows left open by a killed worker (SIGTERM on laptop sleep, crash).
 
