@@ -56,8 +56,11 @@ Env:
 """
 import asyncio
 import os
+import signal
 import sys
+import threading
 import time
+from collections.abc import Callable
 from datetime import date, datetime, timezone, timedelta
 from functools import partial
 
@@ -712,18 +715,68 @@ def _touch_heartbeat() -> None:
         pass
 
 
-def _healthcheck() -> int:
-    """Exit 0 iff the worker wrote a heartbeat recently. A full sweep→funnel→enrich
-    cycle can take ~40 min, so the staleness budget must clear one whole cycle plus
-    slack — otherwise a healthy worker mid-sweep reads as down (the original bug).
-    run_once touches the heartbeat at each stage boundary, so a genuinely hung or
-    crash-looping worker still trips this. Tune via AGF_HEALTHCHECK_MAX_STALE_SEC."""
-    path = _heartbeat_path()
+def _watchdog_max_stale() -> int:
+    """Heartbeat-staleness budget shared by `--healthcheck` and the in-process watchdog.
+    A full sweep→funnel→enrich cycle can take ~40 min, so the budget must clear one whole
+    cycle plus slack — otherwise a healthy worker mid-sweep reads as down (the original
+    bug). run_once touches the heartbeat at each stage boundary, so a genuinely hung or
+    death-marching worker still trips this. Tune via AGF_HEALTHCHECK_MAX_STALE_SEC."""
     interval = _env_int("AGF_SWEEP_INTERVAL_SEC", 3600)
-    max_stale = max(_env_int("AGF_HEALTHCHECK_MAX_STALE_SEC", 3600), 2 * interval + 300)
+    return max(_env_int("AGF_HEALTHCHECK_MAX_STALE_SEC", 3600), 2 * interval + 300)
+
+
+def _heartbeat_stale(max_stale_sec: float, *, now: Callable[[], float] = time.time) -> bool:
+    """True iff the heartbeat file is missing or older than `max_stale_sec`."""
+    path = _heartbeat_path()
     if not os.path.exists(path):
-        return 1
-    return 0 if (time.time() - os.path.getmtime(path)) < max_stale else 1
+        return True
+    return (now() - os.path.getmtime(path)) >= max_stale_sec
+
+
+def _healthcheck() -> int:
+    """Exit 0 iff the worker wrote a heartbeat recently (the launchd `--healthcheck`
+    probe). The in-process watchdog (start_watchdog) enforces the same rule live."""
+    return 1 if _heartbeat_stale(_watchdog_max_stale()) else 0
+
+
+def _kill_self() -> None:
+    """SIGKILL the current process so launchd's KeepAlive restarts it. SIGKILL (not TERM)
+    because a wedged C call may never run a Python signal handler — the point is to break
+    a hang KeepAlive can't see (it only restarts on EXIT)."""
+    print("[worker] watchdog: heartbeat stale beyond budget — killing process so "
+          "KeepAlive restarts a fresh worker", file=sys.stderr, flush=True)
+    os.kill(os.getpid(), signal.SIGKILL)
+
+
+def _run_watchdog(is_stale: Callable[[], bool], on_stale: Callable[[], None], *,
+                  poll_sec: float, sleep: Callable[[float], None] = time.sleep,
+                  stop: Callable[[], bool] = lambda: False) -> None:
+    """Poll is_stale() every poll_sec; fire on_stale() and return the moment it reports
+    True. `stop` lets tests break the loop. Pure: no threads, clock, or process kill."""
+    while not stop():
+        sleep(poll_sec)
+        if is_stale():
+            on_stale()
+            return
+
+
+def start_watchdog(*, is_stale: Callable[[], bool] | None = None,
+                   on_stale: Callable[[], None] = _kill_self,
+                   poll_sec: float = 60.0) -> threading.Thread:
+    """Spawn a daemon thread that kills the worker when the heartbeat goes stale.
+
+    KeepAlive only restarts the worker on process EXIT, and a hung/death-marching process
+    never exits — so nothing recovers it (the 2026-06-19 blocker). A daemon thread runs
+    even while the main thread is blocked in a GIL-releasing curl call, so it can break the
+    wedge. Daemon => never blocks interpreter exit."""
+    if is_stale is None:
+        def is_stale():
+            return _heartbeat_stale(_watchdog_max_stale())
+    t = threading.Thread(target=_run_watchdog, args=(is_stale, on_stale),
+                         kwargs={"poll_sec": poll_sec}, name="agf-worker-watchdog",
+                         daemon=True)
+    t.start()
+    return t
 
 
 def _summary_line(s: dict) -> str:
@@ -817,6 +870,10 @@ def main(argv=None) -> None:
     mode = "DRY-RUN (fake extractor, no Meta traffic)" if dry_run else "LIVE"
     print(f"[worker] starting — mode={mode} once={once} caps={cfg}", flush=True)
     _touch_heartbeat()                                # healthy before the first (slow) sweep
+    # Long-running daemon only: a watchdog thread SIGKILLs us if the heartbeat goes stale
+    # (a wedged sweep / dead proxy never exits, so KeepAlive alone can't recover it).
+    if not once:
+        start_watchdog()
 
     while True:
         now_epoch = int(time.time())
