@@ -8,6 +8,30 @@ from agf.classify import unwrap_fb_shim
 SOCIAL_HOSTS = {"facebook.com", "fb.me", "m.facebook.com", "l.facebook.com", "lm.facebook.com",
                 "instagram.com", "api.whatsapp.com", "wa.me", "t.co", "ad.doubleclick.net",
                 "youtube.com", "youtu.be", "twitter.com", "x.com", "linktr.ee", "messenger.com"}
+
+# MMP / attribution / store-redirect hosts. A paid ad pointing here is a store BOUNCE
+# (AppsFlyer/Branch/Adjust deep-link → straight to the store), NOT a real web2app
+# funnel — so it must not count toward has_funnel even though it resolves to an http(s)
+# URL carrying pid=/af_ad=/a deep path. Authoritative list (was scattered across
+# funnel_repair/deeplink/firehose_fingerprint). Matched by host suffix at a label
+# boundary by is_store_bounce(); the matview funnel_url regex (migration 138) mirrors it.
+STORE_BOUNCE_HOSTS = frozenset({
+    "appstack.link", "onelink.me", "onelink.to", "app.link", "go.link", "adj.st",
+    "bnc.lt", "adjust.com", "appsflyer.com", "kochava.com", "singular.net",
+    "lnk.to", "apple.co",
+})
+
+
+def is_store_bounce(host: str | None) -> bool:
+    """True when host is (or is a subdomain of) an MMP/store-redirect host — a store
+    bounce, not a real funnel. Suffix match at a label boundary: 'x.onelink.me' and
+    'onelink.me' match; 'notonelink.me' does not."""
+    if not host:
+        return False
+    host = host.lower().replace("www.", "")
+    return any(host == h or host.endswith("." + h) for h in STORE_BOUNCE_HOSTS)
+
+
 # Sub-domains / infra that signal a real web2app or quiz funnel even without funnel copy.
 # Hints ending in "." are subdomain labels and match only at a label boundary
 # ("quiz.x.com", "api-quiz.x.com" — but never "lequiz.x.com"); the rest are substrings.

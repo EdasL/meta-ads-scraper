@@ -15,7 +15,7 @@ from agf.enrich import emerging_from_release
 from agf.enrich_full.schemas import EnrichResult
 from agf.enrich_full.funnel_capture import resolve_landing, capture_funnel, render_and_probe
 from agf.discovery.funnel_confirm import classify_funnel
-from agf.discovery.funnel_classify import SOCIAL_HOSTS
+from agf.discovery.funnel_classify import SOCIAL_HOSTS, is_store_bounce
 
 # A funnel landing is never a store or social page. apps.apple.com/play.google.com
 # are the install branch; facebook.com/<page_id> is the advertiser's own page and
@@ -153,7 +153,8 @@ async def record_web_funnel(conn, ad_id, link_url, target, deps: EnrichDeps) -> 
     if target.kind != "web" or not target.final_url:
         return 0
     funnel_host = _domain_of(target.final_url)
-    if funnel_host in SOCIAL_HOSTS or funnel_host in STORE_HOSTS:
+    if (funnel_host in SOCIAL_HOSTS or funnel_host in STORE_HOSTS
+            or is_store_bounce(funnel_host)):
         return 0
     kind = quiz_steps = shot = None
     confirmed = False
