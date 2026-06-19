@@ -14,7 +14,12 @@ baseline — compare techniques to each other, not to the baseline's absolute yi
 | — | **baseline** niche_term (270, post-triage) | 539 | 26% H&F | 48% | 76% | 1.3 kept | 32% |
 | A | category-balanced LLM, 2/cat, no suffix | 64 | 22% Education | 44% | 87% | 0.98 | 59% |
 | B | A + `app` suffix (suffix A/B test) | 64 | **13.8% H&F** | **36%** | **91%** | **1.25** | 47% |
-| C | B, dead terms rephrased to common wording | 64 | _running_ | | | | |
+| C | B, dead terms rephrased to common wording | 64 | **18.6% H&F** | **39%** | **91.1%** | **2.14** | **18.8%** |
+
+**Winner: C** — dominates the baseline on every axis (evenness 91 vs 76, top-genre
+19 vs 26, yield 2.14 vs 1.3, dead 19 vs 32). Loop converged: A→B→C each improved;
+remaining dead terms are funnel-advertised niches the funnel pipeline already
+catches, so further chasing would broaden toward incumbents.
 
 ## Findings
 
@@ -46,6 +51,29 @@ baseline — compare techniques to each other, not to the baseline's absolute yi
 ## Technique queue
 
 - [x] A — category-balanced, no suffix
-- [x] B — category-balanced, `app` suffix — **current leader**
-- [ ] C — B with dead terms rephrased to common wording  ← running
-- [ ] D — (if needed) drop categories with structurally zero app supply
+- [x] B — category-balanced, `app` suffix
+- [x] C — B with dead terms rephrased to common wording — **WINNER, converged**
+
+## Winning recipe → ship
+
+**Category-balanced frame + `app` suffix + common (not over-specific) ad wording.**
+Next step (implementation): scale the C recipe from 2/category to the spec's
+~8-10/category, generated with this recipe, validated with one more bake-off run.
+
+Spec changes this experiment forces:
+1. **`app` suffix is NOT optional** — it raises yield (+28% A→B) AND diversity.
+   Revert the "suffix optional" relaxation in
+   `docs/superpowers/specs/2026-06-19-category-balanced-keyword-seed-design.md`.
+2. **Generation rule: prefer common ad wording over over-specific phrasing**
+   (B→C: dead 47→19%, yield 1.25→2.14). "pickleball app" not "pickleball score
+   tracker app".
+3. **App-seed and funnel-seed are complementary by advertising style.** Don't
+   force the app keyword seed to catch funnel-advertised niches — that's the
+   funnel pipeline's job. The app seed's "dead rate" overstates true waste.
+
+### Flywheel fit (qualitative)
+The flywheel mines the ad copy of FOUND apps, so a category-diverse base (C: 137
+apps / 20 genres) gives it diverse basins to deepen — directly breaking the
+topical-locality trap the 2026-06-18 research doc identified (a wellness-skewed
+base could only deepen wellness). Quantitative promote-rate needs days of live
+flywheel runs to confirm.
