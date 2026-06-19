@@ -127,6 +127,31 @@ def test_sweep_breaker_disabled_by_default():
     assert stats["errors"] == 4 and ext.calls == 4
 
 
+def test_sweep_touches_heartbeat_each_keyword():
+    # The sweep is the long stage; the worker watchdog kills on a stale heartbeat. A
+    # progressing-but-slow sweep (hundreds of keywords) must touch the heartbeat as it
+    # goes, or the watchdog kills it mid-sweep before triage ever runs.
+    class _Empty:
+        async def search(self, *, query="", **kw):
+            return []
+
+    beats = []
+    asyncio.run(run_sweep(None, _Empty(), entries=_entries(5), sleep=lambda s: None,
+                          heartbeat=lambda: beats.append(1)))
+    assert len(beats) == 5                    # one per swept keyword
+
+
+def test_sweep_heartbeat_optional():
+    # No heartbeat callback (default) must not error — the experiment harness / tests
+    # call run_sweep without one.
+    class _Empty:
+        async def search(self, *, query="", **kw):
+            return []
+
+    stats = asyncio.run(run_sweep(None, _Empty(), entries=_entries(3), sleep=lambda s: None))
+    assert stats["keywords_swept"] == 3
+
+
 def test_sweep_isolated_errors_do_not_trip_breaker():
     # Errors that never reach N-in-a-row (the consecutive counter resets on each success)
     # must not abort a healthy sweep that hits the odd transient throttle.

@@ -62,7 +62,8 @@ def classify_candidate(ad, *, keyword: str, technique: str) -> tuple[str, dict |
 
 async def run_sweep(engine, extractor, *, entries=None, keywords=None,
                     countries=("US",), max_pages: int = 2, kw_delay: float = 3.0,
-                    max_consecutive_errors: int = 0, sleep=time.sleep) -> dict:
+                    max_consecutive_errors: int = 0, sleep=time.sleep,
+                    heartbeat=None) -> dict:
     """Sweep the taxonomy (or an explicit entry/keyword subset) and persist candidates.
     Returns counters for sweep_runs. `keywords` (list[str]) is a convenience override
     used by the worker dry-run; it implies KEYWORD_UNORDERED.
@@ -122,5 +123,8 @@ async def run_sweep(engine, extractor, *, entries=None, keywords=None,
                 for row in rows:
                     _, was_new = upsert_sweep_candidate(conn, row)
                     stats["candidates_new" if was_new else "candidates_seen"] += 1
+        if heartbeat is not None:
+            heartbeat()        # prove liveness each keyword so the watchdog (stale-
+                               # heartbeat kill) never fells a slow-but-progressing sweep
         sleep(kw_delay)
     return stats

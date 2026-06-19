@@ -450,7 +450,9 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
             else:
                 sweep_stats = asyncio.run(run_sweep(
                     engine, extractor, max_pages=sweep_pages, kw_delay=kw_delay,
-                    max_consecutive_errors=sweep_max_consecutive_errors))
+                    max_consecutive_errors=sweep_max_consecutive_errors,
+                    heartbeat=_touch_heartbeat))   # long stage — beat per keyword so the
+                                                   # watchdog can't kill a progressing sweep
                 lookup_ios = partial(lookup_itunes_batch, http_client, pause=3.0)
                 lookup_android = lookup_google_play
             if dry_run or http_client is not None:
