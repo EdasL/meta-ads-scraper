@@ -1,0 +1,98 @@
+# Technique A — category-balanced LLM seed (2 narrow terms per in-scope category)
+# Generated per CATEGORY_KEYWORD_GEN_PROMPT (spec 2026-06-19). No brands, suffix optional.
+# Art & Design
+ai logo maker
+adult coloring book
+# Auto & Vehicles
+car maintenance tracker
+obd2 scanner
+# Beauty
+ai hairstyle try on
+skin analysis routine
+# Books
+ai reading coach
+book summaries
+# Business
+ai resume builder
+freelance invoice maker
+# Comics
+ai manga creator
+webtoon reader
+# Communication
+ai voice translator
+private encrypted messenger
+# Dating
+attachment style quiz
+ai dating profile photos
+# Education
+learn spanish
+ai math solver
+# Entertainment
+ai companion chat
+fan fiction reader
+# Events
+wedding planning checklist
+event countdown widget
+# Finance
+zero based budgeting
+debt snowball tracker
+# Food & Drink
+macro meal planner
+ai recipe from photo
+# Health & Fitness
+wall pilates
+menopause symptom tracker
+# House & Home
+home renovation planner
+ai interior design
+# Lifestyle
+plant care reminder
+manifestation journal
+# Medical
+blood pressure log
+migraine tracker
+# Music
+learn piano by ear
+ai song maker
+# Navigation
+rv trip planner
+offline trail maps
+# News
+local news digest
+ai news summary
+# Parenting
+baby sleep schedule
+potty training tracker
+# Personalization
+aesthetic widget maker
+lock screen themes
+# Photo & Video
+ai headshot generator
+old photo restoration
+# Productivity
+ai meeting notes
+adhd task planner
+# Reference
+bird call identifier
+ai plant identifier
+# Shopping
+price drop tracker
+ai outfit planner
+# Social
+anonymous q and a
+close friends journal
+# Sports
+pickleball score tracker
+marathon training plan
+# Travel
+ai itinerary planner
+flight deal alerts
+# Utilities
+ai document scanner
+wifi signal analyzer
+# Video Players
+ai subtitle generator
+screen recorder editor
+# Weather
+hyperlocal rain alerts
+aurora forecast
