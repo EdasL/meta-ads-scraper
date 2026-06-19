@@ -169,7 +169,7 @@ async def record_web_funnel(conn, ad_id, link_url, target, deps: EnrichDeps) -> 
         log.warning("funnel probe failed for %s: %s: %s",
                     target.final_url, type(e).__name__, e)
     if probe is not None:
-        kind, status, _store, _sid, _drop = classify_funnel(
+        kind, status, _store, _sid, _drop, _payoff = classify_funnel(
             probe.landing_html, target, funnel_host=funnel_host,
             quiz_steps=probe.quiz_steps, funnel_url=target.final_url)
         quiz_steps = probe.quiz_steps

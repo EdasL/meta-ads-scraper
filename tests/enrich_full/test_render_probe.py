@@ -110,7 +110,7 @@ def test_probe_size_picker_lookalike_never_confirms():
     assert got.quiz_steps == 1
     from agf.discovery.funnel_confirm import classify_funnel
     from types import SimpleNamespace
-    _, status, _, _, reason = classify_funnel(got.landing_html,
+    _, status, _, _, reason, _ = classify_funnel(got.landing_html,
                                               SimpleNamespace(kind="web", store_id=None),
                                               None, got.quiz_steps)
     assert (status, reason) == ("dropped", "no_quiz_no_payoff")
