@@ -13,6 +13,7 @@ from urllib.parse import urlparse
 
 from sqlalchemy import text
 
+from agf.db.candidates import upsert_sweep_candidate
 from agf.db.engine import begin
 from agf.db.funnel_candidates import mark_funnel_confirmed
 from agf.discovery.firehose_fingerprint import detect_signatures, classify_payoff
@@ -83,7 +84,8 @@ def run_funnel_confirm(engine, *, resolve, probe, ids=None, limit=None) -> dict:
     if limit is not None:
         rows = rows[:limit]
     stats = {"examined": len(rows), "confirmed": 0, "dropped": 0,
-             "kinds": {"install": 0, "subscribe": 0, "unknown": 0}}
+             "kinds": {"install": 0, "subscribe": 0, "unknown": 0},
+             "bridged_app_new": 0, "bridged_app_seen": 0}
     for r in rows:
         try:
             resolved = resolve(r.landing_url)
@@ -100,6 +102,21 @@ def run_funnel_confirm(engine, *, resolve, probe, ids=None, limit=None) -> dict:
             mark_funnel_confirmed(conn, r.id, kind=kind, status=status,
                                   store=store, store_id=store_id, drop_reason=reason,
                                   quiz_steps=quiz_steps, payoff_kind=payoff_kind)
+            if status == "confirmed" and payoff_kind == "app" and store_id:
+                bridge_row = {
+                    "page_id": r.page_id,
+                    "page_name": r.page_name,
+                    "page_like_count": r.page_like_count,
+                    "store": store,
+                    "store_id": store_id,
+                    "link_url": r.landing_url,
+                    "cta_type": None,
+                    "ad_start_date": None,
+                    "source_keyword": r.source_keyword,
+                    "technique": "funnel_confirm",
+                }
+                _, was_new = upsert_sweep_candidate(conn, bridge_row)
+                stats["bridged_app_new" if was_new else "bridged_app_seen"] += 1
         if status == "confirmed":
             stats["confirmed"] += 1
             stats["kinds"][kind] += 1

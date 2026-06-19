@@ -167,3 +167,42 @@ def test_run_funnel_confirm_labels_pool(_migrated_engine):
     finally:
         with eng.begin() as conn:
             conn.execute(text("DELETE FROM discovery.funnel_candidates WHERE page_id LIKE 'FCONF%'"))
+
+
+# --- unit 6: confirm-time app bridge ---
+
+def test_run_funnel_confirm_bridges_app(_migrated_engine):
+    """When classify_funnel returns payoff_kind='app' + a store_id, run_funnel_confirm
+    upserts a discovery.candidates row and tracks bridged_app_new/bridged_app_seen."""
+    eng = _migrated_engine
+    from agf.db.funnel_candidates import upsert_funnel_candidate
+    APP_HTML = '<a href="https://apps.apple.com/us/app/myapp/id9876543">Get it</a>'
+    BASE = dict(page_name="BridgeApp", page_like_count=50,
+                cta_type="LEARN_MORE", utm_source=None, utm_medium=None,
+                utm_campaign=None, utm_content=None, ad_start_date=None,
+                source_keyword="weight loss quiz", technique="funnel_phrase")
+    with eng.begin() as conn:
+        conn.execute(text("DELETE FROM discovery.funnel_candidates WHERE page_id = 'FBRIDGE_APP'"))
+        conn.execute(text("DELETE FROM discovery.candidates WHERE page_id = 'FBRIDGE_APP'"))
+        upsert_funnel_candidate(conn, {**BASE, "page_id": "FBRIDGE_APP", "funnel_host": None,
+                                       "landing_url": "https://fbridge-app.io/quiz",
+                                       "landing_domain": "fbridge-app.io"})
+    def fake_resolve(url):
+        return _resolved("web")   # resolver doesn't find it — DOM bridge does
+    def fake_probe(url):
+        return _probed(APP_HTML)
+    try:
+        stats = run_funnel_confirm(eng, resolve=fake_resolve, probe=fake_probe,
+                                   ids=_ids(eng, "FBRIDGE_APP"))
+        assert stats.get("bridged_app_new", 0) + stats.get("bridged_app_seen", 0) >= 1
+        with eng.connect() as c:
+            cand = c.execute(text(
+                "SELECT store, store_id FROM discovery.candidates WHERE page_id = 'FBRIDGE_APP'"
+            )).first()
+        assert cand is not None, "bridge row missing from discovery.candidates"
+        assert cand.store == "ios"
+        assert cand.store_id == "9876543"
+    finally:
+        with eng.begin() as conn:
+            conn.execute(text("DELETE FROM discovery.funnel_candidates WHERE page_id = 'FBRIDGE_APP'"))
+            conn.execute(text("DELETE FROM discovery.candidates WHERE page_id = 'FBRIDGE_APP'"))
