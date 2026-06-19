@@ -27,7 +27,7 @@ def embed_candidates(conn, *, itunes_client, gplay_runner=None,
                      lookup_itunes=lookup_itunes_batch, lookup_play=lookup_google_play,
                      embed_fn=embed_texts, commit_every=25, limit=None) -> dict:
     rows = conn.execute(_PENDING).all()
-    if limit:
+    if limit is not None:
         rows = rows[:limit]
     ios = [r.store_id for r in rows if r.store == "ios"]
     android = [r.store_id for r in rows if r.store == "android"]
