@@ -69,7 +69,7 @@ ranked feed to a human who thumbs them up or down. This doc walks the whole mach
 <a href="#taxonomy">05A · the keyword taxonomy (the existing seed)</a>
 <a href="#triage">06 · triage — keep or drop</a>
 <a href="#appstore">06A · the App Store side</a>
-<a href="#funnel">07 · the funnel pipeline + bridge</a>
+<a href="#funnel">07 · the funnel pipeline · payoff classifier + bridges</a>
 <a href="#flywheel">08 · the keyword flywheel</a>
 <a href="#signal">09 · building the growth signal</a>
 <a href="#enrich">10 · enrich — fetch the real detail</a>
@@ -436,22 +436,64 @@ hides it, so for iOS grug counts the ratings climbing instead.
 
 <h2 id="funnel"><span class="n">07</span> the funnel pipeline + the app bridge</h2>
 <p>
-Funnels run as a parallel river beside the app sweep, with the same scraping machinery but different
-keywords (the <code>funnel_phrase</code> layer) and a different destination table. The key function is
-<code>classify_funnel_candidate</code>, and it has one clever twist — the <strong>bridge</strong>.
+Funnels run as a parallel river beside the app sweep — same scraping machinery, but the <code>funnel_phrase</code>
+keyword layer and a different destination table (<code>discovery.funnel_candidates</code>). There are now
+<strong>two</strong> bridges back into the app river: one at sweep time, one at confirm time.
 </p>
+
+<h3>bridge #1 — sweep time (the ad links straight to a store)</h3>
 <p class="ref">src/agf/discovery/funnel_sweep.py:30–69, 121–128</p>
-<pre><code>if intent.kind in ("ios","android"):          # a funnel keyword found a STORE link...
+<pre><code>if intent.kind in ("ios","android"):          # a funnel keyword found a STORE link in the AD
     if not intent.store_id: return "app", None
     return "app", {... technique:"funnel_sweep"}   # *** BRIDGE: route it to the APP river ***
 elif funnel_signal(ad, technique):            # a real web landing page with funnel markers
     return "candidate", {...}                  # → discovery.funnel_candidates</code></pre>
 <p>
-Sometimes a funnel keyword like "take the quiz" surfaces an ad that links straight to the app store rather
-than a web page. Rather than waste it, the bridge re-routes that app-backed candidate into the <em>same</em>
-<code>discovery.candidates</code> table and the same triage flow — it shows up in the log as <code>bridged=34</code>.
-Web funnels that aren't app links go to <code>funnel_candidates</code>, where a later <strong>confirm</strong> stage
-renders them to verify they're genuine funnels.
+Sometimes a funnel keyword like "take the quiz" surfaces an ad that links straight to the app store. Rather
+than waste it, the bridge re-routes that app-backed candidate into the same <code>discovery.candidates</code>
+table and the same triage flow — it shows up in the log as <code>bridged=34</code>. Everything else — a real
+web landing page — goes to <code>funnel_candidates</code> for the confirm stage below.
+</p>
+
+<h3>the confirm stage — the payoff classifier (what does the funnel actually sell?)</h3>
+<p class="ref">src/agf/discovery/funnel_confirm.py · firehose_fingerprint.py · migration 139</p>
+<p>
+The <strong>confirm</strong> stage renders each new funnel candidate (iOS user-agent, so app smart-banners and
+MMP links surface) and reads the settled DOM. It now tags every confirmed funnel with a <code>payoff_kind</code>
+— <em>what the funnel is actually selling</em> — so the pipeline can keep the digital products and set aside the
+physical ones:
+</p>
+<table>
+<tr><th>payoff_kind</th><th>signal in the rendered page</th><th>kept?</th></tr>
+<tr><td><code>app</code></td><td>App Store / Play link, app smart-banner, or MMP link (onelink / adjust / branch)</td><td>✅ digital</td></tr>
+<tr><td><code>web_sub</code></td><td>web subscription checkout (Solidgate / fnlfx / Stripe-recurring) <em>plus</em> recurring-billing copy ("cancel anytime", "/month", "X-day trial")</td><td>✅ digital</td></tr>
+<tr><td><code>physical</code></td><td>Shopify / cart / "add to cart" / <code>/products/</code> — a physical good</td><td>❌ dropped</td></tr>
+<tr><td><code>service</code></td><td>Calendly / Acuity booking · "book a call" · "free consultation" · "get a quote"</td><td>❌ dropped</td></tr>
+<tr><td><code>leadgen</code></td><td>none of the above — a tracked lead form</td><td>❌ dropped</td></tr>
+</table>
+<p>
+Precedence matters (Shopify also loads Stripe, so a checkout SDK alone can't mean "digital"): a resolved store
+id wins → <code>app</code>; else <code>physical</code> beats everything; then <code>service</code>; then a
+checkout-without-store + billing language → <code>web_sub</code>; else <code>leadgen</code>. A physical page that
+merely embeds a "download our app" badge is <strong>not</strong> promoted to <code>app</code> — the DOM store-link
+extraction is skipped once a page looks physical.
+</p>
+
+<h3>bridge #2 — confirm time (the store link is only on the landing page)</h3>
+<p class="ref">src/agf/discovery/funnel_confirm.py — classify_funnel + run_funnel_confirm</p>
+<p>
+Most web2app funnels don't put the store link in the <em>ad</em> — it appears on the rendered <em>landing page</em>
+(a smart-banner, or an onelink/adjust deep link). The old confirm stage could see that link but threw the id away:
+<strong>0 of 260</strong> confirmed funnels had a captured <code>store_id</code>. Now <code>classify_funnel</code>
+regexes the store id out of the rendered DOM, and when the payoff is <code>app</code> with an id it bridges the
+funnel into <code>discovery.candidates</code> (<code>technique:"funnel_confirm"</code>) — so the app behind a quiz
+funnel finally reaches triage and the feed. Physical / service / leadgen funnels are never bridged.
+</p>
+<p>
+Only digital payoffs (<code>app</code> + <code>web_sub</code>) count as "confirmed funnels" on the dashboard now;
+the supplement-quiz and book-a-call funnels are tagged and set aside. (Surfacing the app-less <code>web_sub</code>
+products as first-class feed entries — they have no store listing — is a planned next step; for now they're
+classified, not shown.)
 </p>
 <p>
 Funnels are allowed to be much bigger than apps: the incumbent ceiling is <code>5,000,000</code> likes, not
