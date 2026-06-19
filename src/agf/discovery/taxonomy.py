@@ -39,125 +39,190 @@ FUNNEL_PHRASES = [
     "personalized program", "your wellness plan", "custom meal plan", "your reading plan",
 ]
 
-# Layer 2 — app-niche / pain-point terms (non-game leaning). Grouped by vertical so
-# additions stay reviewable; the probes showed NARROW keywords surface small apps.
-_NICHE_CORE = [
-    "habit tracker app", "sleep sounds app", "meditation app",
-    "anxiety relief app", "language learning app", "journaling app", "workout plan app",
-    "cycle tracking app", "budgeting app", "sobriety app",
-    "posture corrector app", "brain training app", "breathing exercise app", "water reminder app",
-    "gratitude journal app", "focus timer app", "skin care routine app",
-    "plant identifier app", "AI tutor app", "couples relationship app",
-    "pelvic floor app", "menopause app", "pilates app", "running coach app",
-]
-_NICHE_FITNESS = [
-    "wall pilates app", "kettlebell workout app", "calisthenics app", "chair yoga app",
-    "stretching routine app", "mobility routine app", "somatic exercises app",
-    "home workout no equipment app", "30 day fitness challenge app", "couch to 5k app",
-    "marathon training app", "trail running app", "jump rope workout app",
-    "boxing workout app", "resistance band workout app", "glute workout app",
-    "abs workout app", "posture exercises app", "back pain relief app",
-    "knee pain exercises app", "physical therapy exercises app", "foam rolling app",
-    "walking for weight loss app", "step challenge app", "rucking app",
-    "zone 2 training app", "heart rate training app", "swim workout app",
-    "rowing workout app", "climbing training app", "golf swing analyzer app",
-    "tennis training app", "pickleball app", "balance exercises seniors app",
-    "workout for seniors app", "cold plunge app", "breathwork app",
-]
-_NICHE_HEALTH_WOMEN = [
-    "perimenopause app", "hormone balance app", "pcos app", "fertility tracker app",
-    "pregnancy workout app", "postpartum recovery app", "breastfeeding tracker app",
-    "baby sleep app", "baby feeding tracker app", "contraction timer app",
-    "face yoga app", "hair growth app", "skincare routine builder app", "skin analyzer app",
-]
-_NICHE_DIET = [
-    "carnivore diet app", "keto diet app", "mediterranean diet app",
-    "anti inflammatory diet app", "gluten free scanner app", "food intolerance app",
-    "meal prep planner app", "grocery list app", "recipe organizer app", "ai recipe app",
-    "glucose tracker app", "gut health app",
-    "protein tracker app", "supplement tracker app",
-    "emotional eating app", "binge eating recovery app",
-    "mindful eating app", "fiber tracker app",
-]
-_NICHE_SLEEP = [
-    "sleep tracker app", "snore recording app", "white noise baby app", "brown noise app",
-    "sleep stories app", "lucid dreaming app", "dream journal app", "smart alarm app",
-    "insomnia therapy app", "shift work sleep app",
-]
-_NICHE_MENTAL = [
-    "cbt therapy app", "dbt skills app", "adhd planner app", "adhd focus app",
-    "ocd app", "panic attack relief app", "mood tracker app", "self esteem app",
-    "shadow work app", "inner child healing app", "grief support app",
-    "social anxiety app", "overthinking app", "ai therapist app", "affirmations app",
-    "hypnosis app", "eft tapping app", "vagus nerve exercises app",
-    "nervous system regulation app", "breathing for anxiety app", "stress relief games app",
-    "quit smoking app", "quit vaping app", "quit drinking app", "nofap app",
-    "porn addiction recovery app", "adhd body doubling app",
-]
-_NICHE_PRODUCTIVITY = [
-    "habit streak app", "dopamine detox app", "screen time blocker app",
-    "app blocker for focus", "phone addiction app", "digital detox app",
-    "pomodoro timer app", "deep work app", "adhd task manager app", "daily planner app",
-    "second brain app", "ai notes app", "voice notes transcription app",
-    "meeting notes ai app", "goal tracker app", "morning routine app", "5am club app",
-    "journaling prompts app", "gratitude practice app", "stoic journal app",
-    "bullet journal app", "accountability partner app", "cleaning schedule app",
-    "declutter app", "home inventory app",
-]
-_NICHE_LEARNING = [
-    "learn spanish app", "learn japanese app", "learn korean app", "learn french app",
-    "language immersion app", "vocabulary builder app", "ielts prep app", "sat prep app",
-    "mcat prep app", "nclex prep app", "spaced repetition app", "speed reading app",
-    "book summaries app", "reading tracker app", "learn to code app", "learn python app",
-    "chess training app", "music theory app", "learn piano app", "learn guitar app",
-    "ear training app", "drawing lessons app", "learn to sing app", "public speaking app",
-    "memory training app", "trivia learning app", "history learning app", "philosophy app",
-    "homework scanner app", "ai math solver app", "kids learning games app",
-    "toddler learning app", "kids bedtime stories app", "brain games for seniors app",
-]
-_NICHE_AI_TOOLS = [
-    "ai headshot app", "ai photo enhancer app", "ai art generator app",
-    "ai video editor app", "ai voice changer app", "ai companion app",
-    "ai resume builder app", "ai interview prep app", "ai essay writer app",
-    "ai language tutor app", "ai fitness coach app", "ai nutrition coach app",
-    "ai stylist app", "ai interior design app", "ai tattoo generator app",
-    "ai baby face generator app", "ai dream interpreter app", "ai girlfriend app",
-]
-_NICHE_FINANCE = [
-    "budget planner app", "zero based budget app", "envelope budgeting app",
-    "couples expense tracker app", "debt payoff app", "credit score builder app",
-    "save money challenge app", "round up savings app", "investing for beginners app",
-    "paper trading app", "dividend tracker app", "crypto portfolio app",
-    "net worth tracker app", "bill reminder app", "subscription tracker app",
-    "side hustle app", "freelance invoice app", "receipt scanner app",
-]
-_NICHE_FAMILY_RELATION = [
-    "co parenting app", "family organizer app", "kids chore chart app",
-    "potty training app", "teen allowance app", "baby milestones app",
-    "due date countdown app", "couples quiz app", "long distance relationship app",
-    "date night ideas app", "marriage counseling app", "love language app",
-    "attachment style app", "breakup recovery app", "conversation starters app",
-]
-# _NICHE_SPIRITUAL (bible/christian/catholic/quran + tarot/astrology/manifestation)
-# was removed 2026-06-18: every app it surfaced was disliked (0 likes across
-# ~17 ratings) — see preference-learnings memo. The keyword flywheel can still
-# re-mine these from ad copy; the durable fix is weighting keywords by like-rate.
-_NICHE_LIFESTYLE = [
-    "plant care reminder app", "mushroom identifier app", "bird identifier app",
-    "rock identifier app", "coin identifier app", "antique appraisal app",
-    "wine scanner app", "outfit planner app", "capsule wardrobe app",
-    "car maintenance app", "fuel tracker app", "road trip planner app",
-    "travel itinerary app", "packing list app", "flight deals app",
-    "fishing forecast app", "golf gps app", "disc golf app",
-    "knitting counter app", "crochet patterns app", "woodworking plans app",
-    "guitar tuner app", "karaoke app", "audiobook player app",
-    "widget maker app", "watch faces app", "live wallpaper app",
-    "hearing test app", "eye exercises app", "interior design planner app",
-]
-NICHE_TERMS = (_NICHE_CORE + _NICHE_FITNESS + _NICHE_HEALTH_WOMEN + _NICHE_DIET
-               + _NICHE_SLEEP + _NICHE_MENTAL + _NICHE_PRODUCTIVITY + _NICHE_LEARNING
-               + _NICHE_AI_TOOLS + _NICHE_FINANCE + _NICHE_FAMILY_RELATION
-               + _NICHE_LIFESTYLE)
+# Layer 2 — app-niche terms, balanced across the store category frame. Each
+# in-scope category holds an equal quota (NICHE_PER_CATEGORY_MIN..MAX) of narrow,
+# `app`-suffixed terms. Balance is asserted by tests/discovery/test_taxonomy_balance.py
+# so the frame cannot silently re-skew. Source: bake-off-validated
+# docs/research/keyword-experiments/full-seed-v1.txt (see that dir's RESULTS.md).
+# Regenerate a category's list when it saturates — do not hand-pile one vertical.
+NICHE_PER_CATEGORY_MIN = 8
+NICHE_PER_CATEGORY_MAX = 12
+
+# In-scope = every consumer store category; only Games (out of product scope,
+# vetoed via is_game) and Stickers (not standalone apps) are excluded.
+IN_SCOPE_CATEGORIES = frozenset({
+    "Art & Design", "Auto & Vehicles", "Beauty", "Books", "Business", "Comics",
+    "Communication", "Dating", "Education", "Entertainment", "Events", "Finance",
+    "Food & Drink", "Health & Fitness", "House & Home", "Lifestyle", "Medical",
+    "Music", "Navigation", "News", "Parenting", "Personalization", "Photo & Video",
+    "Productivity", "Reference", "Shopping", "Social", "Sports", "Travel",
+    "Utilities", "Video Players", "Weather",
+})
+
+NICHE_TERMS_BY_CATEGORY: dict[str, list[str]] = {
+    'Art & Design': [
+        'ai logo maker app', 'coloring book app', 'ai art generator app',
+        'drawing tutorial app', 'calligraphy practice app', 'tattoo design app',
+        'color palette app', 'vision board app', 'ai avatar maker app',
+    ],
+    'Auto & Vehicles': [
+        'car maintenance app', 'obd2 scanner app', 'mileage tracker app', 'fuel log app',
+        'car wash booking app', 'vehicle history app', 'parking reminder app',
+        'ev charging map app', 'dash cam app',
+    ],
+    'Beauty': [
+        'ai hairstyle app', 'skincare routine app', 'face yoga app', 'makeup tutorial app',
+        'nail design app', 'skin analysis app', 'hair color try on app', 'glow up app',
+        'perfume finder app',
+    ],
+    'Books': [
+        'book summaries app', 'reading tracker app', 'ai reading coach app',
+        'audiobook player app', 'ebook reader app', 'book club app', 'speed reading app',
+        'quote of the day app', 'reading challenge app',
+    ],
+    'Business': [
+        'ai resume builder app', 'invoice maker app', 'business card scanner app',
+        'expense report app', 'time tracking app', 'freelance contract app', 'cold email app',
+        'networking crm app', 'ai cover letter app',
+    ],
+    'Comics': [
+        'comic reader app', 'webtoon app', 'manga reader app', 'ai comic maker app',
+        'manhwa app', 'comic collection tracker app', 'graphic novel app',
+        'comic strip maker app', 'anime news app',
+    ],
+    'Communication': [
+        'ai voice translator app', 'private messenger app', 'walkie talkie app',
+        'video call app', 'group chat app', 'voice changer app', 'anonymous chat app',
+        'language exchange app', 'ai email writer app',
+    ],
+    'Dating': [
+        'relationship quiz app', 'ai dating photos app', 'attachment style app',
+        'couples connection app', 'flirting coach app', 'long distance couple app',
+        'blind date app', 'dating profile review app', 'love language app',
+    ],
+    'Education': [
+        'learn spanish app', 'math homework app', 'ai tutor app', 'flashcards app',
+        'language learning app', 'study planner app', 'ielts prep app',
+        'handwriting practice app', 'ai essay helper app',
+    ],
+    'Entertainment': [
+        'ai companion app', 'short drama app', 'fan fiction app', 'trivia quiz app',
+        'celebrity news app', 'karaoke app', 'movie tracker app', 'fanfic reader app',
+        'roleplay chat app',
+    ],
+    'Events': [
+        'wedding planning app', 'party countdown app', 'event guest list app',
+        'birthday reminder app', 'rsvp tracker app', 'seating chart app',
+        'festival schedule app', 'baby shower planner app', 'save the date app',
+    ],
+    'Finance': [
+        'budgeting app', 'debt payoff app', 'expense tracker app', 'savings challenge app',
+        'bill reminder app', 'net worth tracker app', 'subscription tracker app',
+        'ai money coach app', 'paycheck planner app',
+    ],
+    'Food & Drink': [
+        'macro tracker app', 'recipe organizer app', 'meal prep planner app',
+        'calorie counter app', 'grocery list app', 'ai recipe app', 'intermittent fasting app',
+        'wine pairing app', 'cocktail recipes app',
+    ],
+    'Health & Fitness': [
+        'wall pilates app', 'workout planner app', 'step counter app', 'sleep tracker app',
+        'water reminder app', 'menopause app', 'pelvic floor app', 'breathwork app',
+        'mobility routine app',
+    ],
+    'House & Home': [
+        'home renovation app', 'interior design app', 'home inventory app',
+        'cleaning schedule app', 'plant care app', 'moving checklist app', 'room planner app',
+        'ai decor app', 'home maintenance app',
+    ],
+    'Lifestyle': [
+        'manifestation app', 'habit tracker app', 'gratitude journal app',
+        'daily affirmations app', 'self care app', 'capsule wardrobe app', 'declutter app',
+        'morning routine app', 'bucket list app',
+    ],
+    'Medical': [
+        'blood pressure log app', 'migraine tracker app', 'symptom tracker app',
+        'medication reminder app', 'period tracker app', 'glucose log app',
+        'pill identifier app', 'doctor visit notes app', 'hearing test app',
+    ],
+    'Music': [
+        'learn piano app', 'ai song maker app', 'guitar tuner app', 'ear training app',
+        'metronome app', 'music theory app', 'beat maker app', 'vocal warmup app',
+        'playlist maker app',
+    ],
+    'Navigation': [
+        'road trip planner app', 'offline maps app', 'hiking trail app', 'rv trip app',
+        'gps speedometer app', 'find my car app', 'transit map app', 'ev route planner app',
+        'compass app',
+    ],
+    'News': [
+        'local news app', 'ai news summary app', 'news digest app', 'breaking news app',
+        'financial news app', 'fact check app', 'newsletter reader app', 'world news app',
+        'tech news app',
+    ],
+    'Parenting': [
+        'baby sleep app', 'potty training app', 'baby milestones app', 'contraction timer app',
+        'breastfeeding tracker app', 'kids chore app', 'co parenting app', 'baby names app',
+        'pregnancy tracker app',
+    ],
+    'Personalization': [
+        'widget maker app', 'lock screen themes app', 'live wallpaper app', 'icon pack app',
+        'keyboard themes app', 'ringtone maker app', 'home screen setup app',
+        'custom font app', 'aesthetic widgets app',
+    ],
+    'Photo & Video': [
+        'ai headshot app', 'photo restoration app', 'video editor app', 'photo collage app',
+        'ai photo enhancer app', 'background remover app', 'slideshow maker app',
+        'photo organizer app', 'ai profile photo app',
+    ],
+    'Productivity': [
+        'ai meeting notes app', 'adhd planner app', 'focus timer app', 'daily planner app',
+        'note taking app', 'voice memo app', 'task manager app', 'pomodoro app',
+        'ai writing assistant app',
+    ],
+    'Reference': [
+        'plant identifier app', 'bird identifier app', 'ai scanner app', 'dictionary app',
+        'mushroom identifier app', 'rock identifier app', 'star map app', 'sign language app',
+        'unit converter app',
+    ],
+    'Shopping': [
+        'price tracker app', 'ai outfit app', 'coupon finder app', 'wishlist app',
+        'receipt scanner app', 'deal alerts app', 'thrift finder app', 'barcode scanner app',
+        'package tracker app',
+    ],
+    'Social': [
+        'anonymous q and a app', 'private journal app', 'close friends app',
+        'find friends app', 'community chat app', 'confession app', 'mood sharing app',
+        'group planning app', 'social challenge app',
+    ],
+    'Sports': [
+        'pickleball app', 'marathon training app', 'golf gps app', 'running coach app',
+        'soccer scores app', 'fantasy league app', 'climbing log app', 'tennis tracker app',
+        'cycling tracker app',
+    ],
+    'Travel': [
+        'ai itinerary app', 'cheap flights app', 'packing list app', 'travel journal app',
+        'currency converter app', 'trip budget app', 'layover guide app', 'road trip app',
+        'visa requirement app',
+    ],
+    'Utilities': [
+        'document scanner app', 'wifi analyzer app', 'file manager app', 'qr code scanner app',
+        'battery saver app', 'phone cleaner app', 'screen mirror app', 'flashlight app',
+        'noise meter app',
+    ],
+    'Video Players': [
+        'video subtitle app', 'screen recorder app', 'video compressor app',
+        'video downloader app', 'video to mp3 app', 'video speed app', 'loop video app',
+        'ai video maker app', 'subtitle translator app',
+    ],
+    'Weather': [
+        'rain alert app', 'hyperlocal weather app', 'aurora forecast app', 'storm tracker app',
+        'pollen count app', 'uv index app', 'marine weather app', 'snow forecast app',
+        'weather widget app',
+    ],
+}
+
+NICHE_TERMS = [t for terms in NICHE_TERMS_BY_CATEGORY.values() for t in terms]
 
 # Layer 3 — store-URL / install-CTA fragments (broad app-install baseline)
 STORE_FRAGMENTS = [
