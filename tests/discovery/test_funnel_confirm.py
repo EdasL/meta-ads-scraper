@@ -15,7 +15,7 @@ def _probed(html, quiz_steps=0):
 
 # --- pure classifier ---------------------------------------------------------
 def test_classify_install_from_resolved_store():
-    k, s, store, sid, reason = classify_funnel("<html>x</html>", _resolved("ios", "999"))
+    k, s, store, sid, reason, payoff = classify_funnel("<html>x</html>", _resolved("ios", "999"))
     assert (k, s, store, sid) == ("install", "confirmed", "ios", "999")
 
 
@@ -36,7 +36,7 @@ def test_classify_verified_quiz_confirms_without_tech():
 
 def test_classify_pixel_alone_no_longer_confirms():
     # half the web runs GTM — a pixel without a funnel host or quiz evidence drops
-    k, s, _, _, reason = classify_funnel("fbq('init')", _resolved("web"))
+    k, s, _, _, reason, _ = classify_funnel("fbq('init')", _resolved("web"))
     assert (k, s, reason) == ("unknown", "dropped", "no_quiz_no_payoff")
 
 
@@ -48,7 +48,7 @@ def test_classify_pixel_plus_funnel_host_confirms():
 def test_classify_pixel_on_bare_homepage_drops():
     # A pixel on a funnel host but a ROOT path is a homepage, not a funnel —
     # this is what surfaced calorii.com/ as a fake "Quiz" link. Must drop.
-    k, s, _, _, reason = classify_funnel(
+    k, s, _, _, reason, _ = classify_funnel(
         "fbq('init')", _resolved("web"), funnel_host="calorii.",
         funnel_url="https://calorii.com/")
     assert (k, s, reason) == ("unknown", "dropped", "no_quiz_no_payoff")
@@ -63,20 +63,59 @@ def test_classify_pixel_on_funnel_path_confirms():
 
 
 def test_classify_funnel_host_alone_no_longer_confirms():
-    k, s, _, _, reason = classify_funnel("<html>nothing</html>", _resolved("web"),
-                                         funnel_host="quiz.")
+    k, s, _, _, reason, _ = classify_funnel("<html>nothing</html>", _resolved("web"),
+                                             funnel_host="quiz.")
     assert (k, s, reason) == ("unknown", "dropped", "no_quiz_no_payoff")
 
 
 def test_classify_one_quiz_screen_is_not_enough():
-    k, s, _, _, reason = classify_funnel("<html>nothing</html>", _resolved("web"),
-                                         quiz_steps=1)
+    k, s, _, _, reason, _ = classify_funnel("<html>nothing</html>", _resolved("web"),
+                                             quiz_steps=1)
     assert (k, s, reason) == ("unknown", "dropped", "no_quiz_no_payoff")
 
 
 def test_classify_drops_generic_web():
-    k, s, store, sid, reason = classify_funnel("<html>just a giftcard shop</html>", _resolved("web"))
+    k, s, store, sid, reason, payoff = classify_funnel("<html>just a giftcard shop</html>", _resolved("web"))
     assert (k, s, reason) == ("unknown", "dropped", "no_quiz_no_payoff")
+
+
+# --- unit 4: 6-tuple + DOM store_id extraction + payoff_kind ---
+
+def test_classify_returns_6tuple():
+    result = classify_funnel("<html>x</html>", _resolved("ios", "999"))
+    assert len(result) == 6
+
+
+def test_classify_payoff_kind_app_from_resolved():
+    k, s, store, sid, reason, payoff = classify_funnel("<html>x</html>", _resolved("ios", "999"))
+    assert payoff == "app"
+    assert (k, s, store, sid) == ("install", "confirmed", "ios", "999")
+
+
+def test_classify_store_id_from_dom_when_resolved_has_none():
+    html = '<a href="https://apps.apple.com/us/app/betterme/id1234567890">Download</a>'
+    k, s, store, sid, reason, payoff = classify_funnel(html, _resolved("web"))
+    assert (k, s) == ("install", "confirmed")
+    assert store == "ios"
+    assert sid == "1234567890"
+    assert payoff == "app"
+
+
+def test_classify_payoff_kind_physical():
+    html = "cdn.shopify.com js.stripe.com/v3 fbq('init')"
+    k, s, store, sid, reason, payoff = classify_funnel(html, _resolved("web"))
+    assert payoff == "physical"
+
+
+def test_classify_payoff_kind_web_sub():
+    html = 'js.stripe.com/v3 fbq("init") cancel anytime'
+    k, s, store, sid, reason, payoff = classify_funnel(html, _resolved("web"))
+    assert payoff == "web_sub"
+
+
+def test_classify_payoff_kind_leadgen():
+    k, s, store, sid, reason, payoff = classify_funnel("<html>generic</html>", _resolved("web"))
+    assert payoff == "leadgen"
 
 
 # --- orchestrator (fakes; uses the migrated DB only for the candidate rows) ---

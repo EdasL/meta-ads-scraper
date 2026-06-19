@@ -43,15 +43,17 @@ def new_funnel_candidates(conn, limit: int | None = None):
 def mark_funnel_confirmed(conn, candidate_id: int, *, kind: str, status: str,
                           store: str | None = None, store_id: str | None = None,
                           drop_reason: str | None = None,
-                          quiz_steps: int | None = None) -> None:
+                          quiz_steps: int | None = None,
+                          payoff_kind: str | None = None) -> None:
     """Write the confirm-stage verdict onto a funnel candidate."""
     conn.execute(text("""
         UPDATE discovery.funnel_candidates
            SET kind=:k, status=:s, store=:st, store_id=:sid,
-               drop_reason=:r, quiz_steps=:qs, confirmed_at=now()
+               drop_reason=:r, quiz_steps=:qs, confirmed_at=now(),
+               payoff_kind=:pk
          WHERE id=:i
     """), {"k": kind, "s": status, "st": store, "sid": store_id,
-           "r": drop_reason, "qs": quiz_steps, "i": candidate_id})
+           "r": drop_reason, "qs": quiz_steps, "pk": payoff_kind, "i": candidate_id})
 
 
 def funnel_sweep_ran_today(conn, as_of) -> bool:
