@@ -1,0 +1,98 @@
+# Technique B — same niches as A WITH "app" suffix (suffix A/B test)
+# Technique B — same niches as A WITH "app" suffix (suffix A/B test)
+# Art & Design
+ai logo maker app
+adult coloring book app
+# Auto & Vehicles
+car maintenance tracker app
+obd2 scanner app
+# Beauty
+ai hairstyle try on app
+skin analysis routine app
+# Books
+ai reading coach app
+book summaries app
+# Business
+ai resume builder app
+freelance invoice maker app
+# Comics
+ai manga creator app
+webtoon reader app
+# Communication
+ai voice translator app
+private encrypted messenger app
+# Dating
+attachment style quiz app
+ai dating profile photos app
+# Education
+learn spanish app
+ai math solver app
+# Entertainment
+ai companion chat app
+fan fiction reader app
+# Events
+wedding planning checklist app
+event countdown widget app
+# Finance
+zero based budgeting app
+debt snowball tracker app
+# Food & Drink
+macro meal planner app
+ai recipe from photo app
+# Health & Fitness
+wall pilates app
+menopause symptom tracker app
+# House & Home
+home renovation planner app
+ai interior design app
+# Lifestyle
+plant care reminder app
+manifestation journal app
+# Medical
+blood pressure log app
+migraine tracker app
+# Music
+learn piano by ear app
+ai song maker app
+# Navigation
+rv trip planner app
+offline trail maps app
+# News
+local news digest app
+ai news summary app
+# Parenting
+baby sleep schedule app
+potty training tracker app
+# Personalization
+aesthetic widget maker app
+lock screen themes app
+# Photo & Video
+ai headshot generator app
+old photo restoration app
+# Productivity
+ai meeting notes app
+adhd task planner app
+# Reference
+bird call identifier app
+ai plant identifier app
+# Shopping
+price drop tracker app
+ai outfit planner app
+# Social
+anonymous q and a app
+close friends journal app
+# Sports
+pickleball score tracker app
+marathon training plan app
+# Travel
+ai itinerary planner app
+flight deal alerts app
+# Utilities
+ai document scanner app
+wifi signal analyzer app
+# Video Players
+ai subtitle generator app
+screen recorder editor app
+# Weather
+hyperlocal rain alerts app
+aurora forecast app
