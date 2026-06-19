@@ -16,10 +16,29 @@ baseline — compare techniques to each other, not to the baseline's absolute yi
 | B | A + `app` suffix (suffix A/B test) | 64 | **13.8% H&F** | **36%** | **91%** | **1.25** | 47% |
 | C | B, dead terms rephrased to common wording | 64 | **18.6% H&F** | **39%** | **91.1%** | **2.14** | **18.8%** |
 
-**Winner: C** — dominates the baseline on every axis (evenness 91 vs 76, top-genre
-19 vs 26, yield 2.14 vs 1.3, dead 19 vs 32). Loop converged: A→B→C each improved;
+| C2 | C re-run, **corrected metrics** (store_id dedup, 100% genre coverage) | 64 | **14.6% H&F** | **34%** | **87.5%** | 2.03 | 20.3% |
+
+**Winner: C** — dominates the baseline on every axis (evenness 87.5 vs 76, top-genre
+14.6 vs 26, yield ~2 vs 1.3, dead 20 vs 32). Loop converged: A→B→C each improved;
 remaining dead terms are funnel-advertised niches the funnel pipeline already
 catches, so further chasing would broaden toward incumbents.
+
+### "Diverse enough?" — verified (C2, trustworthy metrics)
+The first C run's metrics were unreliable: dedup was by page_id (PocketFM's 7 ad
+pages counted as 7 apps) and the android genre lookup timed out (genre resolved
+for only 43% of apps → diversity computed over an iOS-only subset). Fixed harness
+(store_id dedup, chunked android lookup, novelty check) gives the real picture:
+- **130 distinct apps, 34 genres, top genre 14.6%, evenness 87.5%** — long tail
+  reaches Dating/Parenting/Medical/Shopping/House&Home/Navigation/News/Social.
+- **31 new apps (24% novelty) span 19 genres, max 3/genre — no clustering.**
+  Kindroid AI, Lume, Wanderlog, Comikaze, Abide Bible, Rainbow.ai, ReGen, Yomu,
+  Preggers, AppLock, Surveva, Flights70 — genuinely diverse niche emerging apps.
+- 76% already in corpus (expected at steady state, 2 shallow pages over a 722-app
+  corpus). Absolute new-app count scales with the spec's 8–10/cat + deeper pages;
+  diversity holds.
+
+**Verdict: diverse enough.** Far more even than the baseline, and the new apps —
+the ones that matter for ongoing discovery — are spread, not clustered.
 
 ## Findings
 
