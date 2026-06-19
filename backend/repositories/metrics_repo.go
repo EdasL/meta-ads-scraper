@@ -107,7 +107,7 @@ func Coverage(ctx context.Context, g *gorm.DB, now time.Time) (models.CoverageMe
 		}
 		// Confirmed web2app funnels live in their own discovery table.
 		if err := tx.Raw(
-			`SELECT count(*) FROM discovery.funnel_candidates WHERE status = 'confirmed'`,
+			`SELECT count(*) FROM discovery.funnel_candidates WHERE status = 'confirmed' AND payoff_kind IN ('app','web_sub')`,
 		).Scan(&out.FunnelsConfirmed).Error; err != nil {
 			return err
 		}
