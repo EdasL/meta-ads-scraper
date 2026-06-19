@@ -1,12 +1,36 @@
 # Category-balanced keyword seed — design
 
 **Date:** 2026-06-19
-**Status:** approved (brainstorm), pending spec review → implementation plan
+**Status:** approved + bake-off-validated; pending full-seed generation → implementation plan
 **Supersedes (in part):** the hand-authored `NICHE_TERMS` vocabulary in
 `src/agf/discovery/taxonomy.py`. Builds on the diagnosis in
-`docs/research/2026-06-18-keyword-seed-design.md`.
+`docs/research/2026-06-18-keyword-seed-design.md`. Empirical results in
+`docs/research/keyword-experiments/RESULTS.md`.
 
 ---
+
+## 0. Bake-off findings (live experiments, 2026-06-19)
+
+Three keyword-generation techniques were swept against the live Meta Ad Library
+(`scripts/keyword_seed_experiment.py`, no DB writes) and scored on category
+diversity + yield. The winning recipe — **category-balanced + `app` suffix +
+common ad wording** — beat the production baseline on every axis (top-genre 26%→
+**14.6%**, evenness 76%→**87.5%**, yield 1.3→~2.0, dead-kw 32%→**20%**) and its
+catch was verified diverse (130 apps / 34 genres; the 31 *new* apps span 19
+genres with no clustering). Three findings shaped this spec:
+
+1. **The `app` suffix is required, not optional.** It raised yield +28% AND
+   improved diversity vs. bare phrases (it filters to app advertisers; bare
+   phrases pull funnel/web ads concentrated in a few verticals). This reverses an
+   earlier "suffix optional" relaxation. (§5, §6, §7)
+2. **Prefer common ad wording over over-specific phrasing.** Over-specific terms
+   get zero Meta inventory; rephrasing dead terms to common wording cut dead-rate
+   47%→19% and doubled yield. (§7)
+3. **The app seed and the funnel seed are complementary by advertising style.**
+   ~half of "dead" app terms are real niches that advertise via *funnels* (no
+   direct store link) — the category-agnostic funnel-phrase pipeline already
+   catches those. Do not force the app keyword seed to cover them; its "dead
+   rate" overstates true system waste. (§8)
 
 ## 1. Problem
 
@@ -101,10 +125,10 @@ enforceable**:
 ```python
 # Layer 2 — app-niche terms, balanced across the store category frame.
 # Each in-scope category holds an equal quota (NICHE_PER_CATEGORY_MIN..MAX) of
-# narrow niche terms (trailing "app" optional). Balance is asserted by
-# test_taxonomy_balance so the
-# frame cannot silently re-skew. Generated per CATEGORY_KEYWORD_GEN_PROMPT
-# (§7); regenerate a category's list when it saturates — do not hand-pile.
+# narrow, `app`-suffixed niche terms (suffix required — see §0 findings). Balance
+# is asserted by test_taxonomy_balance so the frame cannot silently re-skew.
+# Generated per CATEGORY_KEYWORD_GEN_PROMPT (§7); regenerate a category's list
+# when it saturates — do not hand-pile.
 NICHE_TERMS_BY_CATEGORY: dict[str, list[str]] = {
     "Health & Fitness": [...],   # same quota as every other category
     "Photo & Video":    [...],   # includes ai photo/headshot/avatar variants
@@ -136,11 +160,10 @@ Add `tests/discovery/test_taxonomy_balance.py` (no DB) asserting:
 2. For every category, `MIN <= len(terms) <= MAX` — no category over- or
    under-represented.
 3. No duplicate terms across the whole frame.
-4. Every term is lowercase, contains no obvious brand/app names (lightweight
-   denylist check), and is not a generic ad-copy phrase (a small denylist, e.g.
-   reject "what's your goal"). Terms need **not** end in the word `app` — the
-   suffix is optional (see §7); narrowness is enforced by the generation rule
-   and product-owner review, not by a literal-suffix assertion.
+4. Every term is lowercase, **ends in the word `app`** (the bake-off in §0 showed
+   the suffix raises both yield and diversity — it filters to app advertisers),
+   contains no obvious brand/app names (lightweight denylist check), and is not a
+   generic ad-copy phrase (a small denylist, e.g. reject "what's your goal").
 
 This test is the durable guard the research doc called for ("the flywheel may
 drift, the frame cannot").
@@ -160,18 +183,24 @@ saturation refresh is reproducible:
 >
 > Produce **{N} short, narrow search keywords**, one per line, each a specific
 > sub-niche or pain-point in this category, phrased as it would appear in app
-> marketing (e.g. `sleep tracker app`, `wall pilates`, `cycle syncing`).
+> marketing and **ending in the word `app`** (e.g. `sleep tracker app`,
+> `wall pilates app`, `macro tracker app`).
 >
 > Rules:
-> - **Narrow, not broad.** `wall pilates`, not `fitness`. Narrow terms filter to
->   small emerging advertisers; broad terms return incumbents.
-> - **The trailing word `app` is optional** — include it where it reads
->   naturally, omit it where the niche term is already specific enough on its
->   own. Do not pad every term with `app`.
+> - **Narrow, not broad.** `wall pilates app`, not `fitness app`. Narrow terms
+>   filter to small emerging advertisers; broad terms return incumbents.
+> - **End every term in `app`.** The bake-off showed the suffix acts as an
+>   app-intent filter — it raises yield (+28%) AND diversity vs. bare phrases,
+>   which pull funnel/web ads instead of app advertisers.
+> - **Use common ad wording, not over-specific phrasing.** `pickleball app`,
+>   not `pickleball score tracker app`; `math homework app`, not `ai math solver
+>   app`. Over-specific phrasings get zero Meta inventory (no advertiser words it
+>   that way) — the bake-off's dead-rate fell 47%→19% when dead terms were
+>   rephrased to common wording.
 > - **Weave in current emerging-modifier variants where they're real for this
->   category** — AI-powered first (`ai {thing}`), plus where natural:
->   `… tracker`, `… scanner`, `… coach`, `… for couples/seniors/teens`,
->   `… challenge`. Do not force a modifier where no such app exists.
+>   category** — AI-powered first (`ai {thing} app`), plus where natural:
+>   `… tracker app`, `… scanner app`, `… coach app`. Do not force a modifier
+>   where no such app exists.
 > - **No brand or app names.** Never reference a specific product
 >   (no "Calm", "Duolingo", etc.).
 > - **No generic ad-copy phrases** ("what's your goal", "try the app free").
@@ -183,7 +212,12 @@ The product owner reviews and prunes the generated list once before it ships.
 ## 8. What stays unchanged
 
 - `FUNNEL_PHRASES` — already shape-based and category-agnostic; the funnel
-  pipeline owns it.
+  pipeline owns it. **Complementary to this app seed by advertising style**
+  (finding 3): the app seed catches apps that link directly to the store; the
+  funnel seed catches apps that advertise via funnels. Niches that came up
+  "dead" for the app seed because they advertise via funnels (e.g. menopause,
+  adhd, manifestation, price-tracker) are caught here — do not duplicate them
+  into the app seed to chase its dead-rate.
 - `STORE_FRAGMENTS` — broad app-install baseline catcher.
 - The keyword flywheel, funnel sweep, app-graph seeding, and the feed p_like
   ranking.
@@ -207,10 +241,13 @@ taste-blind by design.
 
 ## 10. Success criteria
 
-- `NICHE_TERMS_BY_CATEGORY` covers all in-scope categories with an even quota;
-  `test_taxonomy_balance` passes.
-- No category exceeds ~1/N of the niche vocabulary (Health & Fitness drops from
-  ~25%+ to ~3–4%).
+- `NICHE_TERMS_BY_CATEGORY` covers all in-scope categories with an even quota
+  (~1/N of the *keyword* vocabulary each); `test_taxonomy_balance` passes.
+- The *found-app* distribution is far more even than the baseline — top genre
+  ≤ ~15% and category evenness ≥ ~0.85 on a validation bake-off (vs baseline
+  26% / 0.76). Note H&F still leads (~14.6% measured) because it genuinely has
+  more emerging app supply; the goal is even *coverage*, not a flat histogram —
+  forcing H&F lower would be bias in reverse.
 - AI/emerging-modifier terms appear across the categories where such apps ship
   (Photo & Video, Productivity, Education, Entertainment, Lifestyle, …), not in
   a single bucket.
