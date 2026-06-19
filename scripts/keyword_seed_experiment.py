@@ -101,13 +101,15 @@ def resolve_genres(apps):
         if ios:
             for tid, m in lookup_itunes_batch(client, ios, pause=3.0).items():
                 meta[("ios", str(tid))] = getattr(m, "genre", None)
-    for j in range(0, len(android), 15):
-        chunk = android[j:j + 15]
+    # Small chunks: the node sidecar is ~6s/id, so 15 ids blow the 90s timeout
+    # under load and silently drop genres. 5 ids (~30s) stays well under.
+    for j in range(0, len(android), 5):
+        chunk = android[j:j + 5]
         try:
             for pid, m in lookup_google_play(chunk).items():
                 meta[("android", str(pid))] = getattr(m, "genre", None)
         except Exception as exc:           # one chunk failing must not drop the rest
-            print(f"  (google-play chunk {j//15} skipped: {exc})", flush=True)
+            print(f"  (google-play chunk {j//5} skipped: {exc})", flush=True)
     return {k: meta.get(k) for k in apps}
 
 
