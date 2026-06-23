@@ -175,3 +175,15 @@ def run_scoring(engine, as_of) -> int:
         compute_advertiser_growth(conn)
     refresh_emerging_matview(engine)
     return n
+
+
+if __name__ == "__main__":
+    # Standalone one-shot: score every advertiser + refresh the feed matview, then
+    # exit. Run on its own launchd cadence (com.fielddesk.scoring) so the product
+    # feed stays fresh independently of the multi-hour discovery sweep cycle, which
+    # the worker rarely survives long enough to reach its tail scoring stage.
+    from datetime import date
+    from agf.db.engine import get_engine
+    scored = run_scoring(get_engine(), date.today())
+    print(f"[scoring] scored {scored} advertisers + refreshed feed matview",
+          flush=True)
