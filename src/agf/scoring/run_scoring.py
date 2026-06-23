@@ -18,6 +18,16 @@ from agf.scoring.whitespace import load_niche_crowding
 ALERT_THRESHOLD = 60.0
 
 
+def websub_axis_override(web_payoff_kind, ur, d):
+    """Web-sub funnels have no app-store traction (no installs/reviews), so the
+    User-Radar and Demand axes are not measurable. Return them as None so
+    gem_score imputes the cohort-neutral 0.5 floor instead of a misleading 0,
+    letting the entry rank on scaling-velocity / funnel-intent / whitespace."""
+    if web_payoff_kind:
+        return None, None
+    return ur, d
+
+
 def _eligible_advertiser_ids(conn):
     return [a for (a,) in conn.execute(text(
         "SELECT DISTINCT advertiser_id FROM public.ads "
@@ -107,6 +117,7 @@ def score_all(conn, as_of, only_ids=None) -> int:
             niche = niche_by_aid.get(fv.advertiser_id)
             w = whitespace({"crowding": None if niche is None
                             else 1.0 - pctile(niche[1], niche_counts)})
+            ur, d = websub_axis_override(fv.web_payoff_kind, ur, d)
             gs = gem_score(sv, ur, fi, d, w)
             veto = apply_vetoes(fv)
             alert = (gs >= ALERT_THRESHOLD) and not veto.vetoed
