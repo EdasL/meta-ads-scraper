@@ -37,7 +37,12 @@ def game_app(fv) -> bool:
 
 
 def no_app(fv) -> bool:
-    # v1 is apps-only: physical products, services and web-only funnels are out.
+    # v1 is apps-only: physical products and services are out. EXCEPTION: a
+    # confirmed web-sub funnel is legitimately app-less (digital subscription
+    # sold web-to-subscribe), so it is allowed through and ranked on its ad
+    # corpus. getattr keeps older positional FeatureVectors working.
+    if getattr(fv, "web_payoff_kind", None):
+        return False
     return not fv.has_app
 
 
