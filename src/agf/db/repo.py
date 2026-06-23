@@ -83,6 +83,22 @@ def upsert_advertiser(conn, ar) -> int:
            "page_like_count": getattr(ar, "page_like_count", None)}).scalar_one()
 
 
+def set_web_identity(conn, advertiser_id, *, payoff_kind, name, description,
+                     icon_url, landing_url) -> None:
+    """Write a web-sub advertiser's display identity + payoff marker. COALESCE so a
+    re-run never blanks a previously-resolved field with a later None."""
+    conn.execute(text("""
+        UPDATE public.advertisers SET
+          web_payoff_kind = :pk,
+          web_name        = COALESCE(:name, web_name),
+          web_description = COALESCE(:desc, web_description),
+          web_icon_url    = COALESCE(:icon, web_icon_url),
+          web_landing_url = COALESCE(:land, web_landing_url)
+        WHERE id = :a
+    """), {"pk": payoff_kind, "name": name, "desc": description,
+           "icon": icon_url, "land": landing_url, "a": advertiser_id})
+
+
 def upsert_app(conn, meta) -> int:
     m = _app_dict(meta)
     screenshots = m.get("screenshots")
