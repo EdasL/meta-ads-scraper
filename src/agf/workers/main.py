@@ -737,9 +737,10 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
             print(f"[worker] funnel repair failed: {exc!r}", file=sys.stderr, flush=True)
             funnel_repair["error"] = repr(exc)
 
-    # 3.7) web-sub bridge — examine recently-confirmed web-to-app funnels that have
-    #      no matching candidate row yet and bridge them into discovery.candidates so
-    #      the normal triage→enrich path picks them up. Bounded by
+    # 3.7) web-sub bridge — for each confirmed web-sub funnel page not yet an advertiser:
+    #      create the advertiser row, write its web identity (OG/favicon), then call
+    #      refresh_one_advertiser to scrape its Meta ad corpus directly (scrape → ads table).
+    #      Downstream enrich/score/matview carry it to the feed. Bounded by
     #      AGF_WEBSUB_BRIDGE_PER_CYCLE (default 10); failures must NOT abort the cycle.
     websub: dict = {"examined": 0, "bridged": 0}
     if not dry_run and http_client is not None:

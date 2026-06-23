@@ -5,6 +5,7 @@ has a page_id but no advertiser/ads. For each such page not yet an advertiser:
 create the advertiser, fetch + store its web identity (OG/favicon), then scrape
 its Meta ad corpus by page_id (refresh_one_advertiser). Downstream enrich/score/
 matview then carry it to the feed. Bounded per cycle; idempotent."""
+import sys
 from types import SimpleNamespace
 
 from sqlalchemy import text
@@ -40,7 +41,8 @@ async def run_websub_bridge(engine, extractor, *, fetch_text, limit=10) -> dict:
         try:
             try:
                 html = fetch_text(r.landing_url)
-            except Exception:
+            except Exception as exc:
+                print(f"[websub] landing fetch failed for {r.landing_url}: {exc!r}", file=sys.stderr, flush=True)
                 html = ""
             ident = parse_web_identity(html, r.landing_url, fallback_name=r.page_name)
             with begin(engine) as conn:

@@ -17,6 +17,7 @@ class _Head(HTMLParser):
         super().__init__()
         self.og_title = None
         self.og_desc = None
+        self.og_image = None
         self.meta_desc = None
         self.icon_href = None
         self.title = None
@@ -32,6 +33,8 @@ class _Head(HTMLParser):
                 self.og_title = content.strip()
             elif prop == "og:description" and content:
                 self.og_desc = content.strip()
+            elif prop == "og:image" and content:
+                self.og_image = content.strip()
             elif name == "description" and content:
                 self.meta_desc = content.strip()
         elif tag == "link":
@@ -61,6 +64,8 @@ def parse_web_identity(html: str, base_url: str, *,
     description = p.og_desc or p.meta_desc
     if p.icon_href:
         icon_url = urljoin(base_url, p.icon_href)
+    elif p.og_image:
+        icon_url = urljoin(base_url, p.og_image)
     else:
         parts = urlsplit(base_url)
         icon_url = f"{parts.scheme}://{parts.netloc}/favicon.ico" if parts.netloc else None
