@@ -87,6 +87,7 @@ from agf.discovery.keyword_mining import fetch_funnel_copy, fetch_gem_copy, mine
 from agf.discovery.funnel_sweep import run_funnel_sweep
 from agf.discovery.keeper_history import pull_keeper_history
 from agf.discovery.sweep import run_sweep
+from agf.discovery.websub_bridge import run_websub_bridge
 from agf.discovery.taxonomy import (FUNNEL_PHRASES, TaxonomyEntry, all_entries,
                                     sweep_entries)
 from agf.discovery.triage import run_triage
@@ -246,6 +247,13 @@ def funnel_due(conn, as_of, *, dry_run, continuous=False) -> bool:
     if continuous:
         return True
     return not funnel_sweep_ran_today(conn, as_of)
+
+
+def websub_bridge_per_cycle() -> int:
+    try:
+        return int(os.environ.get("AGF_WEBSUB_BRIDGE_PER_CYCLE", "10"))
+    except ValueError:
+        return 10
 
 
 # --- funnel stage --------------------------------------------------------------
@@ -422,7 +430,8 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
              flywheel_min_advertisers=3, mine_min_score=40.0,
              release_mint_enabled=False, release_mint_max_listings=120,
              media_repair_per_cycle=5, funnel_repair_per_cycle=3,
-             sweep_max_consecutive_errors=0) -> dict:
+             sweep_max_consecutive_errors=0,
+             websub_bridge_per_cycle=10) -> dict:
     """One sweep→triage→(score)→enrich pass. Returns a summary dict (no printing).
     http_client is the sweep-scoped httpx.Client for the production triage/enrich path
     (None in a dry-run, which uses offline lookups and the no-network fake deps)."""
@@ -727,12 +736,29 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
         except Exception as exc:  # noqa: BLE001 — repair must not kill the cycle
             print(f"[worker] funnel repair failed: {exc!r}", file=sys.stderr, flush=True)
             funnel_repair["error"] = repr(exc)
+
+    # 3.7) web-sub bridge — examine recently-confirmed web-to-app funnels that have
+    #      no matching candidate row yet and bridge them into discovery.candidates so
+    #      the normal triage→enrich path picks them up. Bounded by
+    #      AGF_WEBSUB_BRIDGE_PER_CYCLE (default 10); failures must NOT abort the cycle.
+    websub: dict = {"examined": 0, "bridged": 0}
+    if not dry_run and http_client is not None:
+        try:
+            websub = asyncio.run(run_websub_bridge(
+                engine, extractor,
+                fetch_text=lambda u: http_client.get(u).text,
+                limit=websub_bridge_per_cycle))
+        except Exception as exc:
+            websub = {"examined": 0, "bridged": 0, "errors": 1}
+            print(f"[worker] websub bridge failed: {exc!r}", file=sys.stderr, flush=True)
+
     return {"sweep": sweep_stats, "triage": triage_stats,
             "keeper_history": keeper_history, "funnel": funnel, "flywheel": flywheel,
             "release_mint": release_mint,
             "snapshot_weeks": snapshot_weeks, "apps_refreshed": apps_refreshed,
             "scored": scored, "enrich_candidates": cand_ids, "enriched": enriched,
-            "media_repair": media_repair, "funnel_repair": funnel_repair}
+            "media_repair": media_repair, "funnel_repair": funnel_repair,
+            "websub": websub}
 
 
 def _heartbeat_path() -> str:
@@ -845,6 +871,9 @@ def _summary_line(s: dict) -> str:
     fr = s.get("funnel_repair")
     if fr and fr.get("recorded"):
         line += f" funnel_repair={fr.get('recorded', 0)}"
+    if s.get("websub") is not None:
+        ws = s["websub"]
+        line += f" websub(examined={ws['examined']} bridged={ws['bridged']})"
     if s["scored"] is not None:
         line += f" scored={s['scored']}"
     return line
@@ -896,6 +925,7 @@ def main(argv=None) -> None:
         media_repair_per_cycle=_env_int("AGF_MEDIA_REPAIR_PER_CYCLE", 5),
         funnel_repair_per_cycle=_env_int("AGF_FUNNEL_REPAIR_PER_CYCLE", 3),
         sweep_max_consecutive_errors=_env_int("AGF_SWEEP_MAX_CONSECUTIVE_ERRORS", 5),
+        websub_bridge_per_cycle=websub_bridge_per_cycle(),
     )
     # In continuous mode a full taxonomy sweep already takes many minutes (kw_delay ×
     # 305 keywords), so the inter-sweep sleep is just a short breather, not an hour.
