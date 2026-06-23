@@ -431,7 +431,7 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
              release_mint_enabled=False, release_mint_max_listings=120,
              media_repair_per_cycle=5, funnel_repair_per_cycle=3,
              sweep_max_consecutive_errors=0,
-             websub_bridge_per_cycle=10) -> dict:
+             websub_bridge_limit=10) -> dict:
     """One sweep→triage→(score)→enrich pass. Returns a summary dict (no printing).
     http_client is the sweep-scoped httpx.Client for the production triage/enrich path
     (None in a dry-run, which uses offline lookups and the no-network fake deps)."""
@@ -747,7 +747,7 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
             websub = asyncio.run(run_websub_bridge(
                 engine, extractor,
                 fetch_text=lambda u: http_client.get(u).text,
-                limit=websub_bridge_per_cycle))
+                limit=websub_bridge_limit))
         except Exception as exc:
             websub = {"examined": 0, "bridged": 0, "errors": 1}
             print(f"[worker] websub bridge failed: {exc!r}", file=sys.stderr, flush=True)
@@ -925,7 +925,7 @@ def main(argv=None) -> None:
         media_repair_per_cycle=_env_int("AGF_MEDIA_REPAIR_PER_CYCLE", 5),
         funnel_repair_per_cycle=_env_int("AGF_FUNNEL_REPAIR_PER_CYCLE", 3),
         sweep_max_consecutive_errors=_env_int("AGF_SWEEP_MAX_CONSECUTIVE_ERRORS", 5),
-        websub_bridge_per_cycle=websub_bridge_per_cycle(),
+        websub_bridge_limit=websub_bridge_per_cycle(),
     )
     # In continuous mode a full taxonomy sweep already takes many minutes (kw_delay ×
     # 305 keywords), so the inter-sweep sleep is just a short breather, not an hour.
