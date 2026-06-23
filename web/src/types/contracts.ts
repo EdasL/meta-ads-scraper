@@ -75,6 +75,7 @@ export interface ShortlistRow {
   store?: "ios" | "android"; // linked app's store; picks the traction signal
   store_id?: string; // linked app's store id (bundle / package)
   funnel_url?: string; // quiz/landing page the app's ads drive to, if captured
+  web_only?: boolean; // true for web-subscription entries (no app store listing)
 }
 
 export type CreativeType = "image" | "video" | "text";

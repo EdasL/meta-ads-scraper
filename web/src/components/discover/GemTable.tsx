@@ -137,9 +137,16 @@ function GemRow({
         <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
           <AppIcon src={row.icon_url} name={name} size={26} />
           <span style={{ display: "inline-flex", flexDirection: "column", gap: 1, minWidth: 0 }}>
-            <Link href={href} className="w-strong" style={{ color: "inherit", textDecoration: "none" }} onClick={() => onOpen?.(row)}>
-              {name}
-            </Link>
+            <span style={{ display: "inline-flex", alignItems: "baseline", gap: 6 }}>
+              <Link href={href} className="w-strong" style={{ color: "inherit", textDecoration: "none" }} onClick={() => onOpen?.(row)}>
+                {name}
+              </Link>
+              {row.web_only && (
+                <span className="t-xs" style={{ color: "var(--muted)", whiteSpace: "nowrap" }}>
+                  Web only
+                </span>
+              )}
+            </span>
             {row.tagline && (
               <span className="t-xs gem-table-tagline" title={row.tagline}>
                 {row.tagline}
@@ -213,8 +220,12 @@ function FunnelCell({ url }: { url?: string }) {
 /** Adaptive traction: Play exposes installs (near-exact), Apple never does, so
  * iOS rows fall back to review count. The per-row signal label keeps a mixed
  * iOS/Android feed honest — you always know which number you're reading. When
- * store is unknown, prefer whichever absolute is present. */
+ * store is unknown, prefer whichever absolute is present. Web-only entries have
+ * no store listing, so the cell shows a plain dash. */
 function TractionCell({ row }: { row: ShortlistRow }) {
+  if (row.web_only) {
+    return <span className="nums" style={{ color: "var(--muted)" }}>—</span>;
+  }
   const useInstalls =
     row.store === "android" || (row.store == null && row.installs != null);
   const value = useInstalls ? row.installs : row.rating_count;
