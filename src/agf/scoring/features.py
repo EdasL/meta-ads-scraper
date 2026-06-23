@@ -149,6 +149,7 @@ class FeatureVector:
     iteration_rate: float = 0.0          # EWMA of weekly ad-launch counts
     proven_winner_count: int = 0         # live ads running >= PROVEN_WINNER_DAYS (winner_depth)
     count_growth: float = 0.0            # max(0, window_growth): rising ad count only, never negative
+    web_payoff_kind: str | None = None   # 'web_sub' for app-less digital subscription funnels
 
 
 def _as_of_epoch(as_of) -> int:
@@ -185,7 +186,8 @@ def build_features(conn, advertiser_id: int, as_of) -> FeatureVector:
 
     adv = conn.execute(text(
         "SELECT page_name, parent_company_id, ig_followers, "
-        "       page_like_count, meta_active_ads, meta_active_ads_capped "
+        "       page_like_count, meta_active_ads, meta_active_ads_capped, "
+        "       web_payoff_kind "
         "FROM public.advertisers WHERE id=:a"), {"a": advertiser_id}).first()
 
     app = conn.execute(text("""
@@ -272,4 +274,5 @@ def build_features(conn, advertiser_id: int, as_of) -> FeatureVector:
         # consolidation (20 ads -> 2 winners) is never punished. window_growth is the
         # sustained multi-week ramp already computed above.
         count_growth=max(0.0, window_log_growth(series)),
+        web_payoff_kind=adv.web_payoff_kind if adv else None,
     )
