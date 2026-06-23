@@ -59,7 +59,7 @@ DB = os.environ.get("AGF_TEST_DB_URL")
 pytestmark = pytest.mark.skipif(not DB, reason="needs AGF_TEST_DB_URL")
 
 def test_web_identity_columns_exist():
-    eng = create_engine(DB)
+    eng = get_engine(DB)
     apply_migrations(eng)
     with eng.connect() as c:
         cols = {r[0] for r in c.execute(text(
