@@ -118,6 +118,9 @@ type ShortlistRow struct {
 	// captured (125_emerging_matview_funnel_url.sql). NULL when the app's ads go
 	// straight to the store or only to social profiles — there's no funnel to link.
 	FunnelURL *string `json:"funnel_url" gorm:"column:funnel_url"`
+	// WebOnly = true when the confirmed funnel's payoff is web_sub (no linked app
+	// store listing). Added by migration 141. Always false for app-backed rows.
+	WebOnly bool `json:"web_only" gorm:"column:web_only"`
 	// Enriched in code after the base matview scan (not scanned directly):
 	// the explainer, the per-advertiser growth summary, and the hero ad
 	// creative for the card. All nullable → JSON null when absent.
