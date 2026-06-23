@@ -51,7 +51,8 @@
 # tests/db/test_migration_140_web_identity.py
 import os
 import pytest
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
+from agf.db.engine import get_engine
 from agf.db.migrate import apply_migrations
 
 DB = os.environ.get("AGF_TEST_DB_URL")
@@ -118,7 +119,8 @@ git commit -m "feat(db): advertiser web identity columns for web-sub funnels (mi
 # tests/scoring/test_features_web_payoff.py
 import os, datetime as dt
 import pytest
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
+from agf.db.engine import get_engine
 from agf.db.migrate import apply_migrations
 from agf.scoring.features import build_features
 
@@ -126,7 +128,7 @@ DB = os.environ.get("AGF_TEST_DB_URL")
 pytestmark = pytest.mark.skipif(not DB, reason="needs AGF_TEST_DB_URL")
 
 def test_build_features_surfaces_web_payoff_kind():
-    eng = create_engine(DB); apply_migrations(eng)
+    eng = get_engine(DB); apply_migrations(eng)
     with eng.begin() as c:
         aid = c.execute(text(
             "INSERT INTO public.advertisers (page_id, page_name, web_payoff_kind) "
@@ -138,7 +140,7 @@ def test_build_features_surfaces_web_payoff_kind():
     assert fv.web_payoff_kind == "web_sub"
 
 def test_build_features_web_payoff_none_for_normal_advertiser():
-    eng = create_engine(DB); apply_migrations(eng)
+    eng = get_engine(DB); apply_migrations(eng)
     with eng.begin() as c:
         aid = c.execute(text(
             "INSERT INTO public.advertisers (page_id, page_name) "
@@ -476,7 +478,8 @@ git commit -m "feat(discovery): pure OG/favicon web-identity parser"
 # tests/db/test_set_web_identity.py
 import os, pytest
 from types import SimpleNamespace
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
+from agf.db.engine import get_engine
 from agf.db.migrate import apply_migrations
 from agf.db import repo
 
@@ -484,7 +487,7 @@ DB = os.environ.get("AGF_TEST_DB_URL")
 pytestmark = pytest.mark.skipif(not DB, reason="needs AGF_TEST_DB_URL")
 
 def test_set_web_identity_writes_columns():
-    eng = create_engine(DB); apply_migrations(eng)
+    eng = get_engine(DB); apply_migrations(eng)
     with eng.begin() as c:
         aid = repo.upsert_advertiser(c, SimpleNamespace(
             page_id="WSID6", page_name="WS6", page_like_count=10))
@@ -556,7 +559,8 @@ git commit -m "feat(db): set_web_identity writer for web-sub advertisers"
 ```python
 # tests/discovery/test_websub_bridge.py
 import os, asyncio, pytest
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
+from agf.db.engine import get_engine
 from agf.db.migrate import apply_migrations
 from agf.discovery import websub_bridge
 
@@ -588,7 +592,7 @@ def _seed_confirmed_websub(eng, page_id, domain):
         """), {"pid": page_id, "url": f"https://{domain}/start", "dom": domain})
 
 def test_bridge_creates_advertiser_with_web_identity(monkeypatch):
-    eng = create_engine(DB); apply_migrations(eng)
+    eng = get_engine(DB); apply_migrations(eng)
     monkeypatch.setattr(websub_bridge, "refresh_one_advertiser", _fake_refresh)
     _seed_confirmed_websub(eng, "WSBR1", "trysleeptight.app")
     stats = asyncio.run(websub_bridge.run_websub_bridge(
@@ -602,7 +606,7 @@ def test_bridge_creates_advertiser_with_web_identity(monkeypatch):
     assert row.web_name == "Sleep Tight"
 
 def test_bridge_skips_pages_already_advertisers(monkeypatch):
-    eng = create_engine(DB); apply_migrations(eng)
+    eng = get_engine(DB); apply_migrations(eng)
     monkeypatch.setattr(websub_bridge, "refresh_one_advertiser", _fake_refresh)
     _seed_confirmed_websub(eng, "WSBR2", "app.bossed.ai")
     asyncio.run(websub_bridge.run_websub_bridge(
@@ -804,14 +808,15 @@ git commit -m "feat(worker): wire web-sub bridge stage + AGF_WEBSUB_BRIDGE_PER_C
 ```python
 # tests/db/test_matview_websub.py
 import os, pytest
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
+from agf.db.engine import get_engine
 from agf.db.migrate import apply_migrations
 
 DB = os.environ.get("AGF_TEST_DB_URL")
 pytestmark = pytest.mark.skipif(not DB, reason="needs AGF_TEST_DB_URL")
 
 def test_matview_has_web_only_and_coalesces_identity():
-    eng = create_engine(DB); apply_migrations(eng)
+    eng = get_engine(DB); apply_migrations(eng)
     with eng.connect() as c:
         cols = {r[0] for r in c.execute(text(
             "SELECT column_name FROM information_schema.columns "
