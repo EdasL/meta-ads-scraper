@@ -42,7 +42,26 @@ func TestPreferenceQueue(t *testing.T) {
 
 	rows, err := repositories.PreferenceQueue(context.Background(), g, email, 50)
 	require.NoError(t, err)
-	require.Len(t, rows, 1)                              // the rated one is excluded
-	require.EqualValues(t, ids[1], rows[0].AdvertiserID) // second app surfaces
-	require.Equal(t, 0.4, rows[0].PLike)
+	require.NotEmpty(t, rows)
+
+	got := map[int64]bool{}
+	for _, r := range rows {
+		got[int64(r.AdvertiserID)] = true
+	}
+	require.False(t, got[ids[0]], "rated app must be excluded")
+	require.True(t, got[ids[1]], "unrated scored app must surface")
+
+	// Per-request variety: a second fetch should not be byte-identical order.
+	rows2, err := repositories.PreferenceQueue(context.Background(), g, email, 50)
+	require.NoError(t, err)
+	if len(rows) > 3 && len(rows2) > 3 {
+		var a, b []int
+		for _, r := range rows {
+			a = append(a, r.AdvertiserID)
+		}
+		for _, r := range rows2 {
+			b = append(b, r.AdvertiserID)
+		}
+		require.NotEqual(t, a, b, "two fetches should differ in order/content")
+	}
 }
