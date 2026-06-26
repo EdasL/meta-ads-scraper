@@ -496,15 +496,15 @@ done
 gcloud compute instances describe "$VM" --zone="$ZONE" --project="$PROJECT" >/dev/null 2>&1 \
   || gcloud compute instances create "$VM" --project="$PROJECT" --zone="$ZONE" \
        --machine-type=e2-medium --image-family=debian-12 --image-project=debian-cloud \
-       --boot-disk-size=30GB --no-address \
+       --boot-disk-size=30GB \
        --service-account="$SA_EMAIL" \
        --scopes=https://www.googleapis.com/auth/cloud-platform \
        --metadata-from-file=startup-script=ops/prod/startup.sh
 
-echo "VM created. SSH via: gcloud compute ssh $VM --zone=$ZONE --project=$PROJECT --tunnel-through-iap"
+echo "VM created. SSH via: gcloud compute ssh $VM --zone=$ZONE --project=$PROJECT"
 ```
 
-Note: `--no-address` means no external IP; SSH is via IAP. Outbound internet (DataImpulse, Meta, Gemini, Artifact Registry) requires **Cloud NAT** on the VPC, or drop `--no-address` to give the VM an ephemeral external IP. Simplest for one VM: remove `--no-address` (ephemeral external IP, outbound works out of the box). Decide at execution; the script above is the IAP-only variant — to use the simpler path, delete the `--no-address` line and SSH without `--tunnel-through-iap`.
+Egress decision (settled 2026-06-26): the VM gets an **ephemeral external IP** (no `--no-address`), so outbound to DataImpulse / Meta / Gemini / Artifact Registry works with zero VPC setup. DataImpulse still proxies Meta, so the VM's own IP is irrelevant to scraping. SSH uses the default `default-allow-ssh` rule on the `default` network — if SSH times out, add a firewall rule allowing `tcp:22` (e.g. `gcloud compute firewall-rules create allow-ssh --network=default --allow=tcp:22 --project=peon-489013`).
 
 - [ ] **Step 3: Run secrets + sql + build first, then the VM**
 
@@ -707,7 +707,7 @@ Expected: a JSON row from Cloud SQL (not the local DB — confirm by a count tha
 
 - [ ] **Step 5: Add the RUNBOOK section**
 
-Append a "## Production on peon-489013" section to `ops/RUNBOOK.md` covering: the architecture (VM + Cloud SQL + Artifact Registry), how to SSH (`gcloud compute ssh agf-worker --zone=europe-west1-b --tunnel-through-iap`), redeploy a new image (`bash ops/prod/02_build_image.sh` then `docker compose pull && up -d` on the VM), how the Mac reaches prod (the sqlproxy agent), rollback (re-load the local launchd worker + restart the local docker Postgres; the local DB snapshot is the pre-cutover state), and that `granini` is intentionally left running.
+Append a "## Production on peon-489013" section to `ops/RUNBOOK.md` covering: the architecture (VM + Cloud SQL + Artifact Registry), how to SSH (`gcloud compute ssh agf-worker --zone=europe-west1-b`), redeploy a new image (`bash ops/prod/02_build_image.sh` then `docker compose pull && up -d` on the VM), how the Mac reaches prod (the sqlproxy agent), rollback (re-load the local launchd worker + restart the local docker Postgres; the local DB snapshot is the pre-cutover state), and that `granini` is intentionally left running.
 
 - [ ] **Step 6: Commit**
 
@@ -721,4 +721,4 @@ git commit -m "feat(prod): Mac sqlproxy agent + RUNBOOK production section"
 ## Post-deploy notes
 - Keep the local docker Postgres data volume as a rollback snapshot for ~1 week, then remove.
 - The Mac API/web now depend on the `com.fielddesk.sqlproxy` agent being up.
-- Outbound from the VM: confirm the NAT-vs-ephemeral-IP decision (Task 5 Step 2) actually lets DataImpulse/Meta/Gemini/Artifact Registry traffic through before declaring done.
+- Outbound from the VM uses an ephemeral external IP (settled); confirm DataImpulse/Meta/Gemini/Artifact Registry traffic flows in the Task 7 live gate before declaring done.
