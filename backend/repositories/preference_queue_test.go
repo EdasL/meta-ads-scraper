@@ -5,8 +5,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-
-	"github.com/edaslakavicius/emerging-app-finder/backend/models"
 )
 
 func cand(id int, niche string, pLike, unc float64, source string) prefCandidate {
@@ -157,5 +155,3 @@ func TestNicheKey_FallbackAndExempt(t *testing.T) {
 		})
 	}
 }
-
-var _ = models.ShortlistRow{} // keep import if unused elsewhere

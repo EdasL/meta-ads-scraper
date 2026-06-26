@@ -83,12 +83,16 @@ func PreferenceQueue(ctx context.Context, g *gorm.DB, userEmail string, limit in
 			return err
 		}
 
+		mvRows := make([]mvScanRow, len(scanned))
+		for i, r := range scanned {
+			mvRows[i] = r.toMvScanRow()
+		}
+		shortPool := toShortlistRows(mvRows)
 		cands := make([]prefCandidate, len(scanned))
 		for i, r := range scanned {
-			short := toShortlistRows([]mvScanRow{r.toMvScanRow()})[0]
 			cands[i] = prefCandidate{
 				PreferenceCardRow: models.PreferenceCardRow{
-					ShortlistRow: short,
+					ShortlistRow: shortPool[i],
 					PLike:        r.PLike,
 					Why:          r.Why,
 				},
