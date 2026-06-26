@@ -18,15 +18,14 @@ var ratingsDB *gorm.DB
 
 func TestMain(m *testing.M) {
 	dsn := os.Getenv("AGF_IT_DB_URL")
-	if dsn == "" {
-		os.Exit(0)
+	if dsn != "" {
+		g, err := db.Init(dsn)
+		if err != nil {
+			panic(err)
+		}
+		ratingsDB = g
+		seedRatings(g)
 	}
-	g, err := db.Init(dsn)
-	if err != nil {
-		panic(err)
-	}
-	ratingsDB = g
-	seedRatings(g)
 	os.Exit(m.Run())
 }
 
@@ -80,7 +79,15 @@ func must(err error) {
 	}
 }
 
+func requireRatingsDB(t *testing.T) {
+	t.Helper()
+	if ratingsDB == nil {
+		t.Skip("AGF_IT_DB_URL not set")
+	}
+}
+
 func TestUpsertAndListRating(t *testing.T) {
+	requireRatingsDB(t)
 	ctx := context.Background()
 	email := "test@example.com"
 
@@ -102,6 +109,7 @@ func TestUpsertAndListRating(t *testing.T) {
 }
 
 func TestUpsertRatingOverwrites(t *testing.T) {
+	requireRatingsDB(t)
 	ctx := context.Background()
 	email := "test@example.com"
 
@@ -116,6 +124,7 @@ func TestUpsertRatingOverwrites(t *testing.T) {
 }
 
 func TestDeleteRating(t *testing.T) {
+	requireRatingsDB(t)
 	ctx := context.Background()
 	email := "test@example.com"
 
@@ -128,6 +137,7 @@ func TestDeleteRating(t *testing.T) {
 }
 
 func TestListRatingsEmpty(t *testing.T) {
+	requireRatingsDB(t)
 	ctx := context.Background()
 	email := "nobody@example.com"
 
