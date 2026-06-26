@@ -1,0 +1,5 @@
+# ops/prod/crontab — Field Desk PROD scheduled jobs (UTC). Installed into the
+# `cron` container. AGF_DATABASE_URL is exported into /etc/environment at launch.
+*/30 * * * *  cd /app && PYTHONPATH=/app/src python -m agf.scoring.run_scoring >> /var/log/agf/scoring.log 2>&1
+0    * * * *  psql "$AGF_DATABASE_URL" -v ON_ERROR_STOP=1 -c "REFRESH MATERIALIZED VIEW CONCURRENTLY frontend.emerging_scaling_apps;" >> /var/log/agf/refresh.log 2>&1
+30   3 * * *  /app/ops/cron/prune.sh >> /var/log/agf/prune.log 2>&1

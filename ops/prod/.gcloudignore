@@ -1,0 +1,16 @@
+.git
+.venv
+.next
+.playwright-mcp
+.firecrawl
+node-compile-cache
+nanobanana-output
+design-review
+*.jpeg
+*.png
+*.pyc
+__pycache__
+.pytest_cache
+tests
+docs
+web
