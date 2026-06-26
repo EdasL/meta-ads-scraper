@@ -13,7 +13,7 @@ POSTGRES_PASSWORD="$(gcloud secrets versions access latest --secret=agf-postgres
 
 gcloud sql instances describe "$INSTANCE" --project="$PROJECT" >/dev/null 2>&1 \
   || gcloud sql instances create "$INSTANCE" --project="$PROJECT" \
-       --database-version=POSTGRES_17 --tier=db-custom-1-3840 --region="$REGION" \
+       --database-version=POSTGRES_17 --edition=ENTERPRISE --tier=db-custom-1-3840 --region="$REGION" \
        --storage-size=20 --storage-auto-increase \
        --backup --enable-point-in-time-recovery \
        --root-password="$POSTGRES_PASSWORD"
