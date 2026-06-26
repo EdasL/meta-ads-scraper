@@ -96,9 +96,9 @@ func TestAssembleQueue_RatioMix(t *testing.T) {
 			nFresh++
 		}
 	}
-	// fresh target ≈ 15% of 20 = 3; allow slack for rounding/interleave.
-	require.GreaterOrEqual(t, nFresh, 1)
-	require.LessOrEqual(t, nFresh, 6)
+	// fresh target = 15% of 20 = 3; allow tight slack for rounding/interleave.
+	require.GreaterOrEqual(t, nFresh, 2)
+	require.LessOrEqual(t, nFresh, 4)
 }
 
 func TestAssembleQueue_VariesAcrossRequests(t *testing.T) {
@@ -112,13 +112,50 @@ func TestAssembleQueue_VariesAcrossRequests(t *testing.T) {
 }
 
 func TestAssembleQueue_UnderfillRedistributes(t *testing.T) {
-	// Only exploit candidates; uncertain+fresh empty. Must still fill toward limit.
+	// Starve the scored buckets so the primary per-bucket targets cannot be met.
+	// With limit 10 the targets are ~exploit 6 / uncertain 3 / fresh 1, but only
+	// 2 scored candidates exist: exploit and uncertain exhaust early and the
+	// primary round-robin stops at 3 picks (2 scored + 1 fresh, fresh capped at
+	// its target of 1). Only the secondary underfill pass — which ignores the
+	// per-bucket targets — can pull the remaining fresh candidates to fill the
+	// limit. Each candidate is its own niche, so the per-niche cap never bites.
 	var cands []prefCandidate
-	for i := 0; i < 10; i++ {
-		cands = append(cands, cand(i+1, string(rune('a'+i)), 0.9-float64(i)*0.05, 0.1, "scored"))
+	cands = append(cands, cand(1, "scoredA", 0.9, 0.1, "scored"))
+	cands = append(cands, cand(2, "scoredB", 0.8, 0.2, "scored"))
+	for i := 0; i < 8; i++ {
+		cands = append(cands, cand(100+i, string(rune('a'+i)), 0.5, 1.0, "fresh"))
 	}
-	out := assembleQueue(cands, baseOpts(8, 5))
-	require.Len(t, out, 8)
+	out := assembleQueue(cands, baseOpts(10, 5))
+	require.Len(t, out, 10, "underfill pass must fill the limit from leftover fresh candidates")
+	// All 10 distinct advertisers surface; primary alone would stop at 3.
+	seen := map[int]bool{}
+	for _, c := range out {
+		seen[c.AdvertiserID] = true
+	}
+	require.Len(t, seen, 10, "all distinct advertisers must be present")
+}
+
+func TestNicheKey_FallbackAndExempt(t *testing.T) {
+	str := func(s string) *string { return &s }
+	cases := []struct {
+		name   string
+		niche  *string
+		cohort string
+		want   string
+	}{
+		{"niche set, cohort set -> niche key", str("yoga"), "wellness", "n:yoga"},
+		{"niche nil -> cohort fallback", nil, "wellness", "c:wellness"},
+		{"niche empty -> cohort fallback", str(""), "wellness", "c:wellness"},
+		{"niche nil, cohort empty -> exempt", nil, "", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var c prefCandidate
+			c.NicheKeyword = tc.niche
+			c.Cohort = tc.cohort
+			require.Equal(t, tc.want, nicheKey(c))
+		})
+	}
 }
 
 var _ = models.ShortlistRow{} // keep import if unused elsewhere
