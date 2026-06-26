@@ -32,10 +32,14 @@ MINIO_ROOT_PASSWORD=${MINIO_PASSWORD}
 EOF
 chmod 600 /opt/agf/.env
 
-# The compose file ships INSIDE the image at /app/ops/prod/docker-compose.yml.
-docker run --rm -v /opt/agf:/out "$IMAGE" \
-  cp /app/ops/prod/docker-compose.yml /app/ops/prod/crontab /out/ 2>/dev/null || true
-# Fallback: pull the compose via gsutil if not bundled (kept in the image build).
+# Authenticate to Artifact Registry, pull the image, then extract the compose file
+# (which ships inside the image at /app/ops/prod/docker-compose.yml) to the host so
+# `docker compose` can read it. Order matters: auth BEFORE any pull. No `|| true` —
+# a failure here must abort the boot (set -e) rather than silently start nothing.
 gcloud auth configure-docker "$REGION-docker.pkg.dev" --quiet
-docker compose -f /opt/agf/docker-compose.yml --env-file /opt/agf/.env pull
+docker pull "$IMAGE"
+cid="$(docker create "$IMAGE")"
+docker cp "$cid:/app/ops/prod/docker-compose.yml" /opt/agf/docker-compose.yml
+docker rm "$cid"
+
 docker compose -f /opt/agf/docker-compose.yml --env-file /opt/agf/.env up -d
