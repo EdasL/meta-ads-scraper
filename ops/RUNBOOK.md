@@ -225,3 +225,60 @@ like Shopify/Alibaba) early, real emerging gems later — the daily cadence *is*
 
 **Security.** Keep `ops/.env` out of git (it's gitignored); never commit a real `AGF_PROXIES`.
 **Rotate the DataImpulse password** once deployed — it was entered in plaintext during setup.
+
+---
+
+## Production on peon-489013 (scraping + DB, deployed 2026-06-26)
+
+The scraping pipeline + database run in GCP project **peon-489013** (region
+**europe-west1**). The Go API + Next web stay on the Mac, pointed at the prod DB
+via a local Cloud SQL Auth Proxy. The unrelated `granini` app in peon is left
+running — do not touch `granini-app` / `peon-cluster` / `peon-db` / `granini-gallery`.
+
+**Topology.**
+- **Cloud SQL** `agf-db` — Postgres 17, `db-custom-1-3840` (ENTERPRISE edition),
+  connection name `peon-489013:europe-west1:agf-db`, db+user `agf`. Managed backups
+  + PITR (replaces the old `backup.sh` cron). App password in Secret Manager
+  (`agf-db-password`); the `agf` user has `cloudsqlsuperuser` (owns the matview → can
+  REFRESH).
+- **VM** `agf-worker` — e2-medium, `europe-west1-b`, ephemeral external IP, SA
+  `agf-worker-sa` (cloudsql.client + secretAccessor + artifactregistry.reader). Runs
+  `docker compose` at `/opt/agf/docker-compose.yml`: `cloud-sql-proxy`, `minio`,
+  `minio-init`, `worker`, `cron`.
+- **Image** `europe-west1-docker.pkg.dev/peon-489013/agf/worker:latest` (Cloud Build).
+- **Secrets** (Secret Manager): `agf-db-password`, `agf-postgres-password`,
+  `agf-minio-password`, `agf-proxies` (DataImpulse), `agf-gemini-api-key`. Rendered
+  into `/opt/agf/.env` by `ops/prod/startup.sh` at boot.
+- **Mac** — `com.fielddesk.sqlproxy` launchd agent runs `cloud-sql-proxy …agf-db
+  --port 5433`; `com.fielddesk.api` plist `AGF_DATABASE_URL` →
+  `postgresql://agf:<agf-db-password>@localhost:5433/agf`; `S3_ENDPOINT` stays local
+  MinIO (`:9010`). Web is unchanged (talks to the API). The local docker Postgres
+  `db-postgres-1` is stopped (pre-cutover rollback snapshot — keep ~1 week).
+
+**SSH.** `gcloud compute ssh agf-worker --zone=europe-west1-b --project=peon-489013`
+then `sudo docker compose -f /opt/agf/docker-compose.yml {ps,logs,restart}`.
+
+**Provision from scratch** (idempotent, in order):
+`bash ops/prod/02_secrets.sh && bash ops/prod/00_provision_sql.sh && bash
+ops/prod/02_build_image.sh && bash ops/prod/01_provision_vm.sh`.
+
+**Redeploy new code.** `bash ops/prod/02_build_image.sh`, then on the VM:
+`sudo docker compose -f /opt/agf/docker-compose.yml pull worker cron && sudo docker
+compose -f /opt/agf/docker-compose.yml up -d worker cron`.
+
+**Proxy out of traffic.** A `407 TRAFFIC_EXHAUSTED` from DataImpulse (worker logs
+"sweep circuit-breaker: 5 consecutive search errors") means the residential proxy
+account is out of bandwidth — top it up at dataimpulse.com (same account/user), then
+`docker compose restart worker`. Smoke-test egress end-to-end with
+`docker compose exec -T worker python scripts/sweep_smoke.py` (expect `SMOKE OK`).
+doc_id / rate-limit procedures in §1–3 apply; restart the worker container to force a
+token heal.
+
+**Rollback to local.** `docker start db-postgres-1`; revert the api plist
+`AGF_DATABASE_URL` to `postgresql://agf:agf@localhost:5433/agf`; reload
+`com.fielddesk.api`; re-`bootstrap` `com.fielddesk.worker` + `com.fielddesk.scoring`.
+
+**Known gap.** New scraped ad creatives are written to the VM's MinIO; the Mac API's
+`S3_ENDPOINT` is the local MinIO, so creatives for newly-discovered apps won't render
+on the Mac dashboard until media moves to a shared store (e.g. GCS). App icons are
+Apple/Play CDN URLs and render regardless.
