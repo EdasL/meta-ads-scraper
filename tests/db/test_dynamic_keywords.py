@@ -107,6 +107,23 @@ def test_active_below_threshold_stays_active(pg_conn, monkeypatch):
     assert _dry(pg_conn, "FWTEST patient") == 3
 
 
+def test_trial_with_high_dry_streak_stays_trial(pg_conn, monkeypatch):
+    # Guard: the dry-streak retirement is ACTIVE-only. A trial under its sweep budget keeps
+    # earning its verdict even if its streak already crossed the retire threshold — the
+    # retire branch must never fire on a trial (locks the branch ordering against edits).
+    monkeypatch.setenv("AGF_FLYWHEEL_RETIRE_DRY_STREAK", "5")
+    monkeypatch.setenv("AGF_FLYWHEEL_TRIAL_SWEEPS", "4")
+    dk.add_trial_keywords(pg_conn, ["FWTEST stubborn"])
+    pg_conn.execute(text(
+        "UPDATE discovery.dynamic_keywords SET sweeps_used = 1, dry_streak = 9 "
+        "WHERE keyword = :k"), {"k": "FWTEST stubborn"})
+    kid = pg_conn.execute(text(
+        "SELECT id FROM discovery.dynamic_keywords WHERE keyword = :k"),
+        {"k": "FWTEST stubborn"}).scalar()
+    assert dk.record_keyword_sweep(pg_conn, kid, new_candidates=0) == "trial"
+    assert _status(pg_conn, "FWTEST stubborn") == "trial"
+
+
 def test_apply_verdicts_frees_budget_reached_trials(pg_conn, monkeypatch):
     # A lowered budget (the actual fix): trials stuck at sweeps_used=2 must now verdict.
     monkeypatch.setenv("AGF_FLYWHEEL_TRIAL_SWEEPS", "2")

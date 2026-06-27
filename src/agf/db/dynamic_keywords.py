@@ -97,6 +97,9 @@ def record_keyword_sweep(conn, keyword_id: int, *, new_candidates: int) -> str:
         "    last_swept_at = now() "
         "WHERE id = :i RETURNING status, sweeps_used, new_candidates_total, dry_streak"),
         {"n": new_candidates, "i": keyword_id}).one()
+    # Active-only: a trial never retires here even with a long streak (it earns its verdict
+    # below). A trial that promotes already carrying a streak retires fast afterwards — its
+    # basin was dry through the trial, so that is intended, not premature.
     if row.status == "active" and row.dry_streak >= retire_dry_streak():
         conn.execute(text(
             "UPDATE discovery.dynamic_keywords SET status='retired' WHERE id=:i"),
