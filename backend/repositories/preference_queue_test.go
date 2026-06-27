@@ -155,3 +155,62 @@ func TestNicheKey_FallbackAndExempt(t *testing.T) {
 		})
 	}
 }
+
+func TestWeightedSampleByPLike_PermutationAndWeighting(t *testing.T) {
+	// Permutation: output is the same set, same length.
+	var in []prefCandidate
+	for i := 0; i < 50; i++ {
+		in = append(in, cand(i+1, "n", 0.2+float64(i)*0.01, 0.5, "scored"))
+	}
+	out := weightedSampleByPLike(in, rand.New(rand.NewSource(1)))
+	require.Len(t, out, len(in))
+	inSet, outSet := map[int]bool{}, map[int]bool{}
+	for _, c := range in {
+		inSet[c.AdvertiserID] = true
+	}
+	for _, c := range out {
+		outSet[c.AdvertiserID] = true
+	}
+	require.Equal(t, inSet, outSet, "sample must be a permutation (no drops/dupes)")
+
+	// Variety: two seeds give different orderings.
+	a := ids(weightedSampleByPLike(in, rand.New(rand.NewSource(1))))
+	b := ids(weightedSampleByPLike(in, rand.New(rand.NewSource(2))))
+	require.NotEqual(t, a, b)
+
+	// Weighting: averaged over many requests, the first card's p_like exceeds the
+	// pool mean — sampling is biased toward higher p_like, not uniform.
+	var poolMean float64
+	for _, c := range in {
+		poolMean += c.PLike
+	}
+	poolMean /= float64(len(in))
+	var sumFirst float64
+	const trials = 200
+	for s := int64(0); s < trials; s++ {
+		got := weightedSampleByPLike(in, rand.New(rand.NewSource(s)))
+		sumFirst += got[0].PLike
+	}
+	require.Greater(t, sumFirst/trials, poolMean,
+		"first card should average above the pool mean (weighting), mean=%.3f", poolMean)
+}
+
+func TestAssembleQueue_ExploitSamplesTopWindowAndVaries(t *testing.T) {
+	// 100 scored apps, id i has p_like 1.0 - i*0.009 (distinct), unique niche.
+	var cands []prefCandidate
+	for i := 0; i < 100; i++ {
+		cands = append(cands, cand(i, "niche"+string(rune('A'+i%26))+string(rune('a'+i/26)), 1.0-float64(i)*0.009, 0.5, "scored"))
+	}
+	opts := func(seed int64) queueOpts {
+		return queueOpts{Limit: 10, PerNicheCap: defaultPerNicheCap, ExploitFrac: 1.0, UncertainFrac: 0.0, Rng: rand.New(rand.NewSource(seed))}
+	}
+	out1 := assembleQueue(cands, opts(1))
+	require.Len(t, out1, 10)
+	for _, c := range out1 {
+		require.Less(t, c.AdvertiserID, exploitSampleWindow,
+			"every taste card must come from the top-%d p_like window", exploitSampleWindow)
+	}
+	// Variety: a different request returns a different set of top cards.
+	out2 := assembleQueue(cands, opts(2))
+	require.NotEqual(t, ids(out1), ids(out2), "consecutive requests should vary the taste deck")
+}

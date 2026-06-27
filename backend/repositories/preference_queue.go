@@ -1,6 +1,7 @@
 package repositories
 
 import (
+	"math"
 	"math/rand"
 	"sort"
 
@@ -17,7 +18,41 @@ const (
 	uncertainFrac      = 0.25 // share ranked by uncertainty (p_like ≈ 0.5)
 	// freshFrac is the remainder (~0.15): fresh-unscored + leftover scored.
 	poolMultiplier = 4 // fresh candidates fetched = poolMultiplier * limit
+	// exploitSampleWindow is how many top-p_like apps the taste bucket samples
+	// from each request. Without this the top exploit cards are fully
+	// deterministic and recur on every refresh until rated; sampling the top
+	// window (weighted by p_like) keeps cards on-taste while varying the deck.
+	exploitSampleWindow = 40
 )
+
+// weightedSampleByPLike returns in reordered by weighted random sampling without
+// replacement (Efraimidis–Spirakis), weight = p_like. Higher p_like tends toward
+// the front but the order varies per rng. The returned slice is a permutation of
+// in (same elements), never drops or duplicates.
+func weightedSampleByPLike(in []prefCandidate, rng *rand.Rand) []prefCandidate {
+	type keyed struct {
+		c prefCandidate
+		k float64
+	}
+	ks := make([]keyed, len(in))
+	for i, c := range in {
+		w := c.PLike
+		if w < 1e-6 {
+			w = 1e-6 // floor so a 0 p_like still gets a (tiny) chance, no div-by-zero
+		}
+		u := rng.Float64()
+		if u <= 0 {
+			u = 1e-12
+		}
+		ks[i] = keyed{c, math.Pow(u, 1.0/w)}
+	}
+	sort.SliceStable(ks, func(i, j int) bool { return ks[i].k > ks[j].k })
+	out := make([]prefCandidate, len(in))
+	for i := range ks {
+		out[i] = ks[i].c
+	}
+	return out
+}
 
 // prefCandidate is one app considered for the review queue: a renderable card
 // plus the selection inputs (uncertainty, source). Source is "scored" (has a
@@ -76,6 +111,16 @@ func assembleQueue(cands []prefCandidate, opts queueOpts) []prefCandidate {
 
 	exploit := append([]prefCandidate(nil), scored...)
 	sort.SliceStable(exploit, func(i, j int) bool { return exploit[i].PLike > exploit[j].PLike })
+	// Weighted-sample the top window so the taste cards vary per request instead
+	// of recurring deterministically; the tail beyond the window stays in p_like
+	// order (it only matters when the deck is short on candidates).
+	if len(exploit) > 1 {
+		w := exploitSampleWindow
+		if w > len(exploit) {
+			w = len(exploit)
+		}
+		exploit = append(weightedSampleByPLike(exploit[:w], opts.Rng), exploit[w:]...)
+	}
 
 	uncertain := append([]prefCandidate(nil), scored...)
 	sort.SliceStable(uncertain, func(i, j int) bool { return uncertain[i].Uncertainty > uncertain[j].Uncertainty })
