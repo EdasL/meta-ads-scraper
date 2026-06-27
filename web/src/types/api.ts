@@ -74,6 +74,10 @@ export interface ApiShortlistRow {
   store_id?: string | null;
   // Quiz/landing the app's ads drive to (matview migration 125); null when none.
   funnel_url?: string | null;
+  // Product-level dedup (matview migration 142). page_count = Meta pages
+  // fronting this app; stores = "ios" | "android" | "ios+android".
+  page_count?: number | null;
+  stores?: string | null;
 }
 
 /** `AppReview` (backend models.go) — one recent store review for the app. */
@@ -153,6 +157,21 @@ export interface ApiGemDossier {
   meta_active_ads_checked_at?: string | null;
   ad_lifecycle?: ApiAdLifecycle | null; // absent/null on older builds
   metric_change_4w?: ApiMetricChange4w | null; // trailing 4-week ad-signal change
+  pages?: ApiAdvertiserPage[];
+}
+
+/** `AdvertiserPage` (schemas.py) — one Meta page fronting the app, in the
+ * product-grain dossier (Task 4). A single app may be advertised from many
+ * pages on purpose (persona/geo splits). */
+export interface ApiAdvertiserPage {
+  advertiser_id: number;
+  page_id: string | null;
+  page_name: string | null;
+  page_category: string | null;
+  active_ads: number;
+  total_ads: number;
+  first_ad: string | null;
+  last_ad: string | null;
 }
 
 /** `MetricChange4w` (backend models.go) — trailing 4-week change in the ad

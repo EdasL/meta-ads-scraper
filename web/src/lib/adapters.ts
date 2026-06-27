@@ -139,6 +139,12 @@ export function adaptShortlistRow(r: ApiShortlistRow, mediaUrl: MediaUrl): Short
     store: r.store === "ios" ? "ios" : r.store === "android" ? "android" : undefined,
     store_id: r.store_id ?? undefined,
     funnel_url: r.funnel_url ?? undefined,
+    page_count: r.page_count ?? undefined,
+    stores:
+      r.stores === "ios+android" ? "ios+android"
+      : r.stores === "ios" ? "ios"
+      : r.stores === "android" ? "android"
+      : undefined,
   };
 }
 
@@ -313,6 +319,16 @@ export function adaptDossier(
     meta_active_ads_checked_at: d.meta_active_ads_checked_at ?? undefined,
     ad_lifecycle: adaptAdLifecycle(d.ad_lifecycle),
     metric_change_4w: adaptMetricChange4w(d.metric_change_4w),
+    pages: (d.pages ?? []).map((p) => ({
+      advertiser_id: p.advertiser_id,
+      page_id: p.page_id,
+      page_name: p.page_name,
+      page_category: p.page_category,
+      active_ads: num(p.active_ads),
+      total_ads: num(p.total_ads),
+      first_ad: p.first_ad,
+      last_ad: p.last_ad,
+    })),
   };
 }
 

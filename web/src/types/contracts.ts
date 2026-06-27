@@ -76,6 +76,8 @@ export interface ShortlistRow {
   store_id?: string; // linked app's store id (bundle / package)
   funnel_url?: string; // quiz/landing page the app's ads drive to, if captured
   web_only?: boolean; // true for web-subscription entries (no app store listing)
+  page_count?: number; // Meta pages fronting this app (display-only)
+  stores?: "ios" | "android" | "ios+android"; // which stores the product is on
 }
 
 export type CreativeType = "image" | "video" | "text";
@@ -222,6 +224,21 @@ export interface GemDossier extends ShortlistRow {
   meta_active_ads?: number;
   meta_active_ads_capped?: boolean;
   meta_active_ads_checked_at?: string;
+  /** Every Meta page fronting this app, across both stores. */
+  pages: AdvertiserPage[];
+}
+
+/** One Meta page fronting the app (product-grain dossier). A single app may be
+ * advertised from many pages on purpose (persona / geo splits) — display-only. */
+export interface AdvertiserPage {
+  advertiser_id: number;
+  page_id: string | null;
+  page_name: string | null;
+  page_category: string | null;
+  active_ads: number;
+  total_ads: number;
+  first_ad: string | null;
+  last_ad: string | null;
 }
 
 /** Review queue row (undecided, gem_score >= 70) — §3.7. */

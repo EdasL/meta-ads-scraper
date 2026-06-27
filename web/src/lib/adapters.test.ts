@@ -403,6 +403,85 @@ test("adaptDossier carries the new signal fields: app preview, ad meta, library 
   assert.equal(dossier.app_metrics[1].installs, 116000000);
 });
 
+test("adaptShortlistRow maps page_count and stores", () => {
+  const row = adaptShortlistRow(
+    { advertiser_id: 1, cohort: "ios", page_name: "P", app_id: 5, app_name: "A",
+      gem_score: 70, scaling_velocity: 0, under_radar: 0, funnel_intent: 0,
+      active_ad_count: 9, max_longevity_days: 10, alert: false, refreshed_at: null,
+      page_count: 4, stores: "ios+android" },
+    media,
+  );
+  assert.equal(row.page_count, 4);
+  assert.equal(row.stores, "ios+android");
+});
+
+test("adaptDossier defaults pages to [] when absent", () => {
+  const dossier = adaptDossier(
+    {
+      gem: {
+        advertiser_id: 100, cohort: "Health & Fitness×US", page_name: "Alpha",
+        app_id: 90211, app_name: "SleepWave", gem_score: 88,
+        scaling_velocity: 0.9, under_radar: 0.86, funnel_intent: 0.78,
+        active_ad_count: 47, max_longevity_days: 31, alert: true,
+        refreshed_at: "2026-06-04T08:00:00Z",
+      },
+      page_id: "61557123456789",
+      domain: "sleepwave.app",
+      page_category: "Health/Wellness",
+      ig_username: null,
+      ig_followers: null,
+      parent_company: null,
+      apps: [],
+      funnels: [],
+      creatives: [],
+    },
+    [],
+    [],
+    media,
+  );
+  assert.deepEqual(dossier.pages, []);
+});
+
+test("adaptDossier maps the pages array with coerced counts", () => {
+  const dossier = adaptDossier(
+    {
+      gem: {
+        advertiser_id: 100, cohort: "Health & Fitness×US", page_name: "Alpha",
+        app_id: 90211, app_name: "SleepWave", gem_score: 88,
+        scaling_velocity: 0.9, under_radar: 0.86, funnel_intent: 0.78,
+        active_ad_count: 47, max_longevity_days: 31, alert: true,
+        refreshed_at: "2026-06-04T08:00:00Z",
+      },
+      page_id: "61557123456789",
+      domain: "sleepwave.app",
+      page_category: "Health/Wellness",
+      ig_username: null,
+      ig_followers: null,
+      parent_company: null,
+      apps: [],
+      funnels: [],
+      creatives: [],
+      pages: [
+        { advertiser_id: 100, page_id: "p1", page_name: "Main", page_category: "App Page",
+          active_ads: 5, total_ads: 12, first_ad: "2026-01-01", last_ad: "2026-06-01" },
+        { advertiser_id: 100, page_id: "p2", page_name: "Persona", page_category: null,
+          active_ads: null, total_ads: null, first_ad: null, last_ad: null },
+      ],
+    },
+    [],
+    [],
+    media,
+  );
+  assert.equal(dossier.pages.length, 2);
+  assert.equal(dossier.pages[0].page_id, "p1");
+  assert.equal(dossier.pages[0].active_ads, 5);
+  assert.equal(dossier.pages[0].total_ads, 12);
+  // null counts coerced to 0 via num()
+  assert.equal(dossier.pages[1].active_ads, 0);
+  assert.equal(dossier.pages[1].total_ads, 0);
+  assert.equal(dossier.pages[1].page_category, null);
+});
+
 test("adaptAppMetricPoint coerces nulls to undefined", () => {
   const p = adaptAppMetricPoint({
     app_id: 9, store: "ios", snapshot_date: "2026-06-09",
