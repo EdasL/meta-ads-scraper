@@ -54,10 +54,14 @@ func Dossier(ctx context.Context, g *gorm.DB, advertiserID int) (*models.GemDoss
 	err := db.WithReadTx(ctx, g, func(tx *gorm.DB) error {
 		scanned := make([]mvScanRow, 0, 1)
 		if err := tx.Raw(
-			// page_count/stores live only in the product view; appended here (not in
-			// the shared mvCols) so the detail header carries product totals while the
-			// matview-only consumers keep scanning the bare column list.
-			`SELECT `+mvCols+`, page_count, stores FROM frontend.emerging_scaling_products WHERE advertiser_id = ?`,
+			// Read the per-advertiser matview, NOT the product view: the dossier must
+			// resolve ANY advertiser_id (the review queue serves non-representative
+			// advertisers — it dedups by max p_like, while the view keeps the
+			// max-gem_score page — and old deep links may point at any page). The
+			// product view only holds representatives, so reading it here would 404
+			// every non-representative advertiser. The detail UI does not use
+			// page_count/stores; product context comes from the Pages section below.
+			`SELECT `+mvCols+` FROM frontend.emerging_scaling_apps WHERE advertiser_id = ?`,
 			advertiserID,
 		).Scan(&scanned).Error; err != nil {
 			return err
@@ -257,15 +261,20 @@ func Dossier(ctx context.Context, g *gorm.DB, advertiserID int) (*models.GemDoss
 			return err
 		}
 
-		// Pages running this app: every advertiser whose ads point at any store
-		// listing in this product (same frontend.product_key as the representative
-		// app — the iOS and Android siblings merge). One row per page with its ad
-		// footprint. Uses the SAME key function as the product view, so the page
-		// set matches the feed's collapse exactly.
+		// Pages running this app: one row per Meta page in this product, with its
+		// ad footprint. To match the feed's page_count badge exactly, the page set
+		// is the matview advertisers whose own product (frontend.product_key on
+		// their matview app) is this product — the same population the view counts
+		// — and the iOS+Android siblings merge by that key. Footprint counts each
+		// page's ads on the product's store listings.
 		pages := make([]models.AdvertiserPage, 0)
 		if gems[0].AppID != nil {
 			if err := tx.Raw(
-				`SELECT adv.id AS advertiser_id, adv.page_id, adv.page_name, adv.page_category,
+				`WITH pk AS (
+				   SELECT frontend.product_key(name, developer) AS k
+				   FROM public.apps WHERE id = ?
+				 )
+				 SELECT adv.id AS advertiser_id, adv.page_id, adv.page_name, adv.page_category,
 				        count(a.id)                            AS total_ads,
 				        count(a.id) FILTER (WHERE a.is_active) AS active_ads,
 				        min(a.start_date)::date                AS first_ad,
@@ -273,11 +282,15 @@ func Dossier(ctx context.Context, g *gorm.DB, advertiserID int) (*models.GemDoss
 				 FROM public.ads a
 				 JOIN public.advertisers adv ON adv.id = a.advertiser_id
 				 WHERE a.app_id IN (
-				   SELECT ap.id FROM public.apps ap
-				   WHERE frontend.product_key(ap.name, ap.developer)
-				       = (SELECT frontend.product_key(name, developer)
-				          FROM public.apps WHERE id = ?)
-				 )
+				        SELECT ap.id FROM public.apps ap, pk
+				        WHERE frontend.product_key(ap.name, ap.developer) = pk.k
+				      )
+				   AND adv.id IN (
+				        SELECT mv.advertiser_id
+				        FROM frontend.emerging_scaling_apps mv
+				        JOIN public.apps mvap ON mvap.id = mv.app_id, pk
+				        WHERE frontend.product_key(mv.app_name, mvap.developer) = pk.k
+				      )
 				 GROUP BY adv.id, adv.page_id, adv.page_name, adv.page_category
 				 ORDER BY active_ads DESC NULLS LAST, total_ads DESC`,
 				*gems[0].AppID,

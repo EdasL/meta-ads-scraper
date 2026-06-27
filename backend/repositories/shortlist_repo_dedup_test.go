@@ -108,3 +108,26 @@ func TestDossierListsAllPages(t *testing.T) {
 		require.GreaterOrEqual(t, p.TotalAds, 1)
 	}
 }
+
+// TestDossierResolvesNonRepresentative guards the regression where the dossier
+// Gem read was pointed at the product view (representatives only): the review
+// queue serves NON-representative advertisers (it dedups by max p_like, the view
+// keeps the max-gem_score page), so opening such a card 404'd. The dossier must
+// resolve any advertiser, and still list every page of its product.
+func TestDossierResolvesNonRepresentative(t *testing.T) {
+	requireRatingsDB(t)
+	seedDedup(ratingsDB)
+	ctx := context.Background()
+
+	// P1 (iOS, gem_score 90) is the representative; P4 (Android, 85) is not.
+	var nonRepID int
+	require.NoError(t, ratingsDB.Raw(
+		`SELECT id FROM public.advertisers WHERE page_id = 'DEDUP_P4'`).Scan(&nonRepID).Error)
+	require.NotZero(t, nonRepID)
+
+	d, err := repositories.Dossier(ctx, ratingsDB, nonRepID)
+	require.NoError(t, err)
+	require.NotNil(t, d, "dossier must resolve a non-representative advertiser (404 regression)")
+	require.Equal(t, nonRepID, d.Gem.AdvertiserID)
+	require.Len(t, d.Pages, 4, "pages section lists all product pages from any member")
+}
