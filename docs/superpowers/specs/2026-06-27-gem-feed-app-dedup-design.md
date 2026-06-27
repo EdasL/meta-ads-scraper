@@ -33,8 +33,27 @@ Two mechanisms, both verified:
 - **Winner / aggregation:** **aggregate the footprint across pages and re-rank**,
   using the **best page's GemScore** as the product score (not a pipeline
   recompute — see Aggregation).
-- **Scope:** Discover feed (`/api/shortlist`) + the review/preference queue.
-  Per-advertiser detail/dossier pages are **unchanged**.
+- **Scope:** Discover feed (`/api/shortlist`) + the review/preference queue +
+  a new **"Pages running this app"** section on the gem detail page (so the
+  collapsed pages are visible where you drill in). The rest of the detail/
+  dossier (ad cards, growth, facts) is unchanged for v1.
+- **page_count is display-only** for now — surfaced as a feed badge and on the
+  detail page, *not* a ranking signal or scored axis (revisit later).
+
+### Why showing the pages matters
+
+Running one app from many Meta pages is a **deliberate, very common ad
+technique**, not a quality tell. Brands do it because a personal-looking page
+(e.g. *Football Results & Fixtures*'s "Hernandez Gabriela Ingar", "Martinez
+Thibaut Daffie") makes the ads read like an individual person launching them —
+which converts better — and/or to keep the ad volume off their main brand
+account. The geographic variant (*My General RV*'s "General RV Center Fort
+Pierce / Mesa / Fort Myers / …") is the same pattern split by location.
+
+So `page_count` is **not** a good/bad signal — that's exactly why it stays
+display-only. The detail page should simply surface the full set of pages (with
+each page's ad footprint and Meta Ad Library link) so a human can see the whole
+spread behind one app and jump to any page's live ads.
 
 ## Approach: a product-grain SQL view (not a matview rewrite)
 
@@ -130,6 +149,31 @@ The view emits **exactly the current `mvCols` set** (so every existing
    `app_id`) before the per-niche cap. This removes the dominant multi-page dupe
    source (92 of 95) with a tiny, low-risk change; full cross-store name+dev
    merge stays a feed-view concern for v1.
+6. **Detail page — "Pages running this app".** Endpoint stays
+   `GET /api/gems/:advertiser_id` → `Dossier(advertiserID)`. Add a new query that,
+   given the dossier's representative `app_id`, resolves the product's app_id set
+   (all `public.apps` sharing the same `normalized_name + normalized_dev` key —
+   same expression as the view, so iOS+Android siblings are included) and lists
+   every advertiser that ran ads for any of them:
+   ```sql
+   SELECT adv.id AS advertiser_id, adv.page_id, adv.page_name, adv.page_category,
+          count(a.id)                              AS total_ads,
+          count(a.id) FILTER (WHERE a.is_active)   AS active_ads,
+          min(a.start_date)                        AS first_ad,
+          max(a.end_date)                          AS last_ad
+   FROM public.ads a
+   JOIN public.advertisers adv ON adv.id = a.advertiser_id
+   WHERE a.app_id = ANY(:product_app_ids)
+   GROUP BY adv.id, adv.page_id, adv.page_name, adv.page_category
+   ORDER BY active_ads DESC NULLS LAST, total_ads DESC
+   ```
+   Add `Pages []AdvertiserPage` to `GemDossier` (`models.go`) — `AdvertiserPage{
+   AdvertiserID, PageID, PageName, PageCategory, ActiveAds, TotalAds, FirstAd,
+   LastAd}`. Verified data is clean (see probe: 12 named pages with active/total
+   counts and date ranges). The Meta Ad Library link is built from `page_id`
+   (reuse the helper already used in `GemHeader`). The dossier ad-card grid stays
+   representative-advertiser-only for v1 (each page's full ads are one click away
+   via its library link).
 
 ## Frontend changes (`web/`)
 
@@ -141,6 +185,18 @@ plain muted badges grounded in real counts:
 Plain, professional copy per the project voice rule; no derived adjectives, no
 restating an adjacent number. Add `page_count` / `stores` to the web contract
 (`api.ts` `ApiShortlistRow`, `contracts.ts` `ShortlistRow`, `adapters.ts`).
+
+**Detail page — `PagesSection.tsx`.** A new section in `GemDetail.tsx`, rendered
+only when `pages.length > 1`, below `AdsSection`. A compact table, one row per
+page, sorted by active ads:
+
+| Page | Ads (active / total) | Running | |
+|------|----------------------|---------|---|
+| General RV Center Fort Pierce · *category* | 14 / 15 | Mar 4 – Jun 20 | Ad Library ↗ |
+
+Heading: **"Pages running this app"** with the count (`page_count`). Plain copy,
+real data only. Add the `pages` array to `ApiGemDossier` (`api.ts`),
+`GemDossier` (`contracts.ts`), and `adaptDossier` (`adapters.ts`).
 
 ## Testing
 
@@ -155,15 +211,22 @@ restating an adjacent number. Add `page_count` / `stores` to the web contract
   product count; category counts are deduped; the footprint tiebreak orders a
   many-page app above an equal-score single-page app.
 - **Queue:** `assembleQueue` emits at most one card per `app_id`.
-- **Web:** badge renders for `page_count > 1` and `stores === 'ios+android'`,
-  hidden otherwise.
+- **Dossier pages:** for a representative advertiser whose product spans iOS +
+  Android, the pages query returns advertisers from **both** app_ids, grouped one
+  row per advertiser with correct active/total/date aggregates, ordered by active
+  ads. A single-page product returns one page (section hidden in UI).
+- **Web:** feed badge renders for `page_count > 1` and `stores === 'ios+android'`,
+  hidden otherwise; `PagesSection` renders the table when `pages.length > 1` and
+  is hidden when ≤ 1.
 
 ## Live verification
 
 After deploy: `/api/shortlist` total ≈ 870 (was 965); spot-check *My General RV*
 appears once with `stores = 'ios+android'` and a summed `active_ad_count`;
 *Football Results & Fixtures* appears once with `page_count = 5`; confirm a
-known same-name/different-developer pair stays as two rows.
+known same-name/different-developer pair stays as two rows. Open the *My General
+RV* detail page and confirm the "Pages running this app" section lists all ~20
+pages across both stores with per-page ad counts and working Ad Library links.
 
 ## Out of scope (v1)
 
