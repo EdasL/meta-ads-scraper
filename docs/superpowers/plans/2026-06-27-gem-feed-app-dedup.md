@@ -19,20 +19,19 @@
 - **Standard is ZERO failing tests** in the full suite before done.
 - **The product-key SQL is verified** against live prod: 965 → 870 rows, both cross-store pairs merge, over-merge check clean (max 1 distinct name per key, 0 false merges).
 
-### Shared normalized-key SQL (used verbatim in Task 1 view AND Task 4 pages query — they MUST match)
+### Shared product-key function (single source of truth)
 
-```
--- normalized name (for app_name):
-regexp_replace(lower(btrim(<name>)), '[^a-z0-9]+', '', 'g')
+The normalized name+developer key is defined ONCE as an `IMMUTABLE` SQL function
+`frontend.product_key(p_name, p_developer)` (created in Task 1) and reused by both
+the view (Task 1) and the dossier pages query (Task 4). It returns
+`'p:'||name_norm||'|'||dev_norm`:
 
--- normalized developer (strips corp suffixes then punctuation):
-regexp_replace(
-  regexp_replace(lower(btrim(coalesce(<developer>, ''))),
-    '\y(llc|inc|ltd|co|gmbh|corp|corporation|company|limited)\y\.?', '', 'g'),
-  '[^a-z0-9]+', '', 'g')
+- `name_norm = regexp_replace(lower(btrim(coalesce(p_name,''))), '[^a-z0-9]+', '', 'g')`
+- `dev_norm = regexp_replace(regexp_replace(lower(btrim(coalesce(p_developer,''))), '\y(llc|inc|ltd|co|gmbh|corp|corporation|company|limited)\y\.?', '', 'g'), '[^a-z0-9]+', '', 'g')`
 
--- product_key: 'adv:'||advertiser_id when no app/name, else 'p:'||name_norm||'|'||dev_norm
-```
+Verified on live prod: keying the feed by this signature yields 965 → 870 rows,
+merges both cross-store pairs, and produces zero false merges (max 1 distinct
+name per key).
 
 ---
 
@@ -50,6 +49,21 @@ regexp_replace(
 Create `db/schema/142_emerging_products_view.sql`:
 
 ```sql
+-- Single source of truth for the product identity key: normalized app name +
+-- developer (corp suffixes stripped). Used by the product view below AND by the
+-- dossier "pages running this app" query, so both agree on what one product is.
+CREATE OR REPLACE FUNCTION frontend.product_key(p_name text, p_developer text)
+RETURNS text
+LANGUAGE sql IMMUTABLE AS $$
+  SELECT 'p:'
+      || regexp_replace(lower(btrim(coalesce(p_name, ''))), '[^a-z0-9]+', '', 'g')
+      || '|'
+      || regexp_replace(
+           regexp_replace(lower(btrim(coalesce(p_developer, ''))),
+             '\y(llc|inc|ltd|co|gmbh|corp|corporation|company|limited)\y\.?', '', 'g'),
+           '[^a-z0-9]+', '', 'g');
+$$;
+
 -- App-level dedup for the gems feed. The per-advertiser matview
 -- frontend.emerging_scaling_apps shows one row per Meta page, but one app is
 -- routinely fronted by many pages (persona pages that read like a real person,
@@ -64,13 +78,7 @@ WITH base AS (
   SELECT mv.*,
          CASE
            WHEN mv.app_name IS NULL OR btrim(mv.app_name) = '' THEN 'adv:' || mv.advertiser_id
-           ELSE 'p:'
-                || regexp_replace(lower(btrim(mv.app_name)), '[^a-z0-9]+', '', 'g')
-                || '|'
-                || regexp_replace(
-                     regexp_replace(lower(btrim(coalesce(ap.developer, ''))),
-                       '\y(llc|inc|ltd|co|gmbh|corp|corporation|company|limited)\y\.?', '', 'g'),
-                     '[^a-z0-9]+', '', 'g')
+           ELSE frontend.product_key(mv.app_name, ap.developer)
          END AS product_key
   FROM frontend.emerging_scaling_apps mv
   LEFT JOIN public.apps ap ON ap.id = mv.app_id
@@ -568,37 +576,26 @@ In `backend/repositories/dossier_repo.go`, inside `Dossier`, after the explainer
 
 ```go
 		// Pages running this app: every advertiser whose ads point at any store
-		// listing in this product (same normalized name+developer as the
-		// representative app — the iOS and Android siblings merge). One row per
-		// page with its ad footprint. The key expression MUST match
-		// 142_emerging_products_view.sql.
+		// listing in this product (same frontend.product_key as the representative
+		// app — the iOS and Android siblings merge). One row per page with its ad
+		// footprint. Uses the SAME key function as the product view, so the page
+		// set matches the feed's collapse exactly.
 		pages := make([]models.AdvertiserPage, 0)
 		if gems[0].AppID != nil {
 			if err := tx.Raw(
-				`WITH rep AS (
-				   SELECT regexp_replace(lower(btrim(ap.name)), '[^a-z0-9]+', '', 'g') AS nm,
-				          regexp_replace(
-				            regexp_replace(lower(btrim(coalesce(ap.developer, ''))),
-				              '\y(llc|inc|ltd|co|gmbh|corp|corporation|company|limited)\y\.?', '', 'g'),
-				            '[^a-z0-9]+', '', 'g') AS dev
-				   FROM public.apps ap WHERE ap.id = ?
-				 ),
-				 sibs AS (
-				   SELECT ap.id FROM public.apps ap, rep
-				   WHERE regexp_replace(lower(btrim(ap.name)), '[^a-z0-9]+', '', 'g') = rep.nm
-				     AND regexp_replace(
-				           regexp_replace(lower(btrim(coalesce(ap.developer, ''))),
-				             '\y(llc|inc|ltd|co|gmbh|corp|corporation|company|limited)\y\.?', '', 'g'),
-				           '[^a-z0-9]+', '', 'g') = rep.dev
-				 )
-				 SELECT adv.id AS advertiser_id, adv.page_id, adv.page_name, adv.page_category,
+				`SELECT adv.id AS advertiser_id, adv.page_id, adv.page_name, adv.page_category,
 				        count(a.id)                            AS total_ads,
 				        count(a.id) FILTER (WHERE a.is_active) AS active_ads,
 				        min(a.start_date)::date                AS first_ad,
 				        max(a.end_date)::date                  AS last_ad
 				 FROM public.ads a
 				 JOIN public.advertisers adv ON adv.id = a.advertiser_id
-				 WHERE a.app_id IN (SELECT id FROM sibs)
+				 WHERE a.app_id IN (
+				   SELECT ap.id FROM public.apps ap
+				   WHERE frontend.product_key(ap.name, ap.developer)
+				       = (SELECT frontend.product_key(name, developer)
+				          FROM public.apps WHERE id = ?)
+				 )
 				 GROUP BY adv.id, adv.page_id, adv.page_name, adv.page_category
 				 ORDER BY active_ads DESC NULLS LAST, total_ads DESC`,
 				*gems[0].AppID,
@@ -958,7 +955,7 @@ git commit -m "feat(detail): add the Pages-running-this-app section"
 ## Self-review notes
 
 - **Spec coverage:** product view (Task 1) ✔; best-page score + summed footprint + tiebreak (Tasks 1–2) ✔; name+dev key with corp-suffix strip (Tasks 1, 4) ✔; page_count/stores badges (Task 6) ✔; queue app_id dedup (Task 3) ✔; detail Pages section (Tasks 4, 7) ✔; web contract (Task 5) ✔.
-- **Key-expression DRY caveat:** the normalized name+dev SQL lives in two places (the view, Task 1; the dossier pages query, Task 4) because SQL can't share a fragment across a view and an ad-hoc query. They are byte-identical and both reference the Global-Constraints block — if one changes, change both.
+- **Key DRY:** the product identity is a single `IMMUTABLE` function `frontend.product_key(name, developer)` (Task 1), reused by the view (Task 1) and the dossier pages query (Task 4) — no duplicated logic block; both collapse the same products by construction.
 - **Pagination:** dedup is in the view (before `LIMIT/OFFSET`), so `X-Total-Count` and paging stay correct.
 - **Blast radius:** the matview, scoring pipeline, and per-advertiser dossier sub-reads (ads, growth, lifecycle, enrichment) are unchanged; only the feed/category reads and the dossier Gem read move to the view.
 ```
