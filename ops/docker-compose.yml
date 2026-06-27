@@ -115,6 +115,11 @@ services:
       AGF_ENRICH_TTL_HOURS: ${AGF_ENRICH_TTL_HOURS:-168}
       AGF_SCORE_AFTER_SWEEP: ${AGF_SCORE_AFTER_SWEEP:-}
       AGF_SWEEP_INTERVAL_SEC: ${AGF_SWEEP_INTERVAL_SEC:-3600}
+      # advertisers whose ad media is repaired per loop tick; 5 (code default)
+      # couldn't keep pace as the feed grew to ~900 products — bumped so the
+      # textless backlog drains and stays caught up (media_repair self-limits
+      # once the gap closes: the textless query returns fewer rows).
+      AGF_MEDIA_REPAIR_PER_CYCLE: ${AGF_MEDIA_REPAIR_PER_CYCLE:-12}
     healthcheck:
       # the loop writes a heartbeat each sweep; --healthcheck fails if it goes stale
       # (catches a hung/crash-looping worker that `restart` alone would mask).
