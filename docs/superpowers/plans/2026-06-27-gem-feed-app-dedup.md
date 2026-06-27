@@ -15,7 +15,7 @@
 - **page_count is display-only** — never a ranking signal or scored axis.
 - **Commit to `main` directly** (solo, local-only repo). Stage **explicit paths** only — never `git add -A`/`.`.
 - **Module root is `backend/`** for Go commands.
-- **DB tests skip silently without their env var** — a skip is NOT a pass. Set `AGF_TEST_DB_URL=postgresql://agf:agf@localhost:5433/agf_it` for the pytest DB test and `AGF_IT_DB_URL=postgresql://agf:agf@localhost:5433/agf_it` for the Go integration/repo tests, and confirm the summary shows the test RAN (not `s`/`skipped`).
+- **DB tests skip silently without their env var** — a skip is NOT a pass. Set `AGF_TEST_DB_URL=postgresql://agf:agf@localhost:55433/agf_it` for the pytest DB test and `AGF_IT_DB_URL=postgresql://agf:agf@localhost:55433/agf_it` for the Go integration/repo tests, and confirm the summary shows the test RAN (not `s`/`skipped`).
 - **Standard is ZERO failing tests** in the full suite before done.
 - **The product-key SQL is verified** against live prod: 965 → 870 rows, both cross-store pairs merge, over-merge check clean (max 1 distinct name per key, 0 false merges).
 
@@ -170,13 +170,13 @@ def test_products_view_shape_and_conservation():
 
 - [ ] **Step 3: Run the test to verify it fails**
 
-Run: `AGF_TEST_DB_URL=postgresql://agf:agf@localhost:5433/agf_it .venv/bin/python -m pytest tests/db/test_matview_products.py -q`
+Run: `AGF_TEST_DB_URL=postgresql://agf:agf@localhost:55433/agf_it .venv/bin/python -m pytest tests/db/test_matview_products.py -q`
 Expected: FAIL — `relation "frontend.emerging_scaling_products" does not exist` (the migration hasn't been applied because the file is new but apply_migrations runs it; if it already applied, the failure is instead a missing-column/shape error). Confirm it RAN (not `skipped`).
 
 - [ ] **Step 4: Apply the migration and re-run**
 
 `apply_migrations` in Step 2 applies the new file. Re-run:
-Run: `AGF_TEST_DB_URL=postgresql://agf:agf@localhost:5433/agf_it .venv/bin/python -m pytest tests/db/test_matview_products.py -q`
+Run: `AGF_TEST_DB_URL=postgresql://agf:agf@localhost:55433/agf_it .venv/bin/python -m pytest tests/db/test_matview_products.py -q`
 Expected: PASS (`1 passed`).
 
 - [ ] **Step 5: Apply to the live DB and spot-check the dedup**
@@ -305,7 +305,7 @@ func TestShortlistCollapsesProduct(t *testing.T) {
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cd backend && AGF_IT_DB_URL=postgresql://agf:agf@localhost:5433/agf_it go test ./repositories/ -run TestShortlistCollapsesProduct -v`
+Run: `cd backend && AGF_IT_DB_URL=postgresql://agf:agf@localhost:55433/agf_it go test ./repositories/ -run TestShortlistCollapsesProduct -v`
 Expected: FAIL — `ShortlistRow` has no field `PageCount`/`Stores` (compile error), or the scan errors on the missing columns.
 
 - [ ] **Step 3: Add the model fields**
@@ -382,10 +382,10 @@ to:
 
 - [ ] **Step 7: Run the dedup test + the existing integration suite**
 
-Run: `cd backend && AGF_IT_DB_URL=postgresql://agf:agf@localhost:5433/agf_it go test ./repositories/ -run TestShortlistCollapsesProduct -v`
+Run: `cd backend && AGF_IT_DB_URL=postgresql://agf:agf@localhost:55433/agf_it go test ./repositories/ -run TestShortlistCollapsesProduct -v`
 Expected: PASS.
 
-Run: `cd backend && AGF_IT_DB_URL=postgresql://agf:agf@localhost:5433/agf_it go test ./... 2>&1`
+Run: `cd backend && AGF_IT_DB_URL=postgresql://agf:agf@localhost:55433/agf_it go test ./... 2>&1`
 Expected: PASS — in particular `internal/integration` `TestShortlist` still sees **3** rows (each seeded advertiser is its own product) and `TestGemDossier` still resolves. Read the full output; confirm no `FAIL` and that DB tests ran (not all skipped).
 
 - [ ] **Step 8: Commit**
@@ -538,7 +538,7 @@ func TestDossierListsAllPages(t *testing.T) {
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cd backend && AGF_IT_DB_URL=postgresql://agf:agf@localhost:5433/agf_it go test ./repositories/ -run TestDossierListsAllPages -v`
+Run: `cd backend && AGF_IT_DB_URL=postgresql://agf:agf@localhost:55433/agf_it go test ./repositories/ -run TestDossierListsAllPages -v`
 Expected: FAIL — `d.Pages` undefined (compile error).
 
 - [ ] **Step 3: Add the model types**
@@ -620,12 +620,12 @@ Then add `Pages: pages,` to the `GemDossier` literal (in the `d := &models.GemDo
 
 - [ ] **Step 5: Run the test to verify it passes**
 
-Run: `cd backend && AGF_IT_DB_URL=postgresql://agf:agf@localhost:5433/agf_it go test ./repositories/ -run 'TestDossierListsAllPages|TestShortlistCollapsesProduct' -v`
+Run: `cd backend && AGF_IT_DB_URL=postgresql://agf:agf@localhost:55433/agf_it go test ./repositories/ -run 'TestDossierListsAllPages|TestShortlistCollapsesProduct' -v`
 Expected: PASS (both).
 
 - [ ] **Step 6: Run the full Go suite**
 
-Run: `cd backend && AGF_IT_DB_URL=postgresql://agf:agf@localhost:5433/agf_it go test ./... 2>&1`
+Run: `cd backend && AGF_IT_DB_URL=postgresql://agf:agf@localhost:55433/agf_it go test ./... 2>&1`
 Expected: PASS, no `FAIL`, DB tests ran.
 
 - [ ] **Step 7: Commit**
