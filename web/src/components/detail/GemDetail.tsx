@@ -14,6 +14,7 @@ import { AdGrowth, AdsSection } from "./EvidenceReel";
 import { AppStorePreview } from "./AppStorePreview";
 import { GemFacts } from "./GemFacts";
 import { GemNotes } from "./GemNotes";
+import { PagesSection } from "./PagesSection";
 
 // The stored return URL never changes while this page is mounted.
 const subscribeNever = () => () => {};
@@ -109,6 +110,10 @@ export function GemDetail({ advertiserId }: { advertiserId: number }) {
 
       <div style={{ marginTop: 36 }}>
         <AdsSection gem={gem} />
+      </div>
+
+      <div style={{ marginTop: 36 }}>
+        <PagesSection gem={gem} />
       </div>
 
       <div style={{ marginTop: 36 }}>
