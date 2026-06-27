@@ -52,6 +52,15 @@ def test_single_new_candidate_promotes_under_default(pg_conn, monkeypatch):
     assert dk.record_keyword_sweep(pg_conn, barren_id, new_candidates=0) == "retired"
 
 
+def test_dry_streak_column_defaults_zero(pg_conn):
+    # migration 143: every keyword starts with an empty dry streak
+    dk.add_trial_keywords(pg_conn, ["FWTEST freshcol"])
+    val = pg_conn.execute(text(
+        "SELECT dry_streak FROM discovery.dynamic_keywords WHERE keyword = :k"),
+        {"k": "FWTEST freshcol"}).scalar()
+    assert val == 0
+
+
 def test_apply_verdicts_frees_budget_reached_trials(pg_conn, monkeypatch):
     # A lowered budget (the actual fix): trials stuck at sweeps_used=2 must now verdict.
     monkeypatch.setenv("AGF_FLYWHEEL_TRIAL_SWEEPS", "2")
