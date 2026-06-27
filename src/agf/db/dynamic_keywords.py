@@ -35,6 +35,14 @@ def promote_min_new() -> int:
     return _env_int("AGF_FLYWHEEL_PROMOTE_MIN_NEW", 1)
 
 
+def retire_dry_streak() -> int:
+    # Consecutive 0-new sweeps before a proven ACTIVE keyword is retired. Without this an
+    # active is swept forever after its basin is harvested (gem_copy: 2,250 sweeps -> 336
+    # new). Read at call time so the plist/env can tune it without a code edit; set very
+    # high to disable. Saturated keywords leave the daily rotation and the never-re-mint set.
+    return _env_int("AGF_FLYWHEEL_RETIRE_DRY_STREAK", 5)
+
+
 # Back-compat aliases (some callers/tests import these names). These are the
 # defaults; the functions above are authoritative at runtime.
 TRIAL_SWEEPS = trial_sweeps()
@@ -77,15 +85,23 @@ def live_keywords(conn, *, kind: str = "app"):
 
 
 def record_keyword_sweep(conn, keyword_id: int, *, new_candidates: int) -> str:
-    """Bump one keyword's counters after a sweep and apply the trial verdict.
-    Returns the (possibly new) status."""
+    """Bump one keyword's counters after a sweep and apply the verdict; returns the
+    (possibly new) status. A 0-new sweep lengthens dry_streak, any new candidate resets
+    it. An ACTIVE keyword that has gone dry for retire_dry_streak() straight sweeps is
+    retired (drops out of the daily rotation). The trial verdict is unchanged."""
     row = conn.execute(text(
         "UPDATE discovery.dynamic_keywords "
         "SET sweeps_used = sweeps_used + 1, "
         "    new_candidates_total = new_candidates_total + :n, "
+        "    dry_streak = CASE WHEN :n > 0 THEN 0 ELSE dry_streak + 1 END, "
         "    last_swept_at = now() "
-        "WHERE id = :i RETURNING status, sweeps_used, new_candidates_total"),
+        "WHERE id = :i RETURNING status, sweeps_used, new_candidates_total, dry_streak"),
         {"n": new_candidates, "i": keyword_id}).one()
+    if row.status == "active" and row.dry_streak >= retire_dry_streak():
+        conn.execute(text(
+            "UPDATE discovery.dynamic_keywords SET status='retired' WHERE id=:i"),
+            {"i": keyword_id})
+        return "retired"
     if row.status != "trial" or row.sweeps_used < trial_sweeps():
         return row.status
     verdict = "active" if row.new_candidates_total >= promote_min_new() else "retired"

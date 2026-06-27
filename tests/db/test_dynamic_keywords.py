@@ -61,6 +61,52 @@ def test_dry_streak_column_defaults_zero(pg_conn):
     assert val == 0
 
 
+def _make_active(conn, keyword, *, dry_streak):
+    dk.add_trial_keywords(conn, [keyword])
+    conn.execute(text(
+        "UPDATE discovery.dynamic_keywords "
+        "SET status = 'active', sweeps_used = 8, new_candidates_total = 9, dry_streak = :d "
+        "WHERE keyword = :k"),
+        {"d": dry_streak, "k": keyword})
+    return conn.execute(text(
+        "SELECT id FROM discovery.dynamic_keywords WHERE keyword = :k"),
+        {"k": keyword}).scalar()
+
+
+def _dry(conn, keyword):
+    return conn.execute(text(
+        "SELECT dry_streak FROM discovery.dynamic_keywords WHERE keyword = :k"),
+        {"k": keyword}).scalar()
+
+
+def test_retire_dry_streak_reads_env(monkeypatch):
+    monkeypatch.setenv("AGF_FLYWHEEL_RETIRE_DRY_STREAK", "3")
+    assert dk.retire_dry_streak() == 3
+    monkeypatch.delenv("AGF_FLYWHEEL_RETIRE_DRY_STREAK", raising=False)
+    assert dk.retire_dry_streak() == 5   # default
+
+
+def test_active_retires_after_dry_streak(pg_conn, monkeypatch):
+    monkeypatch.setenv("AGF_FLYWHEEL_RETIRE_DRY_STREAK", "5")
+    kid = _make_active(pg_conn, "FWTEST dryout", dry_streak=4)   # one short of K
+    assert dk.record_keyword_sweep(pg_conn, kid, new_candidates=0) == "retired"
+    assert _status(pg_conn, "FWTEST dryout") == "retired"
+
+
+def test_active_new_candidate_resets_streak(pg_conn, monkeypatch):
+    monkeypatch.setenv("AGF_FLYWHEEL_RETIRE_DRY_STREAK", "5")
+    kid = _make_active(pg_conn, "FWTEST revived", dry_streak=4)
+    assert dk.record_keyword_sweep(pg_conn, kid, new_candidates=2) == "active"
+    assert _dry(pg_conn, "FWTEST revived") == 0
+
+
+def test_active_below_threshold_stays_active(pg_conn, monkeypatch):
+    monkeypatch.setenv("AGF_FLYWHEEL_RETIRE_DRY_STREAK", "5")
+    kid = _make_active(pg_conn, "FWTEST patient", dry_streak=2)
+    assert dk.record_keyword_sweep(pg_conn, kid, new_candidates=0) == "active"
+    assert _dry(pg_conn, "FWTEST patient") == 3
+
+
 def test_apply_verdicts_frees_budget_reached_trials(pg_conn, monkeypatch):
     # A lowered budget (the actual fix): trials stuck at sweeps_used=2 must now verdict.
     monkeypatch.setenv("AGF_FLYWHEEL_TRIAL_SWEEPS", "2")
