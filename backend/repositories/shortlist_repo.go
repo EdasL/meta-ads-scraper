@@ -63,8 +63,8 @@ func buildShortlistOrder(p ShortlistParams) (string, []any) {
 	if p.Sort == "foryou" {
 		return `(SELECT ps.p_like FROM frontend.preference_scores ps
 		         WHERE ps.user_email = ?
-		           AND ps.advertiser_id = frontend.emerging_scaling_apps.advertiser_id)
-		        DESC NULLS LAST, advertiser_id`, []any{p.UserEmail}
+		           AND ps.advertiser_id = frontend.emerging_scaling_products.advertiser_id)
+		        DESC NULLS LAST, active_ad_count DESC NULLS LAST, advertiser_id`, []any{p.UserEmail}
 	}
 	return orderClause(p.Sort, p.Dir), nil
 }
@@ -93,7 +93,9 @@ func orderClause(sort, dir string) string {
 	if c.nullable {
 		clause += " NULLS LAST"
 	}
-	return clause + ", advertiser_id"
+	// active_ad_count is the summed footprint in the product view; a many-page
+	// app sorts above an equal-score single-page app.
+	return clause + ", active_ad_count DESC NULLS LAST, advertiser_id"
 }
 
 // likePattern wraps q for a substring ILIKE, escaping LIKE metacharacters so
@@ -116,7 +118,7 @@ func shortlistConds(p ShortlistParams) ([]string, []any) {
 	if p.Category != nil {
 		conds = append(conds, `EXISTS (
 			SELECT 1 FROM public.apps
-			WHERE public.apps.id = frontend.emerging_scaling_apps.app_id
+			WHERE public.apps.id = frontend.emerging_scaling_products.app_id
 			  AND public.apps.genre = ?)`)
 		args = append(args, *p.Category)
 	}
@@ -163,13 +165,16 @@ func Shortlist(ctx context.Context, g *gorm.DB, p ShortlistParams) ([]models.Sho
 	total := 0
 	err := db.WithReadTx(ctx, g, func(tx *gorm.DB) error {
 		if err := tx.Raw(
-			`SELECT count(*) FROM frontend.emerging_scaling_apps WHERE `+where, args...,
+			`SELECT count(*) FROM frontend.emerging_scaling_products WHERE `+where, args...,
 		).Scan(&total).Error; err != nil {
 			return err
 		}
 		scanned := make([]mvScanRow, 0)
 		if err := tx.Raw(
-			`SELECT `+mvCols+` FROM frontend.emerging_scaling_apps
+			// page_count/stores exist only in the product view, so they are appended
+			// here rather than added to the shared mvCols (which preference_repo still
+			// scans from the per-advertiser matview, where those columns don't exist).
+			`SELECT `+mvCols+`, page_count, stores FROM frontend.emerging_scaling_products
 			 WHERE `+where+`
 			 ORDER BY `+order+`
 			 LIMIT ? OFFSET ?`,
@@ -199,8 +204,8 @@ func ShortlistCategories(ctx context.Context, g *gorm.DB, p ShortlistParams) ([]
 	err := db.WithReadTx(ctx, g, func(tx *gorm.DB) error {
 		return tx.Raw(
 			`SELECT public.apps.genre AS category, count(*) AS count
-			 FROM frontend.emerging_scaling_apps
-			 JOIN public.apps ON public.apps.id = frontend.emerging_scaling_apps.app_id
+			 FROM frontend.emerging_scaling_products
+			 JOIN public.apps ON public.apps.id = frontend.emerging_scaling_products.app_id
 			 WHERE public.apps.genre IS NOT NULL
 			   AND `+where+`
 			 GROUP BY public.apps.genre

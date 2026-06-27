@@ -121,6 +121,13 @@ type ShortlistRow struct {
 	// WebOnly = true when the confirmed funnel's payoff is web_sub (no linked app
 	// store listing). Added by migration 141. Always false for app-backed rows.
 	WebOnly bool `json:"web_only" gorm:"column:web_only"`
+	// Product-level dedup (142_emerging_products_view.sql). page_count = distinct
+	// Meta pages fronting this app; stores = "ios" / "android" / "ios+android".
+	// Display-only — running one app from many pages is a common ad technique,
+	// not a quality signal. Populated only when read from the product view (zero
+	// value when scanned from the per-advertiser matview).
+	PageCount int     `json:"page_count" gorm:"column:page_count"`
+	Stores    *string `json:"stores" gorm:"column:stores"`
 	// Enriched in code after the base matview scan (not scanned directly):
 	// the explainer, the per-advertiser growth summary, and the hero ad
 	// creative for the card. All nullable → JSON null when absent.

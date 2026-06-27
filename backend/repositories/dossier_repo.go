@@ -54,7 +54,10 @@ func Dossier(ctx context.Context, g *gorm.DB, advertiserID int) (*models.GemDoss
 	err := db.WithReadTx(ctx, g, func(tx *gorm.DB) error {
 		scanned := make([]mvScanRow, 0, 1)
 		if err := tx.Raw(
-			`SELECT `+mvCols+` FROM frontend.emerging_scaling_apps WHERE advertiser_id = ?`,
+			// page_count/stores live only in the product view; appended here (not in
+			// the shared mvCols) so the detail header carries product totals while the
+			// matview-only consumers keep scanning the bare column list.
+			`SELECT `+mvCols+`, page_count, stores FROM frontend.emerging_scaling_products WHERE advertiser_id = ?`,
 			advertiserID,
 		).Scan(&scanned).Error; err != nil {
 			return err
