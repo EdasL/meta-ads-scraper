@@ -248,11 +248,20 @@ export function ReviewCard({
   const [loadingDossier, setLoadingDossier] = useState(true);
   const [lightbox, setLightbox] = useState<number | null>(null);
 
-  useEffect(() => {
-    let alive = true;
+  // Reset the per-card dossier state when the card changes. Adjusting state
+  // during render (guarded by the change) is React's recommended replacement
+  // for calling setState synchronously in an effect — no cascading-render
+  // warning, and the reset applies before the stale dossier paints.
+  const [prevAdvId, setPrevAdvId] = useState(card.advertiser_id);
+  if (card.advertiser_id !== prevAdvId) {
+    setPrevAdvId(card.advertiser_id);
     setDossier(null);
     setLoadingDossier(true);
     setLightbox(null);
+  }
+
+  useEffect(() => {
+    let alive = true;
     getGem(card.advertiser_id)
       .then((d) => alive && setDossier(d))
       .catch(() => alive && setDossier(null))

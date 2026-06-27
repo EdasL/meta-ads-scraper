@@ -15,11 +15,20 @@ export function ReviewDeck() {
   const [idx, setIdx] = useState(0);
   const [loading, setLoading] = useState(true);
 
+  // Reset the deck when the signed-in user changes. Adjusting state during
+  // render (guarded by the change) is React's recommended replacement for
+  // calling setState synchronously in an effect — it avoids the cascading-
+  // render warning and applies before the children see stale idx/loading.
+  const [prevEmail, setPrevEmail] = useState(userEmail);
+  if (userEmail !== prevEmail) {
+    setPrevEmail(userEmail);
+    setIdx(0);
+    setLoading(true);
+  }
+
   useEffect(() => {
     if (!userEmail) return;
     let alive = true;
-    setLoading(true);
-    setIdx(0);
     // Fetch the whole unrated queue at once so review feels continuous — no
     // page size, no counter. Already-rated apps are excluded server-side.
     getPreferenceQueue(userEmail)
