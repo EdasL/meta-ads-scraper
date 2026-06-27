@@ -133,6 +133,35 @@ func TestAssembleQueue_UnderfillRedistributes(t *testing.T) {
 	require.Len(t, seen, 10, "all distinct advertisers must be present")
 }
 
+func TestAssembleQueueDedupsByAppID(t *testing.T) {
+	appA, appB := 100, 200
+	mk := func(adv int, app *int, plike float64) prefCandidate {
+		c := prefCandidate{Source: "scored"}
+		c.AdvertiserID = adv
+		c.AppID = app
+		c.PLike = plike
+		c.Cohort = "ios"
+		return c
+	}
+	cands := []prefCandidate{
+		mk(1, &appA, 0.9), // same app as #2, higher p_like → this one wins
+		mk(2, &appA, 0.5),
+		mk(3, &appB, 0.7),
+	}
+	got := assembleQueue(cands, queueOpts{
+		Limit: 10, PerNicheCap: 10, ExploitFrac: 1, UncertainFrac: 0,
+		Rng: rand.New(rand.NewSource(1)),
+	})
+	apps := map[int]int{}
+	for _, c := range got {
+		if c.AppID != nil {
+			apps[*c.AppID]++
+		}
+	}
+	require.LessOrEqual(t, apps[appA], 1, "at most one card per app_id")
+	require.Len(t, got, 2, "two distinct apps → two cards")
+}
+
 func TestNicheKey_FallbackAndExempt(t *testing.T) {
 	str := func(s string) *string { return &s }
 	cases := []struct {

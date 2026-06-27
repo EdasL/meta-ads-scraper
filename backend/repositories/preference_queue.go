@@ -146,6 +146,7 @@ func assembleQueue(cands []prefCandidate, opts queueOpts) []prefCandidate {
 
 	picked := make([]prefCandidate, 0, opts.Limit)
 	seenAdv := map[int]bool{}
+	seenApp := map[int]bool{} // collapse multiple Meta pages of the same app
 	nicheCount := map[string]int{}
 	cursors := []int{0, 0, 0}
 	got := []int{0, 0, 0}
@@ -157,11 +158,17 @@ func assembleQueue(cands []prefCandidate, opts queueOpts) []prefCandidate {
 			if seenAdv[c.AdvertiserID] {
 				continue
 			}
+			if c.AppID != nil && seenApp[*c.AppID] {
+				continue
+			}
 			k := nicheKey(c)
 			if k != "" && nicheCount[k] >= cap {
 				continue
 			}
 			seenAdv[c.AdvertiserID] = true
+			if c.AppID != nil {
+				seenApp[*c.AppID] = true
+			}
 			if k != "" {
 				nicheCount[k]++
 			}
