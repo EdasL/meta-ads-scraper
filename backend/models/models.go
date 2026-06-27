@@ -252,6 +252,20 @@ type CreativeInfo struct {
 	EuTotalReach       *int64     `json:"eu_total_reach" gorm:"column:eu_total_reach"`
 }
 
+// AdvertiserPage is one Meta page that runs ads for a product, with its ad
+// footprint. The detail page lists every page fronting an app (across both
+// stores) so a human can see the whole spread and open each Ad Library page.
+type AdvertiserPage struct {
+	AdvertiserID int      `json:"advertiser_id" gorm:"column:advertiser_id"`
+	PageID       *string  `json:"page_id" gorm:"column:page_id"`
+	PageName     *string  `json:"page_name" gorm:"column:page_name"`
+	PageCategory *string  `json:"page_category" gorm:"column:page_category"`
+	ActiveAds    int      `json:"active_ads" gorm:"column:active_ads"`
+	TotalAds     int      `json:"total_ads" gorm:"column:total_ads"`
+	FirstAd      *APIDate `json:"first_ad" gorm:"column:first_ad"`
+	LastAd       *APIDate `json:"last_ad" gorm:"column:last_ad"`
+}
+
 // GemDossier is assembled in code from several reads (not scanned directly).
 // The Meta-signal block (ads_last_seen … meta_active_ads_checked_at) comes from
 // public.advertisers; counts are NULL until the count-ads job has run.
@@ -275,6 +289,9 @@ type GemDossier struct {
 	Growth                 *GrowthInfo     `json:"growth"`
 	AdLifecycle            *AdLifecycle    `json:"ad_lifecycle"`
 	MetricChange4w         *MetricChange4w `json:"metric_change_4w"`
+	// Every Meta page fronting this app, across both stores (always non-nil; one
+	// entry when the product has a single page). 142_emerging_products_view.sql.
+	Pages []AdvertiserPage `json:"pages"`
 }
 
 // MetricChange4w is the trailing 4-week change in the ad signals, reconstructed

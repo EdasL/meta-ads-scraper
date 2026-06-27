@@ -257,12 +257,42 @@ func Dossier(ctx context.Context, g *gorm.DB, advertiserID int) (*models.GemDoss
 			return err
 		}
 
+		// Pages running this app: every advertiser whose ads point at any store
+		// listing in this product (same frontend.product_key as the representative
+		// app — the iOS and Android siblings merge). One row per page with its ad
+		// footprint. Uses the SAME key function as the product view, so the page
+		// set matches the feed's collapse exactly.
+		pages := make([]models.AdvertiserPage, 0)
+		if gems[0].AppID != nil {
+			if err := tx.Raw(
+				`SELECT adv.id AS advertiser_id, adv.page_id, adv.page_name, adv.page_category,
+				        count(a.id)                            AS total_ads,
+				        count(a.id) FILTER (WHERE a.is_active) AS active_ads,
+				        min(a.start_date)::date                AS first_ad,
+				        max(a.end_date)::date                  AS last_ad
+				 FROM public.ads a
+				 JOIN public.advertisers adv ON adv.id = a.advertiser_id
+				 WHERE a.app_id IN (
+				   SELECT ap.id FROM public.apps ap
+				   WHERE frontend.product_key(ap.name, ap.developer)
+				       = (SELECT frontend.product_key(name, developer)
+				          FROM public.apps WHERE id = ?)
+				 )
+				 GROUP BY adv.id, adv.page_id, adv.page_name, adv.page_category
+				 ORDER BY active_ads DESC NULLS LAST, total_ads DESC`,
+				*gems[0].AppID,
+			).Scan(&pages).Error; err != nil {
+				return err
+			}
+		}
+
 		d := &models.GemDossier{
 			Gem:       gems[0],
 			Apps:      apps,
 			Funnels:   funnels,
 			Creatives: creatives,
 			Growth:    gems[0].Growth, // folded from the matview growth columns
+			Pages:     pages,
 		}
 		if len(exps) > 0 {
 			ex := exps[0]

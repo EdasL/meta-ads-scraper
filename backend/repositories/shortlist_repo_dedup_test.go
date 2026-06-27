@@ -82,3 +82,29 @@ func TestShortlistCollapsesProduct(t *testing.T) {
 	require.NotNil(t, row.Stores)
 	require.Equal(t, "ios+android", *row.Stores)
 }
+
+func TestDossierListsAllPages(t *testing.T) {
+	requireRatingsDB(t)
+	seedDedup(ratingsDB)
+	ctx := context.Background()
+
+	// Representative of the Dedup product is the top-score iOS page (P1). Find it.
+	cohort := dedupCohort
+	rows, _, err := repositories.Shortlist(ctx, ratingsDB, repositories.ShortlistParams{
+		Cohort: &cohort, Limit: 1,
+	})
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+
+	d, err := repositories.Dossier(ctx, ratingsDB, rows[0].AdvertiserID)
+	require.NoError(t, err)
+	require.NotNil(t, d)
+	require.Len(t, d.Pages, 4, "all four pages across both stores")
+
+	// Sorted by active ads desc — P4 (4 active) leads.
+	require.GreaterOrEqual(t, d.Pages[0].ActiveAds, d.Pages[1].ActiveAds)
+	for _, p := range d.Pages {
+		require.NotEmpty(t, p.PageName)
+		require.GreaterOrEqual(t, p.TotalAds, 1)
+	}
+}
