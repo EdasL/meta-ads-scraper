@@ -168,8 +168,8 @@ export interface ApiAdvertiserPage {
   page_id: string | null;
   page_name: string | null;
   page_category: string | null;
-  active_ads: number;
-  total_ads: number;
+  active_ads: number | null;
+  total_ads: number | null;
   first_ad: string | null;
   last_ad: string | null;
 }
