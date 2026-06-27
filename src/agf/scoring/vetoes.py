@@ -12,7 +12,9 @@ INCUMBENT_PAGE_LIKES_MAX = 10_000    # FB audience above this == incumbent (user
 # filtering is deferred to the funnel confirm stage + scoring.
 FUNNEL_INCUMBENT_PAGE_LIKES_MAX = 5_000_000
 MAX_ACTIVE_ADS_FOR_GEM = 200         # an ad library bigger than this == funded growth team, not emerging (user-set 2026-06-13, was 80)
-ESTABLISHED_INSTALLS_MAX = 100_000     # store installs above this == established (user-set 2026-06-10)
+ESTABLISHED_INSTALLS_MAX = 100_000     # DEPRECATED 2026-06-27: no longer gates keep/drop — Play's
+                                       # cumulative installs skewed the feed ~90/10 to iOS. Kept for
+                                       # reference; triage + established_traction now gate on ratings only.
 ESTABLISHED_RATINGS_MAX = 5_000        # rating base above this == established (user-set 2026-06-10)
 
 
@@ -71,11 +73,14 @@ def incumbent_audience(fv) -> bool:
 
 def established_traction(fv) -> bool:
     # already-huge store traction -> established, not emerging. NULLs pass.
-    # Checks the maxima across ALL linked listings (when available) so a 10M-install
-    # Android sibling can't hide behind a small-rating-base iOS listing.
-    installs = max(fv.installs or 0, getattr(fv, "max_installs", None) or 0)
+    # Rating base only: Play's cumulative maxInstalls was dropping ~83% of Android
+    # candidates on a signal iOS apps never expose, skewing the feed ~90/10 to iOS
+    # (user 2026-06-27). Both stores are judged on rating_count, the comparable axis;
+    # mega-install giants still carry huge rating bases, and funded incumbents are
+    # caught by the page-likes / ad-volume / relaunch vetoes. Checks the max across
+    # ALL linked listings so a high-rating Android sibling can't hide behind a small iOS one.
     ratings = max(fv.rating_count or 0, getattr(fv, "max_rating_count", None) or 0)
-    return installs > ESTABLISHED_INSTALLS_MAX or ratings > ESTABLISHED_RATINGS_MAX
+    return ratings > ESTABLISHED_RATINGS_MAX
 
 
 _VETOES = [

@@ -17,9 +17,11 @@ def meta(**kw):
 def test_decision_rules():
     assert triage_decision(None) == ("dropped", "no_us_listing")
     assert triage_decision(meta(is_game=True)) == ("dropped", "game")
-    assert triage_decision(meta(installs=100_001)) == ("dropped", "installs_over_threshold")
+    # Installs no longer gate (user 2026-06-27): Play's cumulative maxInstalls dropped
+    # ~83% of Android candidates on a signal iOS never exposes. Ratings is the gate now.
+    assert triage_decision(meta(installs=5_000_000, rating_count=100)) == ("kept", None)
     assert triage_decision(meta(rating_count=5_001)) == ("dropped", "ratings_over_threshold")
-    assert triage_decision(meta(installs=100_000, rating_count=5_000)) == ("kept", None)
+    assert triage_decision(meta(installs=5_000_000, rating_count=5_000)) == ("kept", None)
     assert triage_decision(meta(is_game=None)) == ("kept", None)   # unknown passes (repo rule)
 
 

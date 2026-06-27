@@ -15,17 +15,19 @@ from types import SimpleNamespace
 
 from agf.db import repo
 from agf.db.candidates import mark_triaged, new_candidates
-from agf.scoring.vetoes import ESTABLISHED_INSTALLS_MAX, ESTABLISHED_RATINGS_MAX
+from agf.scoring.vetoes import ESTABLISHED_RATINGS_MAX
 
 
 def triage_decision(meta) -> tuple[str, str | None]:
-    """('kept'|'dropped', drop_reason). Pure; NULL/unknown fields always pass."""
+    """('kept'|'dropped', drop_reason). Pure; NULL/unknown fields always pass.
+
+    Gated on rating_count only — NOT installs. Play's cumulative maxInstalls was
+    dropping ~83% of Android candidates on a signal iOS apps never expose, skewing the
+    feed ~90/10 to iOS (user 2026-06-27). Both stores now use the comparable axis."""
     if meta is None:
         return "dropped", "no_us_listing"
     if meta.is_game is True:
         return "dropped", "game"
-    if (meta.installs or 0) > ESTABLISHED_INSTALLS_MAX:
-        return "dropped", "installs_over_threshold"
     if (meta.rating_count or 0) > ESTABLISHED_RATINGS_MAX:
         return "dropped", "ratings_over_threshold"
     return "kept", None

@@ -89,18 +89,22 @@ def test_incumbent_audience_fires_above_10k_likes():
     assert incumbent_audience(_fv(page_like_count=None)) is False     # unknown passes
 
 
-def test_established_traction_sees_all_linked_listings():
-    # a huge Android sibling can't hide behind the latest (small) iOS listing
-    assert established_traction(_fv(installs=None, max_installs=10_000_000)) is True
+def test_established_traction_sees_all_linked_rating_bases():
+    # rating base is the cross-store traction gate (symmetric with iOS, which
+    # exposes no install count). A huge Android sibling can't hide behind a
+    # small-rating-base iOS listing.
     assert established_traction(_fv(rating_count=1_000, max_rating_count=900_000)) is True
-    assert established_traction(_fv(installs=12_000, max_installs=40_000)) is False
+    assert established_traction(_fv(rating_count=2_000, max_rating_count=4_000)) is False
 
 
-def test_established_traction_fires_on_installs_or_ratings():
-    assert established_traction(_fv(installs=100_001)) is True
+def test_established_traction_fires_on_ratings_only():
+    # Installs no longer gate (user 2026-06-27): Play's cumulative maxInstalls was
+    # dropping ~83% of Android candidates on a signal iOS apps never expose, skewing
+    # the feed ~90/10 to iOS. Both stores are now judged on rating_count alone.
     assert established_traction(_fv(rating_count=5_001, is_emerging=False)) is True
-    assert apply_vetoes(_fv(installs=100_001)).reason == "established_traction"
-    assert established_traction(_fv(installs=100_000, rating_count=5_000)) is False
+    assert apply_vetoes(_fv(rating_count=5_001, is_emerging=False)).reason == "established_traction"
+    assert established_traction(_fv(installs=100_001, rating_count=100)) is False   # big installs, small rating base -> emerging
+    assert established_traction(_fv(installs=10_000_000, max_installs=10_000_000)) is False  # installs never veto
     assert established_traction(_fv(installs=None, rating_count=None)) is False  # unknown passes
 
 
