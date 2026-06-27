@@ -146,6 +146,17 @@ function GemRow({
                   Web only
                 </span>
               )}
+              {row.page_count !== undefined && row.page_count > 1 && (
+                <span className="t-xs" style={{ color: "var(--muted)", whiteSpace: "nowrap" }}
+                      title="Meta pages running ads for this app">
+                  {row.page_count} pages
+                </span>
+              )}
+              {row.stores === "ios+android" && (
+                <span className="t-xs" style={{ color: "var(--muted)", whiteSpace: "nowrap" }}>
+                  iOS + Android
+                </span>
+              )}
             </span>
             {row.tagline && (
               <span className="t-xs gem-table-tagline" title={row.tagline}>
