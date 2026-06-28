@@ -183,7 +183,14 @@ func Shortlist(ctx context.Context, g *gorm.DB, p ShortlistParams) ([]models.Sho
 			return err
 		}
 		rows = toShortlistRows(scanned)
-		return attachEnrichment(tx, rows)
+		// The Discover feed is a comparison TABLE (store icon + metrics) — it does
+		// NOT render the hero ad creative or the LLM explainer (those live on the
+		// detail page and the review cards, which fetch them separately). Skipping
+		// attachEnrichment here drops two prod-DB round-trips per feed/filter load —
+		// the hero-creative LATERAL alone was ~600ms against the remote Cloud SQL,
+		// the dominant cost that made filtering feel unresponsive. Vestigial from
+		// the deleted GemCard UI; the table never consumed these fields.
+		return nil
 	})
 	if rows == nil {
 		rows = make([]models.ShortlistRow, 0)
