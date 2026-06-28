@@ -9,20 +9,36 @@ _BUCKET = lambda: os.environ.get("S3_BUCKET", "agf")
 
 
 def get_s3():
-    """Return a boto3 S3 client pointed at MinIO/S3, ensuring the bucket exists."""
+    """Return a boto3 S3 client pointed at MinIO/S3, ensuring the bucket exists.
+
+    Works against both MinIO and GCS's S3-compatible (interoperability)
+    endpoint. GCS rejects the CRC32 request checksum botocore >=1.36 adds by
+    default (-> SignatureDoesNotMatch / InvalidArgument), so checksums are set
+    to "when_required"; harmless for MinIO. Set S3_REGION to the GCS bucket
+    location (e.g. europe-west1) — GCS v4 signing requires it to match."""
     client = boto3.client(
         "s3",
         endpoint_url=os.environ.get("S3_ENDPOINT"),
         aws_access_key_id=os.environ.get("MINIO_ACCESS_KEY"),
         aws_secret_access_key=os.environ.get("MINIO_SECRET_KEY"),
         region_name=os.environ.get("S3_REGION", "us-east-1"),
-        config=Config(signature_version="s3v4", s3={"addressing_style": "path"}),
+        config=Config(
+            signature_version="s3v4",
+            s3={"addressing_style": "path"},
+            request_checksum_calculation="when_required",
+            response_checksum_validation="when_required",
+        ),
     )
     bucket = _BUCKET()
     try:
         client.head_bucket(Bucket=bucket)
     except ClientError:
-        client.create_bucket(Bucket=bucket)
+        # GCS buckets are pre-provisioned out of band; create_bucket would fail
+        # (and isn't permitted by the object-scoped HMAC). Ignore if it errors.
+        try:
+            client.create_bucket(Bucket=bucket)
+        except ClientError:
+            pass
     return client
 
 
