@@ -301,8 +301,13 @@ rendered on the dashboard. Fixed by unifying onto one bucket:
   path (launchd's minimal env can't auto-discover ADC). Reload with
   `launchctl bootout gui/501/com.fielddesk.api && launchctl bootstrap gui/501 <plist>`
   — `kickstart -k` does NOT re-read plist env.
-- **Migration** used `scripts/`-style boto3 copy (skip-existing, sha-named keys
-  dedup): VM MinIO → GCS (same region, fast) + Mac MinIO → GCS (historical,
-  slow home upload). MinIO containers/volumes are kept as **backup** until
-  reconciliation confirms parity, then can be decommissioned.
+- **Migration** used a boto3 copy (skip-existing, sha-named keys dedup): VM
+  MinIO → GCS + Mac MinIO → GCS. Reconciled to **0 DB keys missing from GCS**
+  (26,305 objects / 129 GB), then **both MinIOs were decommissioned 2026-06-29**
+  — VM `minio`/`minio-init` services + `minio_data` volume removed from
+  `/opt/agf/docker-compose.yml` (worker no longer `depends_on` minio-init), and
+  the Mac `db-minio-1` container + volume deleted. GCS is the sole store. A fresh
+  deploy should set the GCS S3-compat env (above) and skip the local MinIO
+  services. The Mac `db/docker-compose.yml` now only defines the (dormant) local
+  test postgres.
 - App icons are Apple/Play CDN URLs and render regardless.
