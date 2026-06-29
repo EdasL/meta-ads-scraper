@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import { getCategories, getShortlist } from "@/lib/api";
 import { useSession } from "next-auth/react";
 import { Fallback } from "@/components/Fallback";
@@ -82,7 +82,6 @@ interface FeedResult {
 }
 
 export function DiscoverFeed() {
-  const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const { filters, page, perPage } = useMemo(() => readUrl(searchParams), [searchParams]);
@@ -167,9 +166,13 @@ export function DiscoverFeed() {
   const navigate = useCallback(
     (f: Filters, p: number, pp: number) => {
       const qs = writeUrl(f, p, pp);
-      router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+      // History API, not router.replace(): after a hard load that already carried
+      // search params, router.replace() silently no-ops on same-pathname query
+      // changes, so filters/pagination would revert. pushState/replaceState is
+      // Next's supported path for query-only updates and syncs useSearchParams.
+      window.history.replaceState(null, "", qs ? `${pathname}?${qs}` : pathname);
     },
-    [router, pathname],
+    [pathname],
   );
 
   // Any filter edit restarts at page 1; an explicit page change scrolls back up.
