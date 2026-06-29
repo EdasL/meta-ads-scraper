@@ -103,10 +103,15 @@ services:
     environment:
       AGF_DATABASE_URL: ${AGF_DATABASE_URL}
       AGF_PROXIES: ${AGF_PROXIES}
+      # Object store: defaults to the local MinIO creds; set S3_ACCESS_KEY /
+      # S3_SECRET_KEY (+ S3_ENDPOINT=https://storage.googleapis.com,
+      # S3_REGION=<bucket-location>) to point at GCS via its S3-compat HMAC API
+      # (prod). boto3 in src/agf/storage/s3.py handles both.
       S3_ENDPOINT: ${S3_ENDPOINT}
-      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
-      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      MINIO_ACCESS_KEY: ${S3_ACCESS_KEY:-${MINIO_ROOT_USER}}
+      MINIO_SECRET_KEY: ${S3_SECRET_KEY:-${MINIO_ROOT_PASSWORD}}
       S3_BUCKET: ${S3_BUCKET}
+      S3_REGION: ${S3_REGION:-us-east-1}
       # sweep caps so a real run can't hammer Meta (all have in-code defaults)
       AGF_DRY_RUN: ${AGF_DRY_RUN:-}
       AGF_SWEEP_PAGES: ${AGF_SWEEP_PAGES:-2}

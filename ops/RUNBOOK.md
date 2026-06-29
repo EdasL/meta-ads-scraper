@@ -278,7 +278,31 @@ token heal.
 `AGF_DATABASE_URL` to `postgresql://agf:agf@localhost:5433/agf`; reload
 `com.fielddesk.api`; re-`bootstrap` `com.fielddesk.worker` + `com.fielddesk.scoring`.
 
-**Known gap.** New scraped ad creatives are written to the VM's MinIO; the Mac API's
-`S3_ENDPOINT` is the local MinIO, so creatives for newly-discovered apps won't render
-on the Mac dashboard until media moves to a shared store (e.g. GCS). App icons are
-Apple/Play CDN URLs and render regardless.
+**Media storage — GCS (unified 2026-06-29).** Formerly split-brain: the VM worker
+wrote creatives to the VM's MinIO while the Mac API read its own local MinIO
+(`:9010`), so media for apps discovered after the 2026-06-26 prod cutover never
+rendered on the dashboard. Fixed by unifying onto one bucket:
+
+- **Bucket** `gs://agf-media-peon-489013` (europe-west1, uniform access). The VM
+  SA `agf-worker-sa` has `roles/storage.objectAdmin`; an **HMAC key** for that SA
+  is the S3-compat credential (`gsutil hmac list -p peon-489013`).
+- **Worker (writes)** uses GCS via its **S3-compatible HMAC** endpoint (boto3 works;
+  see `src/agf/storage/s3.py` — checksum=`when_required` + `S3_REGION` must match
+  the bucket location or signing fails). Prod `/opt/agf/.env`:
+  `S3_ENDPOINT=https://storage.googleapis.com`, `S3_ACCESS_KEY`/`S3_SECRET_KEY`=HMAC,
+  `S3_BUCKET=agf-media-peon-489013`, `S3_REGION=europe-west1`. Compose worker env
+  maps `MINIO_ACCESS_KEY←S3_ACCESS_KEY`, `MINIO_SECRET_KEY←S3_SECRET_KEY` (the
+  MinIO container's root creds are untouched).
+- **Mac API (reads)** uses the **native GCS client via ADC**, NOT the S3 SDK —
+  aws-sdk-go-v2's SigV4 is incompatible with GCS HMAC (SignatureDoesNotMatch on
+  every op). `backend/storage` picks the backend by endpoint. The `com.fielddesk.api`
+  plist sets `S3_ENDPOINT=https://storage.googleapis.com`, `S3_BUCKET=...`,
+  `S3_REGION=europe-west1`, and **`GOOGLE_APPLICATION_CREDENTIALS`** = the ADC json
+  path (launchd's minimal env can't auto-discover ADC). Reload with
+  `launchctl bootout gui/501/com.fielddesk.api && launchctl bootstrap gui/501 <plist>`
+  — `kickstart -k` does NOT re-read plist env.
+- **Migration** used `scripts/`-style boto3 copy (skip-existing, sha-named keys
+  dedup): VM MinIO → GCS (same region, fast) + Mac MinIO → GCS (historical,
+  slow home upload). MinIO containers/volumes are kept as **backup** until
+  reconciliation confirms parity, then can be decommissioned.
+- App icons are Apple/Play CDN URLs and render regardless.
