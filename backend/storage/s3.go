@@ -1,6 +1,6 @@
-// Package storage wraps the MinIO/S3 client used by the media proxy. It mirrors
-// src/agf/storage/s3.py: path-style addressing, a custom endpoint, and static
-// MinIO credentials — and reads the same env vars so both runtimes share config.
+// S3/MinIO backend for the media proxy. Used for any non-GCS endpoint (local
+// MinIO in dev/test). Path-style addressing, a custom endpoint, static creds —
+// mirrors src/agf/storage/s3.py.
 package storage
 
 import (
@@ -12,41 +12,44 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
-var (
+type s3Backend struct {
 	client *s3.Client
 	bucket string
-)
+}
 
-// Init builds the singleton S3 client. Unlike the Python helper it does NOT
-// create the bucket — bucket provisioning stays with the compose `minio-init`
-// job (the API is a read-only consumer of objects).
-func Init(ctx context.Context, endpoint, accessKey, secretKey, region, bkt string) error {
-	// when_required mirrors the Python client: GCS's S3-compatible endpoint
-	// rejects the default request checksum the SDK now adds, and may omit
-	// response checksums; harmless against MinIO. region must match the GCS
-	// bucket location (e.g. europe-west1) for v4 signing.
+func newS3Backend(ctx context.Context, endpoint, accessKey, secretKey, region, bkt string) (*s3Backend, error) {
 	cfg, err := awsconfig.LoadDefaultConfig(ctx,
 		awsconfig.WithRegion(region),
 		awsconfig.WithCredentialsProvider(
 			credentials.NewStaticCredentialsProvider(accessKey, secretKey, "")),
-		awsconfig.WithRequestChecksumCalculation(aws.RequestChecksumCalculationWhenRequired),
-		awsconfig.WithResponseChecksumValidation(aws.ResponseChecksumValidationWhenRequired),
 	)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	client = s3.NewFromConfig(cfg, func(o *s3.Options) {
+	client := s3.NewFromConfig(cfg, func(o *s3.Options) {
 		if endpoint != "" {
 			o.BaseEndpoint = aws.String(endpoint)
 		}
-		o.UsePathStyle = true // == boto3 addressing_style "path"
+		o.UsePathStyle = true
 	})
-	bucket = bkt
-	return nil
+	return &s3Backend{client: client, bucket: bkt}, nil
 }
 
-// Client returns the singleton S3 client.
-func Client() *s3.Client { return client }
-
-// Bucket returns the configured bucket name.
-func Bucket() string { return bucket }
+func (b *s3Backend) get(ctx context.Context, key string) (*Object, error) {
+	out, err := b.client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(b.bucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		return nil, err
+	}
+	ctype := ""
+	if out.ContentType != nil {
+		ctype = *out.ContentType
+	}
+	var size int64 = -1
+	if out.ContentLength != nil {
+		size = *out.ContentLength
+	}
+	return &Object{Body: out.Body, ContentType: ctype, Size: size}, nil
+}

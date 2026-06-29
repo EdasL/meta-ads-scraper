@@ -12,7 +12,6 @@ import (
 	"github.com/edaslakavicius/emerging-app-finder/backend/db"
 	"github.com/edaslakavicius/emerging-app-finder/backend/middlewares"
 	"github.com/edaslakavicius/emerging-app-finder/backend/monitoring"
-	"github.com/edaslakavicius/emerging-app-finder/backend/storage"
 )
 
 // Init registers every route. GETs and the single POST live in separate gin
@@ -27,7 +26,7 @@ func Init(r *gin.Engine) {
 	ratings := controllers.NewRatingsController()
 	preference := controllers.NewPreferenceController()
 	health := controllers.NewHealthController()
-	media := controllers.NewMediaController(storage.Client(), storage.Bucket())
+	media := controllers.NewMediaController()
 
 	api := r.Group("/api")
 	{
