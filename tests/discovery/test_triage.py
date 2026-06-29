@@ -89,6 +89,20 @@ def test_lookup_exception_leaves_candidates_new(pg_conn):
     assert status == "new"                      # retried next run
 
 
+def test_limit_bounds_how_many_are_examined_per_run(pg_conn):
+    # A backlog must drain in bounded slices, not one unbounded pass (the Android
+    # wedge held 1,434 rows in a single triage call). limit caps each run.
+    for n in range(3):
+        _seed(pg_conn, store_id=f"77770{n}", page_id=f"TRIAGETESTLIM{n}")
+    seen = lambda ids: {sid: meta(track_id=sid) for sid in ids}
+    stats = run_triage(pg_conn, lookup_ios=seen, lookup_android=lambda ids: {}, limit=2)
+    assert stats["examined"] == 2
+    left = pg_conn.execute(text(
+        "SELECT count(*) FROM discovery.candidates WHERE status='new' "
+        "AND page_id LIKE 'TRIAGETESTLIM%'")).scalar()
+    assert left == 1                            # the 3rd waits for the next run
+
+
 def test_gplay_sidecar_crash_leaves_android_new(pg_conn):
     cid = _seed(pg_conn, store="android", store_id="com.x.crash", page_id="TRIAGETEST5")
     # lookup_google_play returns {} when the sidecar crashes — with android ids pending,

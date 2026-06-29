@@ -90,6 +90,39 @@ def test_malformed_json_degrades_to_empty():
     assert lookup_google_play(["com.x"], runner=lambda ids: "") == {}
 
 
+def test_batches_large_id_lists_so_no_subprocess_is_oversized():
+    """The Node sidecar fetches each app SEQUENTIALLY, so one subprocess over a large
+    backlog blows past its 90s timeout and strands the whole Android triage group
+    (2026-06-29 wedge: 1,434 candidates stuck at 'new'). lookup must split ids into
+    small batches so each subprocess stays well under the timeout — and still merge
+    the results across batches."""
+    calls = []
+
+    def runner(ids):
+        calls.append(len(ids))
+        return json.dumps([{"appId": i, "title": "A", "developer": "D", "genre": "G",
+                            "releaseDateISO": "2026-01-01", "score": 4.0, "ratings": 1}
+                           for i in ids])
+
+    ids = [f"com.app{n}" for n in range(120)]
+    out = lookup_google_play(ids, runner=runner)
+    assert len(out) == 120                      # every id resolved, merged across batches
+    assert calls and max(calls) <= 50           # no single subprocess gets the whole backlog
+
+
+def test_crashed_batch_degrades_to_empty_so_triage_strands_and_retries():
+    """A non-JSON (crashed) batch must collapse the whole lookup to {} — triage treats
+    an empty Android result as a transient failure and re-queues the group, so a sidecar
+    blip never silently drops apps as 'no_us_listing'."""
+    def runner(ids):
+        return "<<crash>>" if "com.app99" in ids else json.dumps(
+            [{"appId": i, "title": "A", "developer": "D", "genre": "G",
+              "releaseDateISO": "2026-01-01", "score": 4.0, "ratings": 1} for i in ids])
+
+    out = lookup_google_play([f"com.app{n}" for n in range(120)], runner=runner)
+    assert out == {}
+
+
 @pytest.mark.integration
 def test_live_sidecar_runs_node():
     if not shutil.which("node") or not (Path(_SIDECAR).parent / "node_modules").exists():

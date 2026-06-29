@@ -115,38 +115,45 @@ def _default_node_runner(ids):
                           capture_output=True, text=True, timeout=90).stdout
 
 
-def lookup_google_play(package_ids, *, runner=None) -> dict:
+def lookup_google_play(package_ids, *, runner=None, chunk=50) -> dict:
     """Look up Android apps via the Node google-play-scraper sidecar -> {package_id:
     AppMeta}. `runner(ids)->stdout` is injectable for tests. release_date uses the
-    sidecar's normalized ISO date (first release)."""
+    sidecar's normalized ISO date (first release).
+
+    Ids are looked up in ≤chunk batches: the sidecar fetches each app SEQUENTIALLY, so a
+    single subprocess over a large backlog blows past its 90s timeout and strands the whole
+    Android triage group (2026-06-29 wedge). A crashed/non-JSON batch collapses the result
+    to {} so the caller (triage, empty_is_failure) re-queues the group rather than dropping
+    apps as 'no_us_listing' — never return a partial dict."""
     ids = [str(p) for p in package_ids if p]
     if not ids:
         return {}
     runner = runner or _default_node_runner
-    raw = runner(ids) or "[]"
-    try:
-        rows = json.loads(raw)
-    except (ValueError, TypeError):
-        return {}                       # sidecar crashed / emitted non-JSON → degrade
     out: dict = {}
-    for r in rows:
-        track_id = str(r.get("appId", ""))
-        if not track_id or r.get("error"):
-            continue
-        max_installs = r.get("maxInstalls")
-        meta = AppMeta(
-            track_id=track_id, name=r.get("title", ""), seller=r.get("developer", ""),
-            genre=r.get("genre", ""),
-            release_date=r.get("releaseDateISO") or r.get("released") or "",
-            rating_count=int(r.get("ratings") or 0),
-            avg_rating=float(r.get("score") or 0.0),
-            description=r.get("description", ""),
-            icon_url=r.get("icon"),
-            screenshots=(r.get("screenshots") or None),
-            installs=int(max_installs) if max_installs is not None else None,
-            price_label=r.get("priceText"))
-        meta.is_game = _android_is_game(r.get("genreId"))
-        out[track_id] = meta
+    for batch in _chunks(ids, chunk):
+        raw = runner(batch) or "[]"
+        try:
+            rows = json.loads(raw)
+        except (ValueError, TypeError):
+            return {}                   # sidecar crashed / emitted non-JSON → degrade
+        for r in rows:
+            track_id = str(r.get("appId", ""))
+            if not track_id or r.get("error"):
+                continue
+            max_installs = r.get("maxInstalls")
+            meta = AppMeta(
+                track_id=track_id, name=r.get("title", ""), seller=r.get("developer", ""),
+                genre=r.get("genre", ""),
+                release_date=r.get("releaseDateISO") or r.get("released") or "",
+                rating_count=int(r.get("ratings") or 0),
+                avg_rating=float(r.get("score") or 0.0),
+                description=r.get("description", ""),
+                icon_url=r.get("icon"),
+                screenshots=(r.get("screenshots") or None),
+                installs=int(max_installs) if max_installs is not None else None,
+                price_label=r.get("priceText"))
+            meta.is_game = _android_is_game(r.get("genreId"))
+            out[track_id] = meta
     return out
 
 
