@@ -1,0 +1,64 @@
+apiVersion: cloud.google.com/v1
+kind: BackendConfig
+metadata:
+  name: agf-backend-config
+  namespace: agf
+spec:
+  timeoutSec: 3600
+  connectionDraining:
+    drainingTimeoutSec: 60
+---
+apiVersion: networking.gke.io/v1
+kind: ManagedCertificate
+metadata:
+  name: agf-api-cert
+  namespace: agf
+spec:
+  domains:
+    - api.peon.works
+---
+apiVersion: networking.gke.io/v1
+kind: ManagedCertificate
+metadata:
+  name: agf-app-cert
+  namespace: agf
+spec:
+  domains:
+    - app.peon.works
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: agf-ingress
+  namespace: agf
+  annotations:
+    kubernetes.io/ingress.global-static-ip-name: agf-ip
+    networking.gke.io/managed-certificates: agf-api-cert,agf-app-cert
+    kubernetes.io/ingress.class: "gce"
+spec:
+  rules:
+    - host: api.peon.works
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: agf-api
+                port:
+                  number: 8000
+    - host: app.peon.works
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: agf-web
+                port:
+                  number: 8080
+  defaultBackend:
+    service:
+      name: agf-web
+      port:
+        number: 8080
