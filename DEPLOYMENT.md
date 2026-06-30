@@ -75,11 +75,12 @@ kubectl create namespace agf
 
 ### API secret (`agf-secrets`)
 
-The DB password lives in Secret Manager as `agf-db-url` (reuse it). The
-`cloud-sql-proxy` sidecar listens on `127.0.0.1:5432`, so the URL points there.
+The DB password (the `agf` user's, a bare password) lives in Secret Manager as
+`agf-db-password`. The `cloud-sql-proxy` sidecar listens on `127.0.0.1:5432`, so
+the URL points there.
 
 ```bash
-DB_PW="$(gcloud secrets versions access latest --secret=agf-db-url --project=peon-489013)"
+DB_PW="$(gcloud secrets versions access latest --secret=agf-db-password --project=peon-489013)"
 
 kubectl create secret generic agf-secrets -n agf \
   --from-literal=AGF_DATABASE_URL="postgresql://agf:${DB_PW}@127.0.0.1:5432/agf" \
@@ -166,6 +167,7 @@ kubectl get ingress agf-ingress -n agf \
 
 ```bash
 curl https://api.peon.works/healthz        # => ok / 200
+curl https://app.peon.works/api/health     # => {"status":"ok"}
 ```
 
 Then load `https://app.peon.works`, log in with the owner credentials from
