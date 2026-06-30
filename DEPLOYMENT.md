@@ -1,10 +1,264 @@
 # Deployment
 
-How to ship a new version of the scrapers and the rest of Field Desk.
+Field Desk has two deploys, documented in this file:
+
+- **GKE — web + API** (this runbook, immediately below) — the hosted dashboard
+  (`app.peon.works`) and read API (`api.peon.works`) on the shared GKE Autopilot
+  cluster. This is the current way the dashboard ships. It **supersedes** the
+  Mac-hosted API/web (sections 4 and 5 of the task-oriented guide further down,
+  kept for local dev / fallback).
+- **Scraper / scoring / DB** — the 24/7 pipeline on the `agf-worker` VM plus
+  Cloud SQL. See "Scraper, scoring & DB — task-oriented guide" lower in this file.
+
+---
+
+# GKE — web + API deployment
+
+Hosted dashboard + read API on the shared GKE Autopilot cluster. This deploy is
+**additive** to the existing `granini` workload on the same cluster — it only
+touches the `agf` namespace.
+
+**Project:** `peon-489013` | **Region:** `europe-west1` | **Cluster:** `peon-cluster` (Autopilot) | **Namespace:** `agf`
+**Static IP:** `<agf-ip>` (global address `agf-ip`; the provisioning script prints the value) | **DNS zone:** `peon-zone`
+
+| Service   | Domain           | Image                                                  | Manifests                                      |
+| --------- | ---------------- | ------------------------------------------------------ | ---------------------------------------------- |
+| `agf-api` | `api.peon.works` | `europe-west1-docker.pkg.dev/peon-489013/agf/api`      | `backend/k8s/api.yaml`, `backend/k8s/ingress.yaml` |
+| `agf-web` | `app.peon.works` | `europe-west1-docker.pkg.dev/peon-489013/agf/web`      | `web/k8s/web.yaml`                              |
+
+```
+Browser -> HTTPS -> GCP Load Balancer (agf-ip) -> Ingress (agf-ingress) -> agf-web:8080   (Next.js standalone)
+                                                                        -> agf-api:8000   (Go, /healthz)
+                                                                            |-- cloud-sql-proxy sidecar -> Cloud SQL agf-db (127.0.0.1:5432)
+                                                                            |-- GCS media bucket agf-media-peon-489013 (ADC via Workload Identity)
+```
+
+Follow the steps in order for a fresh deploy.
+
+---
+
+## 1. Prerequisites
+
+```bash
+gcloud config set project peon-489013
+gcloud container clusters get-credentials peon-cluster --region europe-west1
+
+# confirm you're pointed at the right cluster before touching anything
+kubectl config current-context
+```
+
+---
+
+## 2. Provision infra (one-time, idempotent)
+
+Reserves the global static IP `agf-ip`, creates the `agf-api` Google service
+account (roles `cloudsql.client` + `storage.objectViewer` on
+`gs://agf-media-peon-489013`, plus the Workload Identity binding for KSA
+`agf/agf-api`), and adds the `api`/`app` A-records in zone `peon-zone`. It
+**prints the reserved static IP** — note it for the DNS check in step 7.
+
+```bash
+bash ops/prod/03_provision_web_api.sh
+#   => "agf-ip = <agf-ip>"  ...  "Provisioning complete. Static IP: <agf-ip>"
+```
+
+---
+
+## 3. Namespace + Secrets
+
+Secrets are created live and are **not** committed. The API reads GCS media via
+ADC / Workload Identity, so there are **no HMAC / S3 keys** in `agf-secrets`.
+
+```bash
+kubectl create namespace agf
+```
+
+### API secret (`agf-secrets`)
+
+The DB password lives in Secret Manager as `agf-db-url` (reuse it). The
+`cloud-sql-proxy` sidecar listens on `127.0.0.1:5432`, so the URL points there.
+
+```bash
+DB_PW="$(gcloud secrets versions access latest --secret=agf-db-url --project=peon-489013)"
+
+kubectl create secret generic agf-secrets -n agf \
+  --from-literal=AGF_DATABASE_URL="postgresql://agf:${DB_PW}@127.0.0.1:5432/agf" \
+  --from-literal=GEMINI_API_KEY='<key>'
+```
+
+### Web secret (`agf-web-secrets`)
+
+Generate the auth secret and the bcrypt password hash, then create the secret.
+
+```bash
+# one auth secret
+openssl rand -hex 32                      # => <hex32>
+
+# bcrypt hash for the owner's login password
+node -e "console.log(require('bcryptjs').hashSync(process.argv[1],10))" 'PASSWORD'   # => <bcrypt>
+
+kubectl create secret generic agf-web-secrets -n agf \
+  --from-literal=AUTH_SECRET='<hex32>' \
+  --from-literal=AUTH_USERS='[{"email":"<owner-email>","name":"<owner-name>","passwordHash":"<bcrypt>"}]'
+```
+
+---
+
+## 4. Build & push both images
+
+GKE runs x86; a Mac is ARM — always build with `--platform linux/amd64`. The API
+image uses the `golang:1.25-alpine` base so `go.mod`'s Go 1.25.8 toolchain builds.
+`NEXT_PUBLIC_*` values are baked from `web/.env.production` at build time (no
+`--build-arg` needed).
+
+```bash
+REGISTRY=europe-west1-docker.pkg.dev/peon-489013/agf
+gcloud auth configure-docker europe-west1-docker.pkg.dev
+TAG=$(git rev-parse --short HEAD)
+
+# API (build context = backend/)
+docker build --platform linux/amd64 -t $REGISTRY/api:$TAG -t $REGISTRY/api:latest backend
+docker push $REGISTRY/api:$TAG
+docker push $REGISTRY/api:latest
+
+# Web (build context = web/)
+docker build --platform linux/amd64 -t $REGISTRY/web:$TAG -t $REGISTRY/web:latest web
+docker push $REGISTRY/web:$TAG
+docker push $REGISTRY/web:latest
+```
+
+---
+
+## 5. Deploy
+
+```bash
+kubectl apply -f backend/k8s/api.yaml -f backend/k8s/ingress.yaml -f web/k8s/web.yaml
+
+kubectl rollout status deployment/agf-api -n agf
+kubectl rollout status deployment/agf-web -n agf
+```
+
+---
+
+## 6. Wait for certs + backends (~10–15 min)
+
+The two ManagedCertificates only go `Active` once DNS resolves to `agf-ip`, so
+run step 2 and confirm the A-records first. Backends take a few minutes to report
+`HEALTHY` after the pods are ready.
+
+```bash
+# DNS must resolve to the agf-ip before certs provision
+dig +short api.peon.works
+dig +short app.peon.works
+
+# certs — wait for status Active on both
+kubectl describe managedcertificate agf-api-cert -n agf
+kubectl describe managedcertificate agf-app-cert -n agf
+
+# ingress backends — both should read HEALTHY
+kubectl get ingress agf-ingress -n agf \
+  -o jsonpath='{.metadata.annotations.ingress\.kubernetes\.io/backends}' && echo
+```
+
+---
+
+## 7. Verify
+
+```bash
+curl https://api.peon.works/healthz        # => ok / 200
+```
+
+Then load `https://app.peon.works`, log in with the owner credentials from
+`agf-web-secrets`, and confirm a gem renders **with its creative media** (proves
+the API → Cloud SQL → GCS media read path works end to end).
+
+---
+
+## Updating the API
+
+```bash
+REGISTRY=europe-west1-docker.pkg.dev/peon-489013/agf
+TAG=$(git rev-parse --short HEAD)
+
+docker build --platform linux/amd64 -t $REGISTRY/api:$TAG backend
+docker push $REGISTRY/api:$TAG
+
+# the app container in the agf-api Deployment is named "api" (the sidecar is "cloud-sql-proxy")
+kubectl set image deployment/agf-api api=$REGISTRY/api:$TAG -n agf
+kubectl rollout status deployment/agf-api -n agf
+```
+
+Rollback:
+
+```bash
+kubectl rollout undo deployment/agf-api -n agf
+```
+
+## Updating the Web
+
+`NEXT_PUBLIC_*` are build-time — to change the API URL you must edit
+`web/.env.production` and rebuild the image, not flip a runtime env var.
+
+```bash
+REGISTRY=europe-west1-docker.pkg.dev/peon-489013/agf
+TAG=$(git rev-parse --short HEAD)
+
+docker build --platform linux/amd64 -t $REGISTRY/web:$TAG web
+docker push $REGISTRY/web:$TAG
+
+# the container in the agf-web Deployment is named "web"
+kubectl set image deployment/agf-web web=$REGISTRY/web:$TAG -n agf
+kubectl rollout status deployment/agf-web -n agf
+```
+
+Rollback:
+
+```bash
+kubectl rollout undo deployment/agf-web -n agf
+```
+
+---
+
+## Common Commands
+
+```bash
+kubectl get pods -n agf                                       # pod status (both deployments)
+kubectl logs -n agf -l app=agf-api --tail=100 -f              # API logs
+kubectl logs -n agf -l app=agf-api -c cloud-sql-proxy --tail=50  # Cloud SQL proxy sidecar logs
+kubectl logs -n agf -l app=agf-web --tail=100 -f              # web logs
+kubectl describe managedcertificate agf-api-cert -n agf       # API cert status
+kubectl describe managedcertificate agf-app-cert -n agf       # web cert status
+kubectl get ingress agf-ingress -n agf                        # ingress / LB IP
+kubectl scale deployment agf-api -n agf --replicas=2          # scale API
+kubectl scale deployment agf-web -n agf --replicas=2          # scale web
+kubectl rollout restart deployment/agf-api -n agf             # restart API (e.g. after a secret edit)
+```
+
+---
+
+## Gotchas
+
+1. **amd64 platform**: always `--platform linux/amd64` when building on a Mac — GKE is x86.
+2. **Certs need DNS first**: ManagedCertificates take ~10–15 min and only provision once `api.peon.works` / `app.peon.works` resolve to `agf-ip`. Run the provisioning script (step 2) before expecting `Active`.
+3. **`NEXT_PUBLIC_*` are build-time**: baked from `web/.env.production` into the JS bundle. Changing the API URL means rebuild + redeploy the web image, not a runtime env change.
+4. **Shared cluster — never delete granini's namespace**: this deploy is additive to the `granini` workload on `peon-cluster`. Only ever `kubectl delete` resources in the `agf` namespace; never `kubectl delete namespace` anything else.
+5. **Cloud SQL connection**: the API talks to `agf-db` only through the `cloud-sql-proxy` sidecar at `127.0.0.1:5432` (connection name `peon-489013:europe-west1:agf-db`), authorized by Workload Identity — no DB password is given to the proxy, and no public IP allowlist is needed.
+6. **GCS media via ADC**: media reads use Application Default Credentials through Workload Identity (KSA `agf/agf-api` → GSA `agf-api@peon-489013.iam.gserviceaccount.com`). There are no HMAC/S3 keys in `agf-secrets`; if media 403s, check the Workload Identity binding and the `storage.objectViewer` grant on `gs://agf-media-peon-489013`.
+7. **Go toolchain**: the API Dockerfile pins `golang:1.25-alpine` so `go.mod`'s Go 1.25.8 builds; do not downgrade the base image.
+
+---
+
+# Scraper, scoring & DB — task-oriented guide
+
+How to ship a new version of the scrapers and the rest of the pipeline.
 
 This is the **task-oriented** guide ("I changed X, how do I deploy it?"). For the
 full topology, day-2 ops, and rollback, see `ops/RUNBOOK.md` → "Production on
 peon-489013". For a from-scratch re-provision, see `ops/prod/`.
+
+Note: sections **4 (Mac API)** and **5 (Mac web)** below describe the previous
+Mac-hosted dashboard. They are **superseded by the GKE web+API deploy above** and
+are kept only for local development and fallback.
 
 ---
 
