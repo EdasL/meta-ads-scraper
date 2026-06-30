@@ -2,7 +2,6 @@
 # Provision the GKE web+API deploy infra (idempotent). Run once.
 set -euo pipefail
 PROJECT=peon-489013
-REGION=europe-west1
 SA=agf-api@${PROJECT}.iam.gserviceaccount.com
 BUCKET=agf-media-peon-489013
 ZONE=peon-zone
