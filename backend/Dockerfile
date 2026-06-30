@@ -1,6 +1,6 @@
 # Field Desk API (Go). Multi-stage: build a static binary, ship it on alpine.
 # Built with context: ../backend from ops/docker-compose.yml.
-FROM golang:1.24-alpine AS builder
+FROM golang:1.25-alpine AS builder
 WORKDIR /app
 RUN apk add --no-cache git
 COPY go.mod go.sum ./
