@@ -1,0 +1,14 @@
+{
+  "_comment": "Copy to .mcp.json (gitignored) and fill AGF_DATABASE_URL with the prod cloud-sql-proxy URL. The agf-scraping MCP exposes read-only scraping-health tools: engine_pulse, discovery_rate, idea_diversity, scraping_overview. It auto-(re)starts the launchd cloud-sql-proxy if :5433 is down, and tells you to run `gcloud auth application-default login` if ADC has expired.",
+  "mcpServers": {
+    "agf-scraping": {
+      "command": "/ABS/PATH/TO/emerging-app-finder/.venv-mcp/bin/python",
+      "args": ["-m", "agf_mcp.server"],
+      "env": {
+        "PYTHONPATH": "/ABS/PATH/TO/emerging-app-finder/src",
+        "AGF_DATABASE_URL": "postgresql://agf:PASSWORD@localhost:5433/agf",
+        "GOOGLE_APPLICATION_CREDENTIALS": "/Users/you/.config/gcloud/application_default_credentials.json"
+      }
+    }
+  }
+}

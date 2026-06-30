@@ -32,3 +32,7 @@ python-whois==0.9.5    # domain_age (WHOIS creation_date) in company.py
 # --- plan-7 ---
 fastapi==0.115.6
 uvicorn==0.34.0    # ASGI server for production (ops/docker-compose api service)
+
+# NOTE: the scraping-health MCP (src/agf_mcp) is installed into a SEPARATE venv
+# (.venv-mcp via src/agf_mcp/requirements.txt) so its starlette dependency does
+# not conflict with fastapi's pin here.

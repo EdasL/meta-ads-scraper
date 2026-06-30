@@ -1,0 +1,12 @@
+# Dependencies for the scraping-health MCP server (src/agf_mcp).
+# Installed into a SEPARATE venv (.venv-mcp) so mcp's starlette pin does not
+# conflict with the app's fastapi pin in the top-level requirements.txt.
+#
+#   python3.13 -m venv .venv-mcp
+#   .venv-mcp/bin/pip install -r src/agf_mcp/requirements.txt
+#
+mcp>=1.2.0
+SQLAlchemy>=2.0
+psycopg[binary]>=3.2
+numpy>=2.0
+scipy>=1.13

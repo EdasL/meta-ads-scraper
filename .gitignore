@@ -68,3 +68,7 @@ design-review/
 # ─── OS ─────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
+
+# ─── Local MCP config (contains prod DB URL) ───
+.mcp.json
+.venv-mcp/
