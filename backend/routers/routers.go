@@ -58,6 +58,15 @@ func Init(r *gin.Engine) {
 		api.GET("/media/*key", media.Get)
 	}
 
+	// Internal auth + key management, for the Next.js server only. Guarded by
+	// the static internal token (RequireToken), never exposed to browsers.
+	ia := controllers.NewInternalAuthController()
+	internal := r.Group("/api/internal", middlewares.RequireToken())
+	internal.POST("/login", ia.Login)
+	internal.GET("/keys", ia.ListKeys)
+	internal.POST("/keys", ia.MintKey)
+	internal.POST("/keys/revoke", ia.RevokeKey)
+
 	// Prometheus exposition.
 	r.GET("/metrics", monitoring.MetricsHandler())
 
