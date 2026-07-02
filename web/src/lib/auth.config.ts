@@ -1,6 +1,6 @@
 import type { NextAuthConfig } from "next-auth";
 
-const PROTECTED = ["/discover", "/saved", "/gems", "/review"];
+const PROTECTED = ["/discover", "/saved", "/gems", "/review", "/settings"];
 
 /**
  * Edge-safe config (no bcrypt / node deps) — shared by middleware and the

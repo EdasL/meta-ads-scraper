@@ -1,43 +1,30 @@
-import bcrypt from "bcryptjs";
-
 /**
- * Seeded users for the internal tool — NO public registration.
- * Provide real users via the AUTH_USERS env var (JSON array of
- * { email, name?, passwordHash }). Otherwise a dev account is created:
- *   email:    founder@fielddesk.local
- *   password: $AUTH_DEV_PASSWORD (default "fielddesk")
- * To add teammates later, generate hashes with:
- *   node -e "console.log(require('bcryptjs').hashSync('PASSWORD',10))"
+ * Login verification via the Go API (frontend.users). The web server holds the
+ * internal token; the browser never sees it. There is NO public registration —
+ * accounts are provisioned in the backend (see the /settings admin page).
  */
-export interface SeedUser {
+const API = process.env.AGF_API_INTERNAL_URL ?? "http://localhost:8000/api";
+const TOKEN = process.env.AGF_API_TOKEN ?? "";
+
+export interface VerifiedUser {
   email: string;
-  name?: string;
-  passwordHash: string;
+  name: string;
+  role: "admin" | "member";
 }
 
-function loadUsers(): SeedUser[] {
-  const raw = process.env.AUTH_USERS;
-  if (raw) {
-    try {
-      const parsed = JSON.parse(raw) as SeedUser[];
-      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-    } catch {
-      // fall through to dev default
-    }
-  }
-  const devPassword = process.env.AUTH_DEV_PASSWORD ?? "fielddesk";
-  return [
-    {
-      email: "founder@fielddesk.local",
-      name: "Founder",
-      passwordHash: bcrypt.hashSync(devPassword, 10),
+export async function verifyLogin(
+  email: string,
+  password: string,
+): Promise<VerifiedUser | null> {
+  const res = await fetch(`${API}/internal/login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${TOKEN}`,
     },
-  ];
-}
-
-const USERS = loadUsers();
-
-export function findUser(email: string): SeedUser | null {
-  const e = email.trim().toLowerCase();
-  return USERS.find((u) => u.email.toLowerCase() === e) ?? null;
+    body: JSON.stringify({ email, password }),
+    cache: "no-store",
+  });
+  if (!res.ok) return null;
+  return (await res.json()) as VerifiedUser;
 }
