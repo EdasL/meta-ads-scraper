@@ -56,6 +56,11 @@ Env:
   AGF_FLYWHEEL_PROMOTE_MIN_NEW  new candidates to promote a trial     (default 3)
   AGF_MINE_MIN_ADVERTISERS      distinct gems a phrase must span      (default 3)
   AGF_MINE_MIN_SCORE           mine ad copy of gems at/above score   (default 40)
+  AGF_RELEASE_MINT             enable the frame-mint stage           (default 0; on/off gate)
+  AGF_FRAME_MINT_K             target kept apps per category         (default 15)
+  AGF_FRAME_MINT_FLOOR         min live keywords per category        (default 5)
+  AGF_FRAME_MINT_SLOTS         trial keyword slots minted per run    (default 40)
+  AGF_FRAME_MINT_MIN_ADVERTISERS  distinct apps a minted phrase spans (default 2)
 """
 import asyncio
 import os
@@ -428,7 +433,8 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
              funnel_flywheel_min_advertisers=2,
              flywheel_daily=True, flywheel_pages=2, flywheel_max_trials=40,
              flywheel_min_advertisers=3, mine_min_score=40.0,
-             release_mint_enabled=False, release_mint_max_listings=120,
+             release_mint_enabled=False, frame_mint_k=15, frame_mint_floor=5,
+             frame_mint_slots=40, frame_mint_min_advertisers=2,
              media_repair_per_cycle=5, funnel_repair_per_cycle=3,
              sweep_max_consecutive_errors=0,
              websub_bridge_limit=10) -> dict:
@@ -566,14 +572,16 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
                       flush=True)
         _touch_heartbeat()  # funnel renders landing pages — another long, blocking stage
 
-    # 1.93) release-expand — daily discovery of emerging advertisers from App Store
-    #       new-releases (emerging by construction, span every store genre). Breaks the
-    #       flywheel's topical-locality trap with an EXTERNAL surface: each new app's name
-    #       is looked up in Meta typeahead, and the ones that actually buy ads resolve to
-    #       candidates through the same classify->upsert->triage path the sweep uses. Off
-    #       by default (AGF_RELEASE_MINT); isolated like the funnel stage — a failure lands
-    #       on the run row and never aborts the tick. Daily-gated even in continuous mode;
-    #       Meta spend bounded by max_listings + skipping known/incumbent pages.
+    # 1.93) frame-mint — daily EXTERNAL-frame keyword minting (breaks the flywheel's
+    #       topical-locality trap). Mints head-term SEARCH keywords from App Store
+    #       new-release listings (name+description), biased toward under-covered store
+    #       categories, and keeps every in-scope category above a keyword floor from the
+    #       taxonomy. Minted keywords are dynamic_keywords trials (kind='app') the existing
+    #       flywheel sweep then discovers/promotes/retires — no new sweep path. ZERO Meta
+    #       traffic here (Apple RSS + Lookup only). Off by default (AGF_RELEASE_MINT gate,
+    #       kept for compat); isolated like the funnel stage — a failure lands on the run
+    #       row and never aborts the tick. Daily-gated even in continuous mode. Replaces the
+    #       dead page-matching release_mint (docs/research/2026-07-02-novel-discovery-algorithm.md).
     release_mint = None
     if release_mint_enabled and not dry_run and http_client is not None:
         with engine.connect() as conn:
@@ -582,9 +590,11 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
             with begin(engine) as conn:
                 rm_run_id = open_release_mint_run(conn)
             try:
-                from agf.discovery.release_mint import expand_releases_via_typeahead
-                release_mint = expand_releases_via_typeahead(
-                    engine, extractor, http_client, max_listings=release_mint_max_listings)
+                from agf.discovery.frame_mint import mint_keywords_from_releases
+                release_mint = mint_keywords_from_releases(
+                    engine, http_client, K=frame_mint_k, floor=frame_mint_floor,
+                    total_slots=frame_mint_slots,
+                    min_advertisers=frame_mint_min_advertisers)
                 with begin(engine) as conn:
                     close_release_mint_run(conn, rm_run_id, stats=release_mint)
             except Exception as exc:
@@ -861,8 +871,10 @@ def _summary_line(s: dict) -> str:
                  f"new={fw['candidates_new']})")
     if s.get("release_mint") is not None:
         rm = s["release_mint"]
-        line += (f" release_expand(apps={rm['apps']} pages={rm['typeahead_pages']} "
-                 f"scraped={rm['scraped_pages']} new={rm['candidates_new']})")
+        line += (f" frame_mint(minted={rm.get('minted', 0)} "
+                 f"cats={len(rm.get('minted_by_category', {}))} "
+                 f"frame_seeded={rm.get('frame_seeded', 0)} "
+                 f"in_scope={rm.get('in_scope', 0)})")
     line += (f" weekly_snapshots={s['snapshot_weeks']} "
             f"apps_refreshed={s.get('apps_refreshed', 0)} "
             f"enriched={len(s['enriched'])}/{len(s['enrich_candidates'])}")
@@ -922,7 +934,10 @@ def main(argv=None) -> None:
         flywheel_min_advertisers=_env_int("AGF_MINE_MIN_ADVERTISERS", 3),
         mine_min_score=_env_float("AGF_MINE_MIN_SCORE", 40.0),
         release_mint_enabled=_env_bool("AGF_RELEASE_MINT", False),
-        release_mint_max_listings=_env_int("AGF_RELEASE_MINT_MAX_LISTINGS", 120),
+        frame_mint_k=_env_int("AGF_FRAME_MINT_K", 15),
+        frame_mint_floor=_env_int("AGF_FRAME_MINT_FLOOR", 5),
+        frame_mint_slots=_env_int("AGF_FRAME_MINT_SLOTS", 40),
+        frame_mint_min_advertisers=_env_int("AGF_FRAME_MINT_MIN_ADVERTISERS", 2),
         media_repair_per_cycle=_env_int("AGF_MEDIA_REPAIR_PER_CYCLE", 5),
         funnel_repair_per_cycle=_env_int("AGF_FUNNEL_REPAIR_PER_CYCLE", 3),
         sweep_max_consecutive_errors=_env_int("AGF_SWEEP_MAX_CONSECUTIVE_ERRORS", 5),
