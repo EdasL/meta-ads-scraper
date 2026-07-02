@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 from sqlalchemy import text
 
-from agf.discovery.taxonomy import IN_SCOPE_CATEGORIES
+from agf.discovery.taxonomy import IN_SCOPE_CATEGORIES, NICHE_TERMS_BY_CATEGORY
 
 # Genres we never mint into (Games are vetoed product-wide; Stickers aren't standalone apps).
 OUT_OF_SCOPE_GENRES = frozenset({"Games", "Stickers"})
@@ -77,11 +77,19 @@ def mint_budget(coverage: dict[str, CategoryCoverage], *, K: int,
     return out
 
 
-def under_floor_categories(coverage: dict[str, CategoryCoverage], *,
-                           floor: int) -> list[str]:
-    """Categories whose live keyword count is below the floor, scarcest first."""
-    below = [cov for cov in coverage.values() if cov.live_keywords < floor]
-    below.sort(key=lambda cov: (cov.live_keywords, cov.category))
+def under_floor_categories(coverage: dict[str, CategoryCoverage], *, floor: int,
+                           taxonomy: dict[str, list] = NICHE_TERMS_BY_CATEGORY) -> list[str]:
+    """Categories whose TOTAL live coverage is below the floor, scarcest first. Total
+    coverage = the static taxonomy keywords already swept daily (the permanent frame
+    backbone) PLUS the dynamic minted/frame keywords. Counting the static taxonomy is
+    what stops the frame-seeder from redundantly re-adding the ~8-12 niche_terms per
+    category that sweep_entries() already sweeps every day — in steady state every
+    category with taxonomy entries clears the floor and is left alone. `taxonomy` is
+    injectable for tests."""
+    def total(cov: CategoryCoverage) -> int:
+        return cov.live_keywords + len(taxonomy.get(cov.category, ()))
+    below = [cov for cov in coverage.values() if total(cov) < floor]
+    below.sort(key=lambda cov: (total(cov), cov.category))
     return [cov.category for cov in below]
 
 

@@ -10,11 +10,13 @@ from agf.enrich import AppMeta
 
 
 def test_ensure_category_frame_seeds_under_floor_only(pg_conn):
+    # floor counts static taxonomy (~9 terms/category). floor=20: Dating (0 live + 9
+    # static = 9) is under; Health & Fitness (1000 live + 9 = 1009) clears it.
     coverage = {
-        "Dating": CategoryCoverage("Dating", 0, 0),                      # under floor -> seed
-        "Health & Fitness": CategoryCoverage("Health & Fitness", 40, 9),  # >= floor
+        "Dating": CategoryCoverage("Dating", 0, 0),
+        "Health & Fitness": CategoryCoverage("Health & Fitness", 40, 1000),
     }
-    added = ensure_category_frame(pg_conn, coverage, floor=5)
+    added = ensure_category_frame(pg_conn, coverage, floor=20)
     assert added > 0
     dating = pg_conn.execute(text(
         "SELECT count(*) FROM discovery.dynamic_keywords "
@@ -24,7 +26,15 @@ def test_ensure_category_frame_seeds_under_floor_only(pg_conn):
         "WHERE source = 'frame:Health & Fitness'")).scalar()
     assert dating > 0      # under-floor category seeded
     assert hf == 0         # at-floor category untouched
-    assert ensure_category_frame(pg_conn, coverage, floor=5) == 0  # idempotent
+    assert ensure_category_frame(pg_conn, coverage, floor=20) == 0  # idempotent
+
+
+def test_ensure_category_frame_noop_at_default_floor(pg_conn):
+    # In steady state (default floor=5) the static taxonomy already clears every
+    # category, so the frame-seeder adds nothing — no redundant re-seeding.
+    coverage = {"Dating": CategoryCoverage("Dating", 0, 0),
+                "Beauty": CategoryCoverage("Beauty", 0, 0)}
+    assert ensure_category_frame(pg_conn, coverage, floor=5) == 0
 
 
 def _meta(track_id, name, genre, desc):

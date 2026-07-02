@@ -57,9 +57,22 @@ def test_mint_budget_all_covered_returns_empty():
     assert mint_budget(cov, K=15, total_slots=40) == {}
 
 
-def test_under_floor_categories_sorted_by_scarcity():
+def test_under_floor_categories_counts_static_taxonomy():
+    # Total coverage = dynamic live_keywords + static taxonomy terms. With floor=5:
+    #   Dating   0 + 0 static = 0  -> under
+    #   Beauty   2 + 3 static = 5  -> NOT under (>= floor)
+    #   Finance  8 + 8 static = 16 -> NOT under
     cov = _cov([("Dating", 0, 0), ("Beauty", 10, 2), ("Finance", 20, 8)])
-    assert under_floor_categories(cov, floor=5) == ["Dating", "Beauty"]
+    tax = {"Dating": [], "Beauty": ["a", "b", "c"],
+           "Finance": ["a", "b", "c", "d", "e", "f", "g", "h"]}
+    assert under_floor_categories(cov, floor=5, taxonomy=tax) == ["Dating"]
+
+
+def test_under_floor_categories_real_taxonomy_clears_floor():
+    # Every real in-scope category ships ~9 taxonomy terms, so at the default floor=5
+    # none are under-floor from taxonomy alone (the static sweep IS the backbone).
+    cov = _cov([("Dating", 0, 0), ("Beauty", 0, 0)])
+    assert under_floor_categories(cov, floor=5) == []
 
 
 def test_category_coverage_counts_kept_apps_and_live_keywords(pg_conn):
