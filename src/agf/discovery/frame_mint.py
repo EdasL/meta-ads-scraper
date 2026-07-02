@@ -13,7 +13,7 @@ from collections import defaultdict
 from agf.db.dynamic_keywords import add_trial_keywords, tried_keywords
 from agf.discovery.coverage import (canonical_category, category_coverage,
                                     mint_budget, under_floor_categories)
-from agf.discovery.keyword_mining import mine_phrases
+from agf.discovery.release_keywords import ProposeError, propose_release_keywords
 from agf.discovery.taxonomy import NICHE_TERMS_BY_CATEGORY
 from agf.enrich_full.appstore import fetch_itunes_new_releases, lookup_itunes_batch
 
@@ -33,10 +33,14 @@ def ensure_category_frame(conn, coverage, *, floor: int) -> int:
 def mint_keywords_from_releases(engine, client, *, country="us", limit=200, K=15,
                                 floor=5, total_slots=40, min_advertisers=2,
                                 fetch=fetch_itunes_new_releases,
-                                lookup=lookup_itunes_batch) -> dict:
-    """Mint head-term SEARCH keywords from App Store new-release listings, biased toward
+                                lookup=lookup_itunes_batch,
+                                propose=propose_release_keywords) -> dict:
+    """Mint niche SEARCH keywords from App Store new-release listings, biased toward
     under-covered categories, plus keep the category frame above its floor. Taste-blind.
-    Apple-only network (zero Meta). Returns stats; never raises on a fetch/lookup failure."""
+    Keywords are proposed by a cheap Gemini model per category (crisp 'X app' niche terms,
+    not n-grams of store prose). Network: Apple RSS + Lookup (zero Meta) + Gemini text.
+    Returns stats; never raises on a fetch/lookup/propose failure. `min_advertisers` is
+    retained for signature stability but no longer used by the LLM proposer."""
     stats = {"seeds": 0, "in_scope": 0, "looked_up": 0, "minted": 0,
              "minted_by_category": {}, "frame_seeded": 0, "coverage": {}, "errors": 0}
 
@@ -66,25 +70,28 @@ def mint_keywords_from_releases(engine, client, *, country="us", limit=200, K=15
             metas = {}
     stats["looked_up"] = len(metas)
 
-    # Group (store_id, listing_text) by canonical category from the Lookup genre.
+    # Group listings ({name, description}) by canonical category from the Lookup genre.
     by_cat: dict[str, list] = defaultdict(list)
-    for sid, m in metas.items():
+    for m in metas.values():
         cat = canonical_category(getattr(m, "genre", None))
         if cat is None:
             continue
-        text_blob = f"{m.name} {m.description}".strip()
-        by_cat[cat].append((sid, text_blob))
+        by_cat[cat].append({"name": m.name, "description": m.description})
 
     with engine.begin() as conn:
         coverage = category_coverage(conn)
         budget = mint_budget(coverage, K=K, total_slots=total_slots)
         exclude = tried_keywords(conn, kind="app")
         for cat, slots in budget.items():
-            corpus = by_cat.get(cat)
-            if not corpus:
+            listings = by_cat.get(cat)
+            if not listings:
                 continue
-            terms = mine_phrases(corpus, exclude=exclude,
-                                 min_advertisers=min_advertisers, limit=slots)
+            try:
+                proposed = propose(cat, listings, slots)
+            except ProposeError:
+                stats["errors"] += 1
+                continue
+            terms = [t for t in proposed if t.lower() not in exclude]  # dedup vs tried
             if not terms:
                 continue
             added = add_trial_keywords(conn, terms, source=f"new_release:{cat}",

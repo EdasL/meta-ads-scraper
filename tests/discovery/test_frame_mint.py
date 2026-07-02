@@ -56,16 +56,13 @@ def test_mint_from_releases_adds_biased_trials(_migrated_engine):
         seeds = [
             {"store_id": "FMT10", "name": "LovePing", "genre": "Lifestyle"},
             {"store_id": "FMT11", "name": "MissYou", "genre": "Lifestyle"},
-            {"store_id": "FMT12", "name": "FarApart", "genre": "Lifestyle"},
             {"store_id": "FMT20", "name": "BlastZone", "genre": "Games"},  # out of scope
         ]
         metas = {
             "FMT10": _meta("FMT10", "LovePing", "Social Networking",
                            "long distance couple app for partners apart"),
             "FMT11": _meta("FMT11", "MissYou", "Social Networking",
-                           "long distance couple reminders for partners"),
-            "FMT12": _meta("FMT12", "FarApart", "Social Networking",
-                           "long distance couple countdown for partners"),
+                           "reminders for partners apart"),
             "FMT20": _meta("FMT20", "BlastZone", "Games", "shoot aliens"),
         }
 
@@ -75,20 +72,25 @@ def test_mint_from_releases_adds_biased_trials(_migrated_engine):
         def fake_lookup(client, ids, **kw):
             return {i: metas[i] for i in ids if i in metas}
 
-        stats = mint_keywords_from_releases(
-            eng, client=None, K=15, floor=0, total_slots=40, min_advertisers=2,
-            fetch=fake_fetch, lookup=fake_lookup)
+        def fake_propose(category, listings, n):
+            # taste-blind LLM stub: proposes crisp niche keywords for the category
+            assert category == "Social" and listings  # only in-scope Social apps reach here
+            return ["long distance relationship app", "couple countdown app"][:n]
 
-        assert stats["seeds"] == 4
-        assert stats["in_scope"] == 3          # Games dropped
-        assert stats["looked_up"] == 3
+        stats = mint_keywords_from_releases(
+            eng, client=None, K=15, floor=0, total_slots=40,
+            fetch=fake_fetch, lookup=fake_lookup, propose=fake_propose)
+
+        assert stats["seeds"] == 3
+        assert stats["in_scope"] == 2          # Games dropped
+        assert stats["looked_up"] == 2
         assert stats["minted"] >= 1
         with eng.connect() as conn:
             rows = conn.execute(text(
                 "SELECT keyword FROM discovery.dynamic_keywords "
                 "WHERE source = 'new_release:Social' AND kind='app'")).all()
         kws = {r.keyword for r in rows}
-        assert any("long distance couple" in k for k in kws)
+        assert "long distance relationship app" in kws
     finally:
         _clean_minted(eng)
 
@@ -107,5 +109,28 @@ def test_mint_from_releases_lookup_error_is_isolated(_migrated_engine):
             eng, client=None, floor=0, fetch=fake_fetch, lookup=boom_lookup)
         assert stats["errors"] >= 1
         assert stats["minted"] == 0   # no crash, stats returned
+    finally:
+        _clean_minted(eng)
+
+
+def test_mint_from_releases_propose_error_is_isolated(_migrated_engine):
+    from agf.discovery.release_keywords import ProposeError
+    eng = _migrated_engine
+    _clean_minted(eng)
+    try:
+        def fake_fetch(client, *, country, genre, limit):
+            return [{"store_id": "FMTPE", "name": "X", "genre": "Lifestyle"}]
+
+        def fake_lookup(client, ids, **kw):
+            return {"FMTPE": _meta("FMTPE", "X", "Social Networking", "desc")}
+
+        def boom_propose(category, listings, n):
+            raise ProposeError("gemini down")
+
+        stats = mint_keywords_from_releases(
+            eng, client=None, floor=0, fetch=fake_fetch, lookup=fake_lookup,
+            propose=boom_propose)
+        assert stats["errors"] >= 1
+        assert stats["minted"] == 0   # Gemini failure isolated, no crash
     finally:
         _clean_minted(eng)

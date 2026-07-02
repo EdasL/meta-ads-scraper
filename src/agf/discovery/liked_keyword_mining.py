@@ -82,7 +82,7 @@ def _format_apps(liked_apps: list[dict]) -> str:
 
 
 def propose_phrases(liked_apps: list[dict], *, api_key: str | None = None,
-                    model: str = "gemini-2.0-flash-lite", n: int = 15,
+                    model: str = "gemini-2.5-flash-lite", n: int = 15,
                     _post=None) -> list[Candidate]:
     if not liked_apps:
         return []
