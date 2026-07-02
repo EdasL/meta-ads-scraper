@@ -56,12 +56,18 @@ services:
       MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
       MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
       S3_BUCKET: ${S3_BUCKET}
-      AGF_CONTINUOUS_DISCOVERY: "1"
+      # Sweep cadence: DAILY, not every tick. The fixed ~301-keyword set is rested-
+      # depleted (probe 2026-07-02: re-sweeping crashed new/kw 1.43->0.002 in 2 days;
+      # last 7d = 321 SERP requests per new find, ~99.7% of budget re-confirming known
+      # ads). continuous=0 gates the sweep to one finished sweep_runs row/day while the
+      # loop still ticks hourly, so enrich/repair/store-refresh keep their ~current rate.
+      # See docs/research/2026-07-02-novel-discovery-algorithm.md.
+      AGF_CONTINUOUS_DISCOVERY: ${AGF_CONTINUOUS_DISCOVERY:-0}
       AGF_SWEEP_PAGES: ${AGF_SWEEP_PAGES:-4}
       AGF_KW_DELAY: ${AGF_KW_DELAY:-3.0}
       AGF_DISCOVERY_ENRICH_BUDGET: ${AGF_DISCOVERY_ENRICH_BUDGET:-600}
       AGF_SCORE_AFTER_SWEEP: ${AGF_SCORE_AFTER_SWEEP:-1}
-      AGF_SWEEP_INTERVAL_SEC: ${AGF_SWEEP_INTERVAL_SEC:-60}
+      AGF_SWEEP_INTERVAL_SEC: ${AGF_SWEEP_INTERVAL_SEC:-3600}
       AGF_FLYWHEEL_EVERY_SEC: ${AGF_FLYWHEEL_EVERY_SEC:-7200}
       AGF_RELEASE_MINT: ${AGF_RELEASE_MINT:-1}
       AGF_RELEASE_MINT_MAX_LISTINGS: ${AGF_RELEASE_MINT_MAX_LISTINGS:-40}
