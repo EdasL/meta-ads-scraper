@@ -1,7 +1,29 @@
 # Keyword-minting external frame — design spec
 
 **Date:** 2026-07-02
-**Status:** approved (brainstorm), pending implementation plan
+**Status:** IMPLEMENTED + deployed 2026-07-02. ⚠️ Extraction quality is the open
+bottleneck — see the "Post-implementation finding" box below before building on this.
+
+> ## Post-implementation finding (2026-07-02) — extraction quality
+> The infrastructure works and is live (coverage read, deficit-biased budget, the
+> static-taxonomy floor, the self-limiting trial lifecycle, isolation-on-error), and it
+> correctly replaced the dead page-matching release_mint. **But mining keywords from
+> App Store *descriptions* with `mine_phrases` produces low-quality terms:**
+> - `min_advertisers=2` selects generic BOILERPLATE ("key features") — cross-app
+>   agreement on store descriptions means the phrase recurs *because* it's generic.
+> - `min_advertisers=1` selects app-specific prose fragments ("across northwest iowa
+>   directly").
+> `mine_phrases` was built for punchy AD COPY, where cross-advertiser repetition signals
+> a real shared angle; store-description prose lacks that property. Per-category
+> new-release corpora are also tiny (~4 apps/category/day), starving cross-app mining.
+> Yield: ~1 (junk) keyword/day. Harm is negligible (the flywheel auto-retires dry
+> keywords), and it removed the old release_mint's ~85 wasted Meta requests/day — so
+> deploying is a net win — but the "keep finding new stuff" payoff needs a better
+> extractor. **Recommended follow-up:** (a) LLM-proposed category keywords from
+> new-release listings via the already-wired Gemini (propose crisp "X app" niche terms,
+> not n-grams); and/or (b) a rolling multi-day new-release accumulation table so
+> per-category corpora are large enough for real cross-app signal; and/or (c) extract
+> from app titles/subtitles with POS filtering rather than description prose.
 **Replaces:** the broken `release_mint` page-matching stage (yields ~0 — see
 `docs/research/2026-07-02-novel-discovery-algorithm.md` §5b)
 **Research basis:** `docs/research/2026-07-02-novel-discovery-algorithm.md` (Layer 0 +
