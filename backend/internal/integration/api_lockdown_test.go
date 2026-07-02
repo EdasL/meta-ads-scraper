@@ -75,11 +75,28 @@ func TestAPIGroupRequiresAuth(t *testing.T) {
 
 	// Writes: an fd_ key clears KeyAuth but RequireToken (token set) rejects any
 	// bearer that is not the internal token, so a personal key cannot write.
-	t.Run("fd_ key on write route is 401", func(t *testing.T) {
+	t.Run("fd_ key on write route is 401 (token set)", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/api/ratings/"+strconv.Itoa(advID), nil)
 		req.Header.Set("Authorization", "Bearer "+authedKey)
 		if c := do(req); c != http.StatusUnauthorized {
 			t.Fatalf("fd_ key write: want 401 got %d", c)
 		}
 	})
+}
+
+// TestWriteRouteFailsClosedWhenTokenUnset pins the other half of the binding
+// constraint: when AGF_API_TOKEN is UNSET, RequireToken fails closed, so an fd_
+// key that clears KeyAuth still cannot write. Together with the token-set case
+// above, the fd_ key is barred from mutating in BOTH token states.
+func TestWriteRouteFailsClosedWhenTokenUnset(t *testing.T) {
+	t.Setenv(middlewares.APITokenEnv, "")
+	r := router()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/ratings/"+strconv.Itoa(advID), nil)
+	req.Header.Set("Authorization", "Bearer "+authedKey)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("unset token, fd_ key write: want 401 (fail closed) got %d", w.Code)
+	}
 }

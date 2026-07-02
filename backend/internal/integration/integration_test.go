@@ -23,6 +23,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/edaslakavicius/emerging-app-finder/backend/db"
+	"github.com/edaslakavicius/emerging-app-finder/backend/middlewares"
 	"github.com/edaslakavicius/emerging-app-finder/backend/repositories"
 	"github.com/edaslakavicius/emerging-app-finder/backend/routers"
 )
@@ -30,14 +31,31 @@ import (
 var advID, adv2ID, adv3ID, adv4ID int
 
 // authedEmail/authedKey back the authed() helper: every /api route now requires
-// auth (KeyAuth on the group), so the integration tests present a real personal
-// fd_ key. A key (not the internal token) keeps AGF_API_TOKEN unset in this
-// process, so the write routes' RequireToken stays a no-op and the existing
-// write-path tests exercise the controller, not the token guard.
+// auth (KeyAuth on the group), so the read-path integration tests present a real
+// personal fd_ key.
+//
+// RequireToken fails closed and accepts ONLY the internal token, so the
+// write-path tests cannot ride the fd_ key: they t.Setenv(APITokenEnv,
+// writeToken) before building their router and authenticate with the internal
+// token + X-User-Email (authedInternal). authedEmail is seeded with role admin
+// so that identity resolves.
+const writeToken = "it-write-token"
+
 var (
 	authedEmail = "it-authed@test.local"
 	authedKey   string
 )
+
+// authedInternal attaches the internal write token plus the trusted user email,
+// the only credential pair that clears both the /api group's KeyAuth and the
+// per-route RequireToken. The caller MUST t.Setenv(APITokenEnv, writeToken)
+// before constructing the router, since both middlewares read the env once at
+// construction.
+func authedInternal(req *http.Request) *http.Request {
+	req.Header.Set("Authorization", "Bearer "+writeToken)
+	req.Header.Set("X-User-Email", authedEmail)
+	return req
+}
 
 func TestMain(m *testing.M) {
 	dsn := os.Getenv("AGF_IT_DB_URL")
@@ -400,6 +418,9 @@ func TestScalingNoDatedAds(t *testing.T) {
 }
 
 func TestReviewQueueAndDecision(t *testing.T) {
+	// The write below requires the internal token; set it before the router is
+	// built so RequireToken/KeyAuth pick it up at construction.
+	t.Setenv(middlewares.APITokenEnv, writeToken)
 	r := router()
 
 	// Queue starts with the one alerting, undecided gem.
@@ -411,10 +432,10 @@ func TestReviewQueueAndDecision(t *testing.T) {
 	require.Len(t, q, 1)
 	require.EqualValues(t, advID, q[0]["advertiser_id"])
 
-	// Record a decision (the only write path).
+	// Record a decision (the only write path) via the internal token.
 	body := strings.NewReader(`{"verdict":"accept","reviewer":"tester","note":"looks good"}`)
 	w = httptest.NewRecorder()
-	req := authed(httptest.NewRequest(http.MethodPost, "/api/review/"+strconv.Itoa(advID)+"/decision", body))
+	req := authedInternal(httptest.NewRequest(http.MethodPost, "/api/review/"+strconv.Itoa(advID)+"/decision", body))
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, req)
 	require.Equal(t, 200, w.Code)
@@ -434,9 +455,10 @@ func TestReviewQueueAndDecision(t *testing.T) {
 }
 
 func TestReviewDecisionBadVerdict(t *testing.T) {
+	t.Setenv(middlewares.APITokenEnv, writeToken)
 	r := router()
 	w := httptest.NewRecorder()
-	req := authed(httptest.NewRequest(http.MethodPost, "/api/review/"+strconv.Itoa(advID)+"/decision",
+	req := authedInternal(httptest.NewRequest(http.MethodPost, "/api/review/"+strconv.Itoa(advID)+"/decision",
 		strings.NewReader(`{"verdict":"maybe","reviewer":"x"}`)))
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, req)

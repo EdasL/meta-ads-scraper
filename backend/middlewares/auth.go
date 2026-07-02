@@ -15,10 +15,14 @@ import (
 // not a credential itself.
 const APITokenEnv = "AGF_API_TOKEN" // #nosec G101 -- env var name, not a secret
 
-// RequireToken guards mutating routes with a static bearer token. It is OPT-IN:
-// when AGF_API_TOKEN is unset the guard is a no-op, preserving the original
-// (auth-less) contract so the existing web client is unaffected. Set the env var
-// in production to require `Authorization: Bearer <token>` on writes.
+// RequireToken guards mutating routes with a static bearer token. Like
+// RequireInternalToken it FAILS CLOSED: when AGF_API_TOKEN is unset the guard
+// rejects every request (401) instead of passing through. This is the binding
+// constraint that keeps personal fd_ keys — which clear the /api group's
+// KeyAuth — from ever mutating: writes require the internal token specifically,
+// and a deploy that forgot to configure it refuses writes rather than opening
+// them to any authenticated key. It does NOT crash the process on missing
+// config — that would take the whole (public, read) API down with it.
 //
 // The token is read once at construction (startup), and compared in constant
 // time to avoid leaking length/prefix via timing.
@@ -26,7 +30,8 @@ func RequireToken() gin.HandlerFunc {
 	want := os.Getenv(APITokenEnv)
 	return func(c *gin.Context) {
 		if want == "" {
-			c.Next()
+			helpers.Detail(c, http.StatusUnauthorized, "writes are not configured.")
+			c.Abort()
 			return
 		}
 		got := strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")

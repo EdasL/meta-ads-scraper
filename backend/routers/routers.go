@@ -32,9 +32,10 @@ func Init(r *gin.Engine) {
 	// Every /api route requires auth: a personal fd_ key OR the static internal
 	// token with a resolvable X-User-Email (KeyAuth(true)). This closes the
 	// previously-open GETs. Writes keep their per-route RequireToken() as a
-	// second gate so a personal key cannot mutate when a token is configured —
-	// REST writes stay internal-token-only. The /api/internal group is a
-	// SEPARATE group off the engine (RequireInternalToken only) and does not
+	// second gate that FAILS CLOSED (401 when AGF_API_TOKEN is unset) and only
+	// accepts the internal token — so a personal fd_ key clears the group but can
+	// never mutate: REST writes stay internal-token-only. The /api/internal group
+	// is a SEPARATE group off the engine (RequireInternalToken only) and does not
 	// inherit this middleware.
 	api := r.Group("/api", middlewares.KeyAuth(true))
 	{
@@ -45,8 +46,8 @@ func Init(r *gin.Engine) {
 		api.GET("/gems/:advertiser_id/app-metrics", gems.AppMetrics)
 		api.GET("/review/queue", review.Queue)
 		api.GET("/preference-queue", preference.Queue)
-		// The single write is guarded by an optional bearer token (no-op unless
-		// AGF_API_TOKEN is set), so production can require auth on mutations.
+		// Writes are guarded by the internal bearer token (RequireToken fails
+		// closed: 401 unless AGF_API_TOKEN is set), so mutations are never open.
 		api.POST("/review/:advertiser_id/decision", middlewares.RequireToken(), review.Decision)
 		// On-demand enrich: POST triggers a refresh (token-guarded like review),
 		// GET polls status (open, status reads are safe to expose).

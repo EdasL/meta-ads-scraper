@@ -25,10 +25,17 @@ func post(r *gin.Engine, bearer string) int {
 	return w.Code
 }
 
-func TestRequireToken_NoopWhenUnset(t *testing.T) {
+// RequireToken FAILS CLOSED: an unset token rejects every write, even one
+// carrying an arbitrary bearer, so a deploy that forgot AGF_API_TOKEN refuses
+// mutations rather than opening them to any authenticated key.
+func TestRequireToken_FailsClosedWhenUnset(t *testing.T) {
 	t.Setenv(APITokenEnv, "")
-	if code := post(newAuthRouter(), ""); code != http.StatusOK {
-		t.Fatalf("unset token should allow writes; got %d", code)
+	r := newAuthRouter()
+	if code := post(r, ""); code != http.StatusUnauthorized {
+		t.Errorf("unset token, no bearer → want 401, got %d", code)
+	}
+	if code := post(r, "anything"); code != http.StatusUnauthorized {
+		t.Errorf("unset token, arbitrary bearer → want 401 (fail closed), got %d", code)
 	}
 }
 
