@@ -52,7 +52,12 @@ func KeyAuth(acceptInternal bool) gin.HandlerFunc {
 				return
 			}
 			role, err := lookupRole(c, email)
-			if err != nil || role == "" {
+			if err != nil {
+				helpers.Detail(c, http.StatusInternalServerError, "something went wrong.")
+				c.Abort()
+				return
+			}
+			if role == "" {
 				unauthorized(c)
 				return
 			}
