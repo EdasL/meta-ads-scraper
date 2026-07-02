@@ -86,9 +86,13 @@ Middleware on `/mcp` (and reused for `/api`):
 3. Touch `last_used_at` (best-effort, async).
 4. Unknown/revoked key → 401.
 
-**Rides along:** the same middleware — accepting either a valid API key **or** an
-existing NextAuth session cookie — closes the currently-open `/api` GETs (the flagged
-residual from the GKE deploy). The web app's own calls keep working via session.
+**Rides along:** the currently-open `/api` GETs get closed (the flagged residual from
+the GKE deploy). `/api` accepts either a personal `fd_` key or the existing static
+internal token (`AGF_API_TOKEN`). The web app's own browser calls move to a
+session-checked Next.js proxy route (`/backend/*` → cluster-internal API URL +
+internal token + `X-User-Email`), because a `NEXT_PUBLIC_*` token would be baked into
+the public JS bundle and Go cannot practically decrypt NextAuth's JWE session cookie.
+`X-User-Email` is trusted **only** on internal-token requests.
 
 ## Tools
 
