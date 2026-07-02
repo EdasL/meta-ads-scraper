@@ -10,6 +10,7 @@ import (
 
 	"github.com/edaslakavicius/emerging-app-finder/backend/controllers"
 	"github.com/edaslakavicius/emerging-app-finder/backend/db"
+	"github.com/edaslakavicius/emerging-app-finder/backend/mcpserver"
 	"github.com/edaslakavicius/emerging-app-finder/backend/middlewares"
 	"github.com/edaslakavicius/emerging-app-finder/backend/monitoring"
 )
@@ -68,6 +69,15 @@ func Init(r *gin.Engine) {
 	internal.GET("/keys", ia.ListKeys)
 	internal.POST("/keys", ia.MintKey)
 	internal.POST("/keys/revoke", ia.RevokeKey)
+
+	// Hosted multi-user MCP. Personal fd_ key auth (KeyAuth(false) — the internal
+	// static token is NOT accepted here), then a per-key rate limit. The limiter
+	// is mounted ONLY on /mcp, where every caller holds a personal key; it must
+	// not guard the /api tree. The tool set is built per request from the
+	// authenticated user, so admins get scraping_health and members do not.
+	mcpHandler := mcpserver.Handler()
+	r.Any("/mcp", middlewares.KeyAuth(false), middlewares.PerKeyRateLimit(60), gin.WrapH(mcpHandler))
+	r.Any("/mcp/*path", middlewares.KeyAuth(false), middlewares.PerKeyRateLimit(60), gin.WrapH(mcpHandler))
 
 	// Prometheus exposition.
 	r.GET("/metrics", monitoring.MetricsHandler())
