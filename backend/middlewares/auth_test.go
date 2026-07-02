@@ -45,3 +45,38 @@ func TestRequireToken_EnforcesWhenSet(t *testing.T) {
 		t.Errorf("correct token → want 200, got %d", code)
 	}
 }
+
+func newInternalRouter() *gin.Engine {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.POST("/w", RequireInternalToken(), func(c *gin.Context) { c.Status(http.StatusOK) })
+	return r
+}
+
+// RequireInternalToken FAILS CLOSED: an unset token rejects every request,
+// even one carrying an arbitrary bearer. Both middlewares read the env at
+// construction, so t.Setenv must run before newInternalRouter builds it.
+func TestRequireInternalToken_FailsClosedWhenUnset(t *testing.T) {
+	t.Setenv(APITokenEnv, "")
+	r := newInternalRouter()
+	if code := post(r, ""); code != http.StatusUnauthorized {
+		t.Errorf("unset token, no bearer → want 401, got %d", code)
+	}
+	if code := post(r, "anything"); code != http.StatusUnauthorized {
+		t.Errorf("unset token, arbitrary bearer → want 401 (fail closed), got %d", code)
+	}
+}
+
+func TestRequireInternalToken_EnforcesWhenSet(t *testing.T) {
+	t.Setenv(APITokenEnv, "s3cret")
+	r := newInternalRouter()
+	if code := post(r, ""); code != http.StatusUnauthorized {
+		t.Errorf("missing token → want 401, got %d", code)
+	}
+	if code := post(r, "nope"); code != http.StatusUnauthorized {
+		t.Errorf("wrong token → want 401, got %d", code)
+	}
+	if code := post(r, "s3cret"); code != http.StatusOK {
+		t.Errorf("correct token → want 200, got %d", code)
+	}
+}
