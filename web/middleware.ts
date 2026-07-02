@@ -7,5 +7,5 @@ export default NextAuth(authConfig).auth;
 // the login page. The `authorized` callback (auth.config.ts) is the single
 // source of truth for which paths require a session (its PROTECTED list).
 export const config = {
-  matcher: ["/((?!api|_next/static|_next/image|favicon.ico|login).*)"],
+  matcher: ["/((?!api|backend|_next/static|_next/image|favicon.ico|login).*)"],
 };

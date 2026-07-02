@@ -17,27 +17,71 @@ const TOKEN = process.env.AGF_API_TOKEN ?? "";
 // <video> decoding; X-Total-Count powers the feed's paging count).
 const PASS_THROUGH = ["content-type", "content-length", "cache-control", "x-total-count"];
 
+// Fail-closed allowlist: the FIRST path segment (the resource) must be one of
+// the Go /api group's public routes (backend/routers/routers.go). Everything
+// else — notably /api/internal/* (key mint, login oracle, key revoke) — is
+// 404'd here so a signed-in session can never reach it with the server-held
+// internal token. A denylist would be miss-prone; this is the closed set.
+const ALLOWED_RESOURCES = new Set([
+  "shortlist", // /shortlist, /shortlist/categories
+  "gems", // /gems/:id (+ /scaling, /app-metrics)
+  "review", // /review/queue, /review/:id/decision
+  "preference-queue",
+  "enrich", // /enrich/:id (GET status, POST trigger)
+  "saved-gems", // /saved-gems (+ /:id, /:id/remove)
+  "ratings", // /ratings (+ /:id)
+  "health", // /health/metrics, /health/coverage
+  "media", // /media/*key
+]);
+
+function notFound() {
+  return NextResponse.json({ detail: "not found." }, { status: 404 });
+}
+
 async function proxy(req: NextRequest, { params }: { params: Promise<{ path: string[] }> }) {
   const session = await auth();
   const email = session?.user?.email;
   if (!email) return NextResponse.json({ detail: "not signed in." }, { status: 401 });
 
   const { path } = await params;
+
+  // Reject traversal / malformed segments before matching so no "../internal"
+  // or encoded-slash trick can escape the allowlisted resource.
+  if (
+    path.length === 0 ||
+    path.some((seg) => seg === "" || seg === "." || seg === ".." || /[/\\]|%2e|%2f/i.test(seg))
+  ) {
+    return notFound();
+  }
+
+  // Match on the FIRST segment (the resource), not a substring — "internalfoo"
+  // won't match "internal", and "gems/123/scaling" resolves to "gems".
+  const resource = path[0];
+  if (resource === "internal" || !ALLOWED_RESOURCES.has(resource)) {
+    return notFound();
+  }
+
   const url = `${API}/${path.join("/")}${req.nextUrl.search}`;
 
   const hasBody = req.method !== "GET" && req.method !== "HEAD";
-  const res = await fetch(url, {
-    method: req.method,
-    headers: {
-      Authorization: `Bearer ${TOKEN}`,
-      "X-User-Email": email,
-      ...(hasBody
-        ? { "Content-Type": req.headers.get("content-type") ?? "application/json" }
-        : {}),
-    },
-    body: hasBody ? await req.text() : undefined,
-    cache: "no-store",
-  });
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: req.method,
+      headers: {
+        Authorization: `Bearer ${TOKEN}`,
+        "X-User-Email": email,
+        ...(hasBody
+          ? { "Content-Type": req.headers.get("content-type") ?? "application/json" }
+          : {}),
+      },
+      body: hasBody ? await req.text() : undefined,
+      cache: "no-store",
+    });
+  } catch {
+    // Never leak the token or a stack trace to the browser on a network error.
+    return NextResponse.json({ detail: "upstream unavailable." }, { status: 502 });
+  }
 
   const headers = new Headers();
   for (const h of PASS_THROUGH) {
