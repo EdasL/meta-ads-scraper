@@ -8,7 +8,7 @@ const TOKEN = process.env.AGF_API_TOKEN ?? "";
 async function requireEmail(): Promise<string> {
   const session = await auth();
   const email = session?.user?.email;
-  if (!email) throw new Error("Not signed in.");
+  if (!email) throw new Error("not signed in.");
   return email;
 }
 
@@ -26,7 +26,7 @@ export async function listKeys(): Promise<ApiKeyRow[]> {
     headers: { Authorization: `Bearer ${TOKEN}` },
     cache: "no-store",
   });
-  if (!res.ok) throw new Error("Could not load API keys.");
+  if (!res.ok) throw new Error("could not load API keys.");
   return res.json();
 }
 
@@ -37,7 +37,7 @@ export async function mintKey(label: string): Promise<string> {
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${TOKEN}` },
     body: JSON.stringify({ email, label }),
   });
-  if (!res.ok) throw new Error("Could not create the key.");
+  if (!res.ok) throw new Error("could not create the key.");
   return (await res.json()).key as string;
 }
 
@@ -48,5 +48,5 @@ export async function revokeKey(keyHash: string): Promise<void> {
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${TOKEN}` },
     body: JSON.stringify({ email, key_hash: keyHash }),
   });
-  if (!res.ok && res.status !== 204) throw new Error("Could not revoke the key.");
+  if (!res.ok && res.status !== 204) throw new Error("could not revoke the key.");
 }
