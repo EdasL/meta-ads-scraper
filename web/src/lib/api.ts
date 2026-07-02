@@ -32,21 +32,14 @@ import {
  * the adapters translate the snake_case/nullable wire shapes into the flat UI
  * contract.
  *
- * Browser calls go through the session-checked same-origin proxy (`/backend/*`,
- * see `app/backend/[...path]/route.ts`) — no API token ever reaches the client.
- * Server-side (SSR) calls hit the internal API directly with `AGF_API_TOKEN`.
+ * This module is BROWSER-ONLY. All calls go through the session-checked
+ * same-origin proxy (`/backend/*`, see `app/backend/[...path]/route.ts`), which
+ * injects the internal API token + the session's `X-User-Email` server-side —
+ * no API token ever reaches the client. Server code must NOT import this module
+ * (the Go `/api` group now requires `X-User-Email`, so a bare internal-token
+ * request would 401); call the API directly with `X-User-Email` instead.
  */
-const API_BASE =
-  typeof window === "undefined"
-    ? (process.env.AGF_API_INTERNAL_URL ?? "http://localhost:8000/api")
-    : "/backend";
-
-// Only the server holds the internal token; the browser rides its session
-// cookie through the proxy, which injects the token + X-User-Email server-side.
-const SERVER_HEADERS: Record<string, string> =
-  typeof window === "undefined" && process.env.AGF_API_TOKEN
-    ? { Authorization: `Bearer ${process.env.AGF_API_TOKEN}` }
-    : {};
+const API_BASE = "/backend";
 
 /** Builds the media URL for an S3 object key. Always same-origin (`/backend/*`)
  *  so browser <img>/<video> tags carry the session cookie through the proxy —
@@ -62,7 +55,6 @@ async function live<T>(path: string, init?: RequestInit): Promise<T> {
     ...init,
     headers: {
       "Content-Type": "application/json",
-      ...SERVER_HEADERS,
       ...(init?.headers ?? {}),
     },
   });
@@ -74,7 +66,7 @@ async function live<T>(path: string, init?: RequestInit): Promise<T> {
 async function liveOrNull<T>(path: string): Promise<T | null> {
   const res = await fetch(`${API_BASE}${path}`, {
     cache: "no-store",
-    headers: { "Content-Type": "application/json", ...SERVER_HEADERS },
+    headers: { "Content-Type": "application/json" },
   });
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`API ${res.status}: ${res.statusText}`);
@@ -91,7 +83,7 @@ export async function getShortlist(
   // workaround is gone.
   const res = await fetch(`${API_BASE}/shortlist?${shortlistParams(query)}`, {
     cache: "no-store",
-    headers: { "Content-Type": "application/json", ...SERVER_HEADERS },
+    headers: { "Content-Type": "application/json" },
     signal,
   });
   if (!res.ok) throw new Error(`API ${res.status}: ${res.statusText}`);
