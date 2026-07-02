@@ -47,7 +47,7 @@ MCP client ── Authorization: Bearer fd_<key> ──▶ api.peon.works/mcp
   deployment. (`gin.WrapH` on the SDK's `http.Handler`.)
 - No tool accepts a user parameter. Scoping comes exclusively from the resolved key.
 
-## Accounts & keys (migration 144)
+## Accounts & keys (migration 145 — 144 is taken by `creatives_ad_id_index`)
 
 ```sql
 frontend.users (
