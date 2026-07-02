@@ -239,6 +239,36 @@ two real levers are (1) **Layer 0 external-frame minting** to add wet arms, and 
 first; the RAW-UCB scheduler (Layer 1) then allocates the freed budget across the new
 arms.
 
+## 5b. The external frame is already built — but the mechanism is WRONG (2026-07-02)
+
+The worker runs a `release_mint` stage daily (`AGF_RELEASE_MINT=1`,
+`src/agf/discovery/release_mint.py`) intended as the Layer-0 external frame. **It
+produces ~nothing: 7 candidates all-time (6 kept) vs 2,317 from `niche_term`;
+`candidates_new: 0` every run for weeks** despite scraping 40 listings/run.
+
+Bounded live probe (2026-07-02, 10 in-scope new-releases) found the mechanism is
+structurally incapable, not mistuned:
+- It takes each new-release app's **name** and looks it up in **Meta typeahead** to
+  find that app's own advertiser page, then scrapes that page's ads.
+- **6/10 app names returned 0 typeahead pages** — brand-new apps have no Meta page
+  (they just launched; most don't run ads yet).
+- **The 4 that matched were name-collisions with unrelated brands**: fitness app
+  "Impulse Mode" → a modeling agency; "Family-Flow" → a florist + a psychiatry clinic;
+  "Ponta Negra" → a sushi restaurant.
+- **8 listings scraped → 15 ads → 0 candidates** (10 linked to a florist website
+  `non_app`, 5 `no_link`). Also: iTunes `newapplications` RSS is a global grab-bag —
+  many seeds are non-English / non-commercial ('전월세 임대 계산기', personal names).
+
+**This deviates from what the research (§0, §1a) and the 2026-06-18 doc actually
+specify.** The correct Layer-0 mechanism is **keyword minting**, not page-matching:
+take new-release listings' **title/subtitle/description → extract head terms →
+feed those as SEARCH keywords** into the normal sweep (breadth entry terms), plus the
+**category taxonomy** as fixed coverage seeds. New apps don't need to advertise for
+this to work — the minted *keyword* finds whoever advertises in that concept space.
+Dedup minted keywords against the existing pool with MMR (Layer 2) so they're
+genuinely new basins. ⇒ Don't wire coverage targets onto `release_mint`; replace its
+mechanism with keyword-minting, then steer THAT with the category-coverage alarm.
+
 ## 6. Still open (need a live probe or build)
 
 - **Frame correlation c1/c2** — how uncorrelated are category/new-release-minted keywords
