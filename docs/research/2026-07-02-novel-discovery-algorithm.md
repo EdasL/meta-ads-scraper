@@ -200,18 +200,54 @@ external frame. Nothing here biases the scraper toward likes.
 5. **Layer 3 Chao2 size denominator** — nice-to-have instrumentation; gate on rare-keyword
    recapture only.
 
-## 5. Open questions to settle with a live probe (before coding the bandit)
+## 5. Probe results (2026-07-02, from `discovery.sweep_runs` + `candidates`)
 
-1. **Rested vs restless dominance?** Re-sweep a fixed keyword set daily, measure
-   new-unique vs repeat capture. If mostly rested → greedy/FEWA suffices. If mixed →
-   the ε-floor is mandatory (theory branches sharply here).
-2. **Overflow rate?** What fraction of swept keywords hit the ~4-page truncation? Sets
-   which keywords are usable for Chao2 and how big the rank-bias blind spot is.
-3. **Frame correlation?** How uncorrelated are category-minted keywords from
-   flywheel-minted ones in practice (measure c1/c2)? Determines whether Layer 0 is a
-   valid second pool for capture-recapture.
-4. **Reward normalization?** new-unique per page vs per query vs novelty-distance-weighted
-   — which keeps rare high-novelty keywords from being starved?
+The worker already re-sweeps a **fixed ~301-keyword set every ~2h** — that IS the
+controlled re-sweep probe, running for 3+ weeks (308 logged sweeps). So Q1/Q2 are
+answered from existing data; no proxy spend needed.
+
+1. **Rested vs restless — RESTED-dominated, and the set is dry.** New-unique per keyword:
+   **1.43 (Jun 10, fresh set) → 0.30 (Jun 11) → 0.002–0.016 (Jun 12 onward, flatlined
+   for 3 weeks).** Re-sweeping the same keywords crashed yield ~100× within two days and
+   it never recovered = textbook rested depletion. Because the set is fixed, any
+   `candidates_new` IS restless replenishment (new ads on old keywords) — that runs at
+   **~1–6 new per full sweep (~0.01/kw)**: real but negligible. ⇒ Under rested decay
+   myopic-greedy/RAW-UCB is well-founded; keep the tiny restless trickle by dropping dry
+   keywords to a **slow re-check, never hard-delete** — do NOT need the mixed-setting
+   worst-case machinery, but keep the ε-floor for the frontier lane.
+2. **Proxy waste is the headline.** Last 7 days: **69,066 SERP requests → 215 new
+   candidates = 321 requests per new find**, with **66,501 repeat-pulls** re-confirming
+   known ads. ~99.7% of proxy budget re-confirms the corpus. The ~2h re-sweep cadence on
+   a set that replenishes ~1–6/sweep is pure waste — **cut cadence to daily (slower for
+   dry keywords) and redirect that budget to explore/frontier.** Quick independent win,
+   shippable before the bandit.
+3. **Overflow — low.** 3.96 pages/keyword = every keyword paged to the
+   `AGF_SWEEP_PAGES=4` max, but per-keyword candidate counts are small ⇒ most keywords
+   are NOT truncated ⇒ Chao2 recapture is broadly valid. (True page-4-full rate still
+   wants a one-shot `page_info` probe; minor.)
+4. **Chao2 on the current pool: ~92% of the REACHABLE slice already mined**
+   (S_obs=3,517; Q1=410 singletons, Q2=268 doubletons → Chao2≈3,831 → 91.8% discovered).
+   This is the vocabulary-bias trap made concrete: the number looks reassuring but only
+   measures the box we're already in — 92%-done of a pool blind to unexplored basins.
+   It is the strongest possible evidence that the fix is **new arms (Layer 0), not better
+   scheduling of the existing pool.**
+
+**Bottom line the probe settles:** better scheduling of the current keywords is
+rearranging deck chairs — the pool is 92% exhausted and replenishes at a trickle. The
+two real levers are (1) **Layer 0 external-frame minting** to add wet arms, and (2)
+**stop the 2h re-sweep** to stop burning ~99.7% of the budget on repeats. Build those
+first; the RAW-UCB scheduler (Layer 1) then allocates the freed budget across the new
+arms.
+
+## 6. Still open (need a live probe or build)
+
+- **Frame correlation c1/c2** — how uncorrelated are category/new-release-minted keywords
+  from flywheel keywords in practice? Determines whether Layer 0 is a valid second pool
+  for capture-recapture size estimates. (Measurable once Layer 0 mints its first batch.)
+- **Reward normalization** — new-unique per page vs per query vs novelty-distance-weighted,
+  so the bandit doesn't starve rare high-novelty keywords. (Decide when coding Layer 1.)
+- **True overflow rate** — one-shot check of `page_info.has_next_page` on page 4 across a
+  keyword sample, to bound the Chao2 rank-bias blind spot precisely.
 
 ## Sources (all peer-reviewed primaries; full list in the research transcript)
 Madhavan et al. *Google's Deep-Web Crawl*, PVLDB 2008 · Ntoulas et al. JCDL 2005 ·
