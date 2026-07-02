@@ -28,6 +28,25 @@ func oneHot768(idx int) string {
 	return "{" + strings.Join(parts, ",") + "}"
 }
 
+// keepSeededItems filters ranked reco items down to this package's seeded gems,
+// preserving order. RecommendedGems ranks the WHOLE product matview, into which
+// the sibling repositories-package fixtures (DEDUP_TEST / PREF_TEST /
+// RATINGS_TEST cohorts) insert their own advertisers before refreshing it, so
+// the full-suite feed carries foreign rows. Scoping to our own ids keeps the
+// ranking assertions (similar-app-first, unscored flag, GemScore fallback)
+// hermetic without serializing every package. Mirrors keepSeeded in
+// shortlist_filters_test.go.
+func keepSeededItems(items []reco.RecoItem) []reco.RecoItem {
+	s := seededSet()
+	out := make([]reco.RecoItem, 0, len(items))
+	for i := range items {
+		if s[int(items[i].AdvertiserID)] {
+			out = append(out, items[i])
+		}
+	}
+	return out
+}
+
 // TestRecommendedGems exercises the centroid-cosine ranking end to end against
 // the seeded product feed. A user who likes an app with a stored embedding gets
 // a personalized ranking (that app first, an embedding-less feed row flagged
@@ -59,10 +78,13 @@ func TestRecommendedGems(t *testing.T) {
 	})
 
 	// --- personalized: liked app first, cosine-scored, embedding-less flagged ---
-	items, personalized, err := repositories.RecommendedGems(ctx, g, me, 100)
+	// A high limit avoids the ranking being truncated by foreign matview rows
+	// before our seeded gems; keepSeededItems then scopes the assertions.
+	allItems, personalized, err := repositories.RecommendedGems(ctx, g, me, 100000)
 	if err != nil {
 		t.Fatal(err)
 	}
+	items := keepSeededItems(allItems)
 	if !personalized {
 		t.Fatalf("personalized = false, want true (user liked an embedded app)")
 	}
@@ -92,10 +114,11 @@ func TestRecommendedGems(t *testing.T) {
 	}
 
 	// --- not personalized: no likes → GemScore order, nothing scored ---
-	plain, personalized2, err := repositories.RecommendedGems(ctx, g, noLikes, 100)
+	allPlain, personalized2, err := repositories.RecommendedGems(ctx, g, noLikes, 100000)
 	if err != nil {
 		t.Fatal(err)
 	}
+	plain := keepSeededItems(allPlain)
 	if personalized2 {
 		t.Fatalf("personalized = true for a user with no likes, want false")
 	}
