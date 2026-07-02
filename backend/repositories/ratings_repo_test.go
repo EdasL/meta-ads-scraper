@@ -57,11 +57,14 @@ func seedRatings(g *gorm.DB) {
 	must(g.Raw(`INSERT INTO public.advertisers (page_id, page_name, page_like_count)
 		VALUES ('RATINGS_TEST', 'Ratings Test Co', 1234) RETURNING id`).Scan(&ratingsAdvID).Error)
 
-	// Insert a score row so the matview refresh picks it up.
+	// Insert a score row so the matview refresh picks it up. The cohort is a
+	// sentinel (like seedDedup's DEDUP_TEST) so this fixture never lands in the
+	// 'ios' cohort the integration package's Shortlist tests assert against —
+	// both packages share one test DB and refresh the same matview in parallel.
 	must(g.Exec(`INSERT INTO adtech.advertiser_scores
 		(advertiser_id, cohort, gem_score, scaling_velocity, under_radar, funnel_intent,
 		 active_ad_count, max_longevity_days, alert)
-		VALUES (?, 'ios', 77.5, 0.6, 0.5, 0.8, 2, 20, false)`, ratingsAdvID).Error)
+		VALUES (?, 'RATINGS_TEST', 77.5, 0.6, 0.5, 0.8, 2, 20, false)`, ratingsAdvID).Error)
 
 	// A bare ad + creative so the matview includes this advertiser.
 	var adID int

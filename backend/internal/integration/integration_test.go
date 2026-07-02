@@ -65,6 +65,16 @@ func TestShortlist(t *testing.T) {
 
 	var rows []map[string]any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &rows))
+	// Scope to our own seeded rows: the shared test DB gets foreign advertisers
+	// inserted by parallel packages (backend/repositories) into the same matview.
+	seeded := seededSet()
+	kept := rows[:0]
+	for _, row := range rows {
+		if seeded[int(row["advertiser_id"].(float64))] {
+			kept = append(kept, row)
+		}
+	}
+	rows = kept
 	require.Len(t, rows, 3, "three seeded gems, ordered by gem_score DESC")
 
 	top := rows[0]

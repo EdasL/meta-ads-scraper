@@ -17,7 +17,33 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// listGems GETs /api/shortlist with params and returns (recorder, advertiser ids in order).
+// seededSet is the set of advertisers this package's seed() owns. The suite
+// shares one test DB with backend/repositories, whose fixtures INSERT their own
+// advertisers and REFRESH the same matview concurrently; scoping assertions to
+// our own ids keeps the feed tests hermetic against those intruders instead of
+// serializing every package (go test -p 1).
+func seededSet() map[int]bool {
+	return map[int]bool{advID: true, adv2ID: true, adv3ID: true, adv4ID: true}
+}
+
+// keepSeeded filters an ordered id list down to this package's seeded gems,
+// preserving order. Relative order (what the sort/filter tests prove) survives;
+// foreign rows from parallel packages drop out.
+func keepSeeded(ids []int) []int {
+	s := seededSet()
+	out := make([]int, 0, len(ids))
+	for _, id := range ids {
+		if s[id] {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// listGems GETs /api/shortlist with params and returns (recorder, advertiser
+// ids in order), scoped to this package's seeded gems. The X-Total-Count header
+// on the recorder is a GLOBAL count and is therefore NOT hermetic — assert it
+// only under a filter that excludes foreign rows (e.g. an owned cohort/genre).
 func listGems(t *testing.T, params url.Values) (*httptest.ResponseRecorder, []int) {
 	t.Helper()
 	r := router()
@@ -29,7 +55,7 @@ func listGems(t *testing.T, params url.Values) (*httptest.ResponseRecorder, []in
 	for i, row := range rows {
 		ids[i] = int(row["advertiser_id"].(float64))
 	}
-	return w, ids
+	return w, keepSeeded(ids)
 }
 
 func TestShortlistCategoryFilter(t *testing.T) {
@@ -104,28 +130,45 @@ func TestShortlistMinAdAgeAndFunnel(t *testing.T) {
 // Migration 124 keeps them as an "incubating" cohort: hidden from the default
 // confirmed feed, surfaced only under incubating=true (the Fresh view).
 func TestShortlistIncubatingCohort(t *testing.T) {
-	// Default feed: confirmed only — the longevity-floored gem (adv4ID) is hidden.
+	// Default feed: confirmed only — the longevity-floored gem (adv4ID) is hidden,
+	// the three confirmed seeded gems appear. (X-Total-Count is a global count and
+	// racy under parallel packages, so assert our own seeded rows instead.)
 	w, ids := listGems(t, url.Values{})
 	require.Equal(t, 200, w.Code)
 	require.NotContains(t, ids, adv4ID, "incubating gem must not pollute the confirmed feed")
-	require.Equal(t, "3", w.Header().Get("X-Total-Count"))
+	require.ElementsMatch(t, []int{advID, adv2ID, adv3ID}, ids, "the three confirmed seeded gems")
 
 	// Fresh view: incubating=true returns ONLY the longevity-floored cohort.
 	w, ids = listGems(t, url.Values{"incubating": {"true"}})
 	require.Equal(t, 200, w.Code)
 	require.Equal(t, []int{adv4ID}, ids, "only the incubating gem")
-	require.Equal(t, "1", w.Header().Get("X-Total-Count"))
 }
 
 func TestShortlistTotalCountWithPagination(t *testing.T) {
-	w, ids := listGems(t, url.Values{"limit": {"1"}})
-	require.Equal(t, 200, w.Code)
-	require.Len(t, ids, 1, "page of one")
-	require.Equal(t, "3", w.Header().Get("X-Total-Count"), "total spans all pages")
+	// Scope to the 'ios' cohort — owned solely by this package's seed (advID 88.5,
+	// adv2ID 75) — so X-Total-Count is hermetic. An unfiltered feed count races
+	// with the advertisers other packages insert into the shared matview.
+	ios := url.Values{"cohort": {"ios"}}
 
-	w, ids = listGems(t, url.Values{"limit": {"1"}, "offset": {"2"}})
-	require.Equal(t, []int{adv3ID}, ids, "third page of one = lowest score")
-	require.Equal(t, "3", w.Header().Get("X-Total-Count"))
+	set := func(base url.Values, extra url.Values) url.Values {
+		v := url.Values{}
+		for k, vs := range base {
+			v[k] = vs
+		}
+		for k, vs := range extra {
+			v[k] = vs
+		}
+		return v
+	}
+
+	w, ids := listGems(t, set(ios, url.Values{"limit": {"1"}}))
+	require.Equal(t, 200, w.Code)
+	require.Equal(t, []int{advID}, ids, "page of one = highest score in cohort")
+	require.Equal(t, "2", w.Header().Get("X-Total-Count"), "total spans all pages")
+
+	w, ids = listGems(t, set(ios, url.Values{"limit": {"1"}, "offset": {"1"}}))
+	require.Equal(t, []int{adv2ID}, ids, "second page of one = lowest score in cohort")
+	require.Equal(t, "2", w.Header().Get("X-Total-Count"))
 }
 
 func TestShortlistBadParams(t *testing.T) {
