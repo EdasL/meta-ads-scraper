@@ -29,7 +29,14 @@ func Init(r *gin.Engine) {
 	health := controllers.NewHealthController()
 	media := controllers.NewMediaController()
 
-	api := r.Group("/api")
+	// Every /api route requires auth: a personal fd_ key OR the static internal
+	// token with a resolvable X-User-Email (KeyAuth(true)). This closes the
+	// previously-open GETs. Writes keep their per-route RequireToken() as a
+	// second gate so a personal key cannot mutate when a token is configured —
+	// REST writes stay internal-token-only. The /api/internal group is a
+	// SEPARATE group off the engine (RequireInternalToken only) and does not
+	// inherit this middleware.
+	api := r.Group("/api", middlewares.KeyAuth(true))
 	{
 		api.GET("/shortlist", shortlist.List)
 		api.GET("/shortlist/categories", shortlist.Categories)

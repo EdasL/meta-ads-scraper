@@ -48,7 +48,7 @@ func listGems(t *testing.T, params url.Values) (*httptest.ResponseRecorder, []in
 	t.Helper()
 	r := router()
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/shortlist?"+params.Encode(), nil))
+	r.ServeHTTP(w, authed(httptest.NewRequest(http.MethodGet, "/api/shortlist?"+params.Encode(), nil)))
 	var rows []map[string]any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &rows))
 	ids := make([]int, len(rows))
@@ -187,7 +187,7 @@ func TestShortlistBadParams(t *testing.T) {
 	} {
 		r := router()
 		w := httptest.NewRecorder()
-		r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/shortlist?"+q.Encode(), nil))
+		r.ServeHTTP(w, authed(httptest.NewRequest(http.MethodGet, "/api/shortlist?"+q.Encode(), nil)))
 		require.Equal(t, http.StatusUnprocessableEntity, w.Code, "params %v", q)
 		require.Contains(t, w.Body.String(), "detail")
 	}
@@ -212,7 +212,7 @@ func listCategories(t *testing.T, params url.Values) []map[string]any {
 	t.Helper()
 	r := router()
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/shortlist/categories?"+params.Encode(), nil))
+	r.ServeHTTP(w, authed(httptest.NewRequest(http.MethodGet, "/api/shortlist/categories?"+params.Encode(), nil)))
 	require.Equal(t, 200, w.Code)
 	var cats []map[string]any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &cats))

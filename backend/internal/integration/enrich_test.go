@@ -13,11 +13,13 @@ import (
 )
 
 // postEnrich fires POST /api/enrich/<id> with an empty JSON body and returns
-// the recorder. AGF_API_TOKEN is unset in the test env, so RequireToken no-ops.
+// the recorder. The /api group now requires auth, so it carries a personal key;
+// AGF_API_TOKEN is unset in the test env, so the per-route RequireToken no-ops
+// and the request reaches the controller.
 func postEnrich(t *testing.T, r http.Handler, id int) *httptest.ResponseRecorder {
 	t.Helper()
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/enrich/"+strconv.Itoa(id), strings.NewReader("{}"))
+	req := authed(httptest.NewRequest(http.MethodPost, "/api/enrich/"+strconv.Itoa(id), strings.NewReader("{}")))
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, req)
 	return w

@@ -7,6 +7,7 @@
 package integration
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -18,13 +19,25 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 
 	"github.com/edaslakavicius/emerging-app-finder/backend/db"
+	"github.com/edaslakavicius/emerging-app-finder/backend/repositories"
 	"github.com/edaslakavicius/emerging-app-finder/backend/routers"
 )
 
 var advID, adv2ID, adv3ID, adv4ID int
+
+// authedEmail/authedKey back the authed() helper: every /api route now requires
+// auth (KeyAuth on the group), so the integration tests present a real personal
+// fd_ key. A key (not the internal token) keeps AGF_API_TOKEN unset in this
+// process, so the write routes' RequireToken stays a no-op and the existing
+// write-path tests exercise the controller, not the token guard.
+var (
+	authedEmail = "it-authed@test.local"
+	authedKey   string
+)
 
 func TestMain(m *testing.M) {
 	dsn := os.Getenv("AGF_IT_DB_URL")
@@ -36,6 +49,18 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 	seed(db.DB())
+
+	ctx := context.Background()
+	hash, _ := bcrypt.GenerateFromPassword([]byte("x"), bcrypt.DefaultCost)
+	if err := repositories.UpsertUser(ctx, db.DB(), authedEmail, string(hash), "IT", "admin"); err != nil {
+		panic(err)
+	}
+	k, err := repositories.CreateAPIKey(ctx, db.DB(), authedEmail, "integration")
+	if err != nil {
+		panic(err)
+	}
+	authedKey = k
+
 	os.Exit(m.Run())
 }
 
@@ -45,10 +70,18 @@ func router() *gin.Engine {
 	return r
 }
 
+// authed attaches the integration personal key so a request clears the /api
+// group's KeyAuth. Health/metrics/readyz routes live outside the group and must
+// NOT be wrapped.
+func authed(req *http.Request) *http.Request {
+	req.Header.Set("Authorization", "Bearer "+authedKey)
+	return req
+}
+
 func get(t *testing.T, r *gin.Engine, path string) (*httptest.ResponseRecorder, map[string]json.RawMessage) {
 	t.Helper()
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, path, nil)
+	req := authed(httptest.NewRequest(http.MethodGet, path, nil))
 	r.ServeHTTP(w, req)
 	out := map[string]json.RawMessage{}
 	if strings.HasPrefix(w.Body.String(), "{") {
@@ -60,7 +93,7 @@ func get(t *testing.T, r *gin.Engine, path string) (*httptest.ResponseRecorder, 
 func TestShortlist(t *testing.T) {
 	r := router()
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/shortlist", nil))
+	r.ServeHTTP(w, authed(httptest.NewRequest(http.MethodGet, "/api/shortlist", nil)))
 	require.Equal(t, 200, w.Code)
 
 	var rows []map[string]any
@@ -122,12 +155,12 @@ func TestShortlistCohortFilter(t *testing.T) {
 	r := router()
 
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/shortlist?cohort=android", nil))
+	r.ServeHTTP(w, authed(httptest.NewRequest(http.MethodGet, "/api/shortlist?cohort=android", nil)))
 	require.Equal(t, 200, w.Code)
 	require.Equal(t, "[]", strings.TrimSpace(w.Body.String()), "no android cohort → empty array, not null")
 
 	w = httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/shortlist?cohort=ios&min_score=80", nil))
+	r.ServeHTTP(w, authed(httptest.NewRequest(http.MethodGet, "/api/shortlist?cohort=ios&min_score=80", nil)))
 	var rows []map[string]any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &rows))
 	require.Len(t, rows, 1, "only the 88.5 gem clears min_score=80 in cohort ios")
@@ -136,7 +169,7 @@ func TestShortlistCohortFilter(t *testing.T) {
 func TestDossier(t *testing.T) {
 	r := router()
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/gems/"+strconv.Itoa(advID), nil))
+	r.ServeHTTP(w, authed(httptest.NewRequest(http.MethodGet, "/api/gems/"+strconv.Itoa(advID), nil)))
 	require.Equal(t, 200, w.Code)
 
 	var d struct {
@@ -242,7 +275,7 @@ func TestDossier(t *testing.T) {
 func TestDossierNullSignals(t *testing.T) {
 	r := router()
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/gems/"+strconv.Itoa(adv2ID), nil))
+	r.ServeHTTP(w, authed(httptest.NewRequest(http.MethodGet, "/api/gems/"+strconv.Itoa(adv2ID), nil)))
 	require.Equal(t, 200, w.Code)
 
 	var d map[string]any
@@ -272,7 +305,7 @@ func TestDossierNullSignals(t *testing.T) {
 func TestDossierMetaSignals(t *testing.T) {
 	r := router()
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/gems/"+strconv.Itoa(advID), nil))
+	r.ServeHTTP(w, authed(httptest.NewRequest(http.MethodGet, "/api/gems/"+strconv.Itoa(advID), nil)))
 	require.Equal(t, 200, w.Code)
 
 	var d map[string]any
@@ -287,7 +320,7 @@ func TestDossierMetaSignals(t *testing.T) {
 func TestAppMetrics(t *testing.T) {
 	r := router()
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/gems/"+strconv.Itoa(advID)+"/app-metrics", nil))
+	r.ServeHTTP(w, authed(httptest.NewRequest(http.MethodGet, "/api/gems/"+strconv.Itoa(advID)+"/app-metrics", nil)))
 	require.Equal(t, 200, w.Code)
 
 	var pts []map[string]any
@@ -305,7 +338,7 @@ func TestAppMetrics(t *testing.T) {
 func TestAppMetricsEmpty(t *testing.T) {
 	r := router()
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/gems/"+strconv.Itoa(adv2ID)+"/app-metrics", nil))
+	r.ServeHTTP(w, authed(httptest.NewRequest(http.MethodGet, "/api/gems/"+strconv.Itoa(adv2ID)+"/app-metrics", nil)))
 	require.Equal(t, 200, w.Code)
 	require.Equal(t, "[]", strings.TrimSpace(w.Body.String()), "no linked app → empty array, not null")
 }
@@ -313,7 +346,7 @@ func TestAppMetricsEmpty(t *testing.T) {
 func TestDossierNotFound(t *testing.T) {
 	r := router()
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/gems/999999", nil))
+	r.ServeHTTP(w, authed(httptest.NewRequest(http.MethodGet, "/api/gems/999999", nil)))
 	require.Equal(t, 404, w.Code)
 	require.Contains(t, w.Body.String(), "gem not found")
 }
@@ -321,7 +354,7 @@ func TestDossierNotFound(t *testing.T) {
 func TestScaling(t *testing.T) {
 	r := router()
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/gems/"+strconv.Itoa(advID)+"/scaling", nil))
+	r.ServeHTTP(w, authed(httptest.NewRequest(http.MethodGet, "/api/gems/"+strconv.Itoa(advID)+"/scaling", nil)))
 	require.Equal(t, 200, w.Code)
 	var pts []map[string]any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &pts))
@@ -361,7 +394,7 @@ func TestScalingNoDatedAds(t *testing.T) {
 	// anchor on and returns an empty series, not an error.
 	r := router()
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/gems/"+strconv.Itoa(adv2ID)+"/scaling", nil))
+	r.ServeHTTP(w, authed(httptest.NewRequest(http.MethodGet, "/api/gems/"+strconv.Itoa(adv2ID)+"/scaling", nil)))
 	require.Equal(t, 200, w.Code)
 	require.Equal(t, "[]", strings.TrimSpace(w.Body.String()))
 }
@@ -371,7 +404,7 @@ func TestReviewQueueAndDecision(t *testing.T) {
 
 	// Queue starts with the one alerting, undecided gem.
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/review/queue", nil))
+	r.ServeHTTP(w, authed(httptest.NewRequest(http.MethodGet, "/api/review/queue", nil)))
 	require.Equal(t, 200, w.Code)
 	var q []map[string]any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &q))
@@ -381,7 +414,7 @@ func TestReviewQueueAndDecision(t *testing.T) {
 	// Record a decision (the only write path).
 	body := strings.NewReader(`{"verdict":"accept","reviewer":"tester","note":"looks good"}`)
 	w = httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/review/"+strconv.Itoa(advID)+"/decision", body)
+	req := authed(httptest.NewRequest(http.MethodPost, "/api/review/"+strconv.Itoa(advID)+"/decision", body))
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, req)
 	require.Equal(t, 200, w.Code)
@@ -389,7 +422,7 @@ func TestReviewQueueAndDecision(t *testing.T) {
 
 	// It must now be excluded from the queue (NOT EXISTS decision).
 	w = httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/review/queue", nil))
+	r.ServeHTTP(w, authed(httptest.NewRequest(http.MethodGet, "/api/review/queue", nil)))
 	require.Equal(t, "[]", strings.TrimSpace(w.Body.String()))
 
 	// Row landed in frontend.review_decisions.
@@ -403,8 +436,8 @@ func TestReviewQueueAndDecision(t *testing.T) {
 func TestReviewDecisionBadVerdict(t *testing.T) {
 	r := router()
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/review/"+strconv.Itoa(advID)+"/decision",
-		strings.NewReader(`{"verdict":"maybe","reviewer":"x"}`))
+	req := authed(httptest.NewRequest(http.MethodPost, "/api/review/"+strconv.Itoa(advID)+"/decision",
+		strings.NewReader(`{"verdict":"maybe","reviewer":"x"}`)))
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, req)
 	require.Equal(t, http.StatusUnprocessableEntity, w.Code)
@@ -470,7 +503,7 @@ func TestMetricsEndpoint(t *testing.T) {
 func TestMediaForbiddenKey(t *testing.T) {
 	r := router()
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/media/etc/passwd", nil))
+	r.ServeHTTP(w, authed(httptest.NewRequest(http.MethodGet, "/api/media/etc/passwd", nil)))
 	require.Equal(t, 403, w.Code)
 }
 
