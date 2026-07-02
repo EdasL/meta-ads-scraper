@@ -57,6 +57,17 @@ deploy change) — a module docstring notes the mechanism changed on 2026-07-02.
 
 ### 4a. `discovery/coverage.py` (pure + one read)
 
+**Category-name normalization (discovered 2026-07-02):** the three category
+vocabularies disagree — iOS `apps.genre` uses Apple names ("Social Networking",
+"Graphics & Design", "Book"), Android uses Play names ("Tools", "Photography", "Music &
+Audio", "Maps & Navigation"), and the taxonomy's `IN_SCOPE_CATEGORIES` /
+`NICHE_TERMS_BY_CATEGORY` use a third set ("Social", "Art & Design", "Utilities"). A pure
+`canonical_category(genre) -> str | None` with a `CATEGORY_ALIASES` map (grounded in the
+live genre distribution) folds all three into the taxonomy's `IN_SCOPE_CATEGORIES`
+vocabulary; `None` = out-of-scope/unmapped (e.g. Games, Stickers). Coverage, budget, and
+frame-seeding all key on this canonical set so they speak one language.
+
+
 - `category_coverage(conn) -> dict[str, CategoryCoverage]` — per in-scope category:
   `found` = distinct kept apps (candidates with `status IN ('kept','enriched')`, joined
   `discovery.candidates ⋈ public.apps ON (store, store_id)`, grouped by `apps.genre`),
