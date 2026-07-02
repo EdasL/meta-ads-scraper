@@ -1,0 +1,12 @@
+-- 144: index public.creatives(ad_id).
+--
+-- Every per-advertiser creative lookup (review-queue hero creative, dossier
+-- "The ads" reel) filters creatives by ad_id via a LATERAL join. Without this
+-- index each lookup seq-scans the whole creatives table per advertiser: the
+-- review queue's 437-advertiser enrichment measured 18.2s fully cached on
+-- prod (1 vCPU), tripping the API's 15s query timeout -> 500.
+--
+-- Prod note: applied out-of-band with CREATE INDEX CONCURRENTLY (this runner
+-- executes inside one transaction, where CONCURRENTLY is not allowed); the
+-- IF NOT EXISTS makes this file a no-op there.
+CREATE INDEX IF NOT EXISTS ix_creatives_ad_id ON public.creatives (ad_id);
