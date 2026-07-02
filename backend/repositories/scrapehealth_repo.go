@@ -473,11 +473,21 @@ func dotF64(a []float32, b []float64) float64 {
 	return d
 }
 
-// sortByDesc stable-sorts idx in place by key(idx) descending.
+// sortByDesc sorts idx in place by key(idx) descending, breaking ties by the
+// element value itself (idx[j]) descending. This matches the Python reference
+// _concept_groups (metrics.py), whose np.argsort(sizes)[::-1] is a stable
+// ascending order then reversed — so equal-size clusters come out highest
+// original cluster id first. Callers pass idx = [0,1,2,…] so the element value
+// IS the cluster id.
 func sortByDesc(idx []int, key func(int) int) {
 	for i := 1; i < len(idx); i++ {
-		for j := i; j > 0 && key(idx[j]) > key(idx[j-1]); j-- {
-			idx[j], idx[j-1] = idx[j-1], idx[j]
+		for j := i; j > 0; j-- {
+			kj, kp := key(idx[j]), key(idx[j-1])
+			if kj > kp || (kj == kp && idx[j] > idx[j-1]) {
+				idx[j], idx[j-1] = idx[j-1], idx[j]
+			} else {
+				break
+			}
 		}
 	}
 }
