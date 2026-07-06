@@ -21,6 +21,7 @@ from agf.discovery.keyword_redundancy import (admit_by_novelty,
                                               redundancy_scores)
 from agf.discovery.release_keywords import (ProposeError,
                                             brainstorm_niche_keywords,
+                                            generalize_autocomplete_keywords,
                                             propose_release_keywords)
 from agf.discovery.store_autocomplete import gather_autocomplete_candidates
 from agf.discovery.taxonomy import NICHE_TERMS_BY_CATEGORY
@@ -184,7 +185,19 @@ def mint_keywords_from_releases(engine, client, *, country="us", limit=200, K=15
         ac_budget = mint_budget(coverage, K=K, total_slots=total_slots,
                                 explore_share=explore_share, eligible=set(ac))
         for cat, slots in ac_budget.items():
-            cands = [p for p in ac.get(cat, []) if p.lower() not in exclude]
+            raw = [p for p in ac.get(cat, []) if p.lower() not in exclude]
+            if not raw:
+                continue
+            # Raw autocomplete queries are mostly specific app/brand names (live
+            # finding 2026-07-06) — generalize to niche phrases first, with headroom
+            # for the novelty gate to drop some. A generalize failure SKIPS the
+            # category: unlike the gate, degrading open would mint known junk.
+            try:
+                cands = generalize_autocomplete_keywords(cat, raw, max(slots * 3, 10))
+            except ProposeError:
+                stats["errors"] += 1
+                continue
+            cands = [p for p in cands if p.lower() not in exclude]
             if not cands:
                 continue
             admitted = [p for p in _gate(cands, slots, label="autocomplete")

@@ -80,6 +80,49 @@ def propose_release_keywords(category: str, listings: list[dict], n: int, *,
     return _normalize(phrases)[:n]
 
 
+_GENERALIZE_PROMPT = (
+    "Below are raw app-store search AUTOCOMPLETE queries for the '{category}' category. "
+    "Many are specific app, brand, or business names. Return up to {n} GENERIC Meta Ad "
+    "Library search keywords for finding NEW, emerging mobile apps: keep a query that is "
+    "already a generic niche phrase; replace an app- or brand-specific query with the "
+    "niche it represents (e.g. 'capcut: photo & video editor' -> 'video editing app'); "
+    "DROP queries with no mobile-app niche behind them (companies, credit unions, "
+    "utilities, venues). Each keyword: 2-4 words, lowercase, usually ending in 'app'. "
+    "No brand or product names. Return only the phrases.\n\nAutocomplete queries:\n"
+    "{queries}")
+
+
+def generalize_autocomplete_keywords(category, phrases, n, *, api_key=None,
+                                     model=_MODEL, _post=None) -> list[str]:
+    """Convert raw store-autocomplete queries into generic niche search keywords —
+    live-verify 2026-07-06 found the raw stream is mostly specific app/brand names
+    ('capcut: photo & video editor', 'ugi utilities, inc.'), which as sweep keywords
+    re-find one (usually incumbent) app instead of a niche. Keeps generic queries,
+    rewrites app-specific ones to their niche, drops no-niche business names. Raises
+    ProposeError on missing key / bad reply — the mint stage SKIPS the category then
+    (raw autocomplete is majority junk, so this must NOT degrade open)."""
+    if not phrases or n <= 0:
+        return []
+    key = api_key or os.environ.get("GEMINI_API_KEY")
+    if not key:
+        raise ProposeError("no GEMINI_API_KEY")
+    queries = "\n".join(f"- {p}" for p in list(phrases)[:40])
+    body = {
+        "contents": [{"parts": [{"text": _GENERALIZE_PROMPT.format(
+            n=n, category=category, queries=queries)}]}],
+        "generationConfig": {"responseMimeType": "application/json",
+                             "responseSchema": _SCHEMA},
+    }
+    post = _post or (lambda url, b: post_json(url, b, max_retries=5, timeout=60))
+    try:
+        resp = post(_GEN_URL.format(model=model, key=key), body)
+        text_out = resp["candidates"][0]["content"]["parts"][0]["text"]
+        out = json.loads(text_out).get("phrases", [])
+    except (HttpBackoffError, KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
+        raise ProposeError(f"gemini generalize failed: {exc!r}") from exc
+    return _normalize(out)[:n]
+
+
 _BRAINSTORM_PROMPT = (
     "You are finding NEW, emerging mobile apps to discover via Meta Ad Library search. "
     "For the '{category}' category, list up to {n} EMERGING SUB-NICHES that are adjacent "

@@ -78,6 +78,37 @@ def test_brainstorm_returns_normalized_phrases():
     assert out == ["lucid dreaming app", "snore detection app"]
 
 
+from agf.discovery.release_keywords import generalize_autocomplete_keywords
+
+
+def test_generalize_converts_app_specific_queries_to_niches():
+    # The 2026-07-06 live finding: raw autocomplete is mostly app/brand names.
+    def fake_post(url, body):
+        prompt = body["contents"][0]["parts"][0]["text"]
+        assert "capcut: photo & video editor" in prompt
+        assert "Photo & Video" in prompt
+        return _gemini_reply(["video editing app", "photo collage app"])
+
+    out = generalize_autocomplete_keywords(
+        "Photo & Video", ["capcut: photo & video editor", "photo collage maker"],
+        5, api_key="k", _post=fake_post)
+    assert out == ["video editing app", "photo collage app"]
+
+
+def test_generalize_empty_inputs_return_empty_without_calling():
+    def boom(url, body):
+        raise AssertionError("should not call Gemini")
+    assert generalize_autocomplete_keywords("X", [], 5, api_key="k", _post=boom) == []
+    assert generalize_autocomplete_keywords("X", ["a b"], 0, api_key="k", _post=boom) == []
+
+
+def test_generalize_bad_reply_raises():
+    def bad_post(url, body):
+        return {"candidates": [{"content": {"parts": [{"text": "not json"}]}}]}
+    with pytest.raises(ProposeError):
+        generalize_autocomplete_keywords("X", ["a b"], 5, api_key="k", _post=bad_post)
+
+
 def test_brainstorm_no_key_raises(monkeypatch):
     import pytest
     from agf.discovery.release_keywords import ProposeError
