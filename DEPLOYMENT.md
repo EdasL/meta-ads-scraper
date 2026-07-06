@@ -521,3 +521,54 @@ rm -f web/.next/.livebuild && launchctl kickstart -k gui/$(id -u)/com.fielddesk.
 bash ops/prod/02_secrets.sh && bash ops/prod/00_provision_sql.sh && \
   bash ops/prod/02_build_image.sh && bash ops/prod/01_provision_vm.sh
 ```
+
+---
+
+## Multi-user MCP (hosted) — shipped 2026-07-06
+
+The scraping-health MCP is now a **hosted, per-user-authenticated** server at
+`api.peon.works/mcp` (Go MCP SDK streamable HTTP, inside the agf-api pod). Users
+connect with a personal API key. Accounts live in `frontend.users`; keys in
+`frontend.api_keys` (migration 145).
+
+### Required env (both pods)
+- `AGF_API_TOKEN` — the web↔API internal token. MUST be present with the **same
+  value** in BOTH `agf-secrets` (api) and `agf-web-secrets` (web). The API now
+  **fails closed** without it (all `/api` GETs 401, writes 401). Generate once:
+  `openssl rand -base64 32`, then `kubectl patch secret <name> -n agf --type=merge
+  -p '{"data":{"AGF_API_TOKEN":"<base64>"}}'` for both secrets.
+- `AGF_API_INTERNAL_URL` (web only) — `http://agf-api.agf.svc.cluster.local:8000/api`
+  (in web/k8s/web.yaml env). The web app's server code (login, /backend proxy,
+  settings actions) reaches the API in-cluster and adds the token + `X-User-Email`.
+
+### Rollout order (hard gate)
+1. Apply migration 145 (see §migrations) and seed accounts into `frontend.users`.
+2. Set `AGF_API_TOKEN` in BOTH secrets (same value) + `AGF_API_INTERNAL_URL` on web.
+3. Roll **api first**, wait healthy, verify `/api` lockdown (anon 401; token+
+   `X-User-Email` 200). THEN roll web. Rolling web first (or api without the token)
+   401s the whole dashboard.
+
+### Seeding an account (reuses the existing dashboard password)
+The web login now reads `frontend.users`, not the `AUTH_USERS` env. To migrate an
+existing account, copy its bcrypt hash straight across (Go bcrypt reads bcryptjs
+`$2b$` hashes) — no plaintext needed:
+```
+HASH=$(kubectl get secret agf-web-secrets -n agf -o jsonpath='{.data.AUTH_USERS}' \
+  | base64 -d | python3 -c "import json,sys;print(next(u['passwordHash'] for u in json.load(sys.stdin) if u['email']=='<email>'))")
+# INSERT into frontend.users (email, password_hash, name, role) with that hash; role admin|member.
+```
+
+### Gotcha (build)
+`backend/.dockerignore` must NOT exclude the whole `internal/` tree — the API binary
+imports `internal/reco` + `internal/diversity` (MCP tools). Exclude only the
+test-only subdirs (`internal/integration/`, `internal/parity/`). A blanket
+`internal/` exclusion fails the amd64 build with "no required module provides
+package …/internal/diversity".
+
+### Connect (client)
+```
+claude mcp add --transport http fielddesk https://api.peon.works/mcp \
+  --header "Authorization: Bearer <your fd_ key>"
+```
+Mint keys at https://app.peon.works/settings. Admin accounts also get the
+`scraping_health` tool; members get the 6 preference/gem tools.

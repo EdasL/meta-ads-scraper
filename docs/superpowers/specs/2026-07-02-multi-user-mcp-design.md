@@ -1,7 +1,7 @@
 # Field Desk MCP — multi-user hosted MCP server (design)
 
 **Date:** 2026-07-02
-**Status:** approved (design review with founder)
+**Status:** SHIPPED 2026-07-06 (live at api.peon.works/mcp; 12 tasks, adversarially reviewed)
 **Supersedes:** the local read-only `src/agf_mcp/` scraping-health MCP (stdio, Mac-local,
 cloud-sql-proxy + ADC), which is retired once this reaches tool parity.
 
