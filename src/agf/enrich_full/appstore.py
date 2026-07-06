@@ -197,6 +197,26 @@ def gplay_developer(dev_id, *, runner=None) -> list[dict]:
     return _gplay_graph("developer", dev_id, runner=runner)
 
 
+_SUGGEST_SIDECAR = Path(__file__).parent / "sidecar" / "gp_suggest.js"
+
+
+def _default_suggest_runner(term):
+    return subprocess.run(["node", str(_SUGGEST_SIDECAR), term],
+                          capture_output=True, text=True, timeout=30).stdout
+
+
+def gplay_suggest(term: str, *, runner=None) -> list[str]:
+    """Google Play search autocomplete terms for `term` — the breadth channel that mines
+    what real users type into Play search. `runner(term) -> stdout` is injectable for
+    tests; a crashed sidecar / non-JSON degrades to []."""
+    runner = runner or _default_suggest_runner
+    try:
+        data = json.loads(runner(term))
+        return [str(t) for t in data if t]
+    except Exception:
+        return []
+
+
 def resolve_pending_app_metadata(conn, itunes_client, *, gplay_runner=None) -> int:
     """Fill name/genre/release/ratings for linked apps still missing a name (iTunes batch +
     gplay sidecar). Cheap — no Meta traffic — so it can run every sweep: it makes discovered

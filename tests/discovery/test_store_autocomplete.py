@@ -23,3 +23,15 @@ def test_apple_hints_parses_terms():
 def test_apple_hints_bad_payload_returns_empty():
     client = _Client(b"not a plist")
     assert apple_hints(client, "sleep") == []
+
+
+from agf.enrich_full.appstore import gplay_suggest
+
+
+def test_gplay_suggest_parses_runner_json():
+    runner = lambda term: '["sleep sounds", "sleep tracker", "sleep number"]'
+    assert gplay_suggest("sleep", runner=runner) == ["sleep sounds", "sleep tracker", "sleep number"]
+
+
+def test_gplay_suggest_bad_json_returns_empty():
+    assert gplay_suggest("sleep", runner=lambda term: "boom") == []
