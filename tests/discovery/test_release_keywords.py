@@ -57,3 +57,31 @@ def test_unparseable_reply_raises():
         return {"candidates": [{"content": {"parts": [{"text": "not json"}]}}]}
     with pytest.raises(ProposeError):
         propose_release_keywords("X", [{"name": "a"}], n=5, api_key="k", _post=bad_post)
+
+
+from agf.discovery.release_keywords import brainstorm_niche_keywords
+
+
+def test_brainstorm_returns_normalized_phrases():
+    def fake_post(url, body):
+        # prompt must mention the category and an example listing name
+        prompt = body["contents"][0]["parts"][0]["text"]
+        assert "Sleep" in prompt or "sleep" in prompt
+        assert "DreamTrack" in prompt
+        return {"candidates": [{"content": {"parts": [
+            {"text": '{"phrases": ["lucid dreaming app", "snore detection app"]}'}]}}]}
+
+    out = brainstorm_niche_keywords(
+        "Health & Fitness",
+        [{"name": "DreamTrack", "description": "sleep cycle tracker"}],
+        5, api_key="k", _post=fake_post)
+    assert out == ["lucid dreaming app", "snore detection app"]
+
+
+def test_brainstorm_no_key_raises(monkeypatch):
+    import pytest
+    from agf.discovery.release_keywords import ProposeError
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    with pytest.raises(ProposeError):
+        brainstorm_niche_keywords("Health & Fitness", [{"name": "X", "description": "y"}],
+                                  3, api_key=None)

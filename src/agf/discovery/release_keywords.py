@@ -78,3 +78,42 @@ def propose_release_keywords(category: str, listings: list[dict], n: int, *,
     except (HttpBackoffError, KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
         raise ProposeError(f"gemini propose failed: {exc!r}") from exc
     return _normalize(phrases)[:n]
+
+
+_BRAINSTORM_PROMPT = (
+    "You are finding NEW, emerging mobile apps to discover via Meta Ad Library search. "
+    "For the '{category}' category, list up to {n} EMERGING SUB-NICHES that are adjacent "
+    "to — but different from — the example app(s) below, and give the search keyword a "
+    "person would type to find apps in each sub-niche. Reach into niches the examples do "
+    "NOT already name. Each keyword: 2-4 words, lowercase, usually ending in 'app' "
+    "(e.g. 'lucid dreaming app', 'snore detection app'). No brand names, no generic "
+    "ad-speak. Return only the phrases.\n\nExample app(s):\n{apps}")
+
+
+def brainstorm_niche_keywords(category, seed_listings, n, *, api_key=None,
+                              model=_MODEL, _post=None) -> list[str]:
+    """LLM-brainstormed adjacent-niche search keywords for `category`, grounded by a few
+    real new-release listings so it stays anchored to a live signal instead of pure
+    priors. Raises ProposeError on missing key / bad reply. Sibling of
+    propose_release_keywords (which paraphrases the listing; this reaches adjacent niches)."""
+    if not seed_listings or n <= 0:
+        return []
+    key = api_key or os.environ.get("GEMINI_API_KEY")
+    if not key:
+        raise ProposeError("no GEMINI_API_KEY")
+    apps = "\n".join(f"- {(l.get('name') or '').strip()}: {(l.get('description') or '')[:200]}"
+                     for l in seed_listings[:3])
+    body = {
+        "contents": [{"parts": [{"text": _BRAINSTORM_PROMPT.format(
+            n=n, category=category, apps=apps)}]}],
+        "generationConfig": {"responseMimeType": "application/json",
+                             "responseSchema": _SCHEMA},
+    }
+    post = _post or (lambda url, b: post_json(url, b, max_retries=5, timeout=60))
+    try:
+        resp = post(_GEN_URL.format(model=model, key=key), body)
+        text_out = resp["candidates"][0]["content"]["parts"][0]["text"]
+        phrases = json.loads(text_out).get("phrases", [])
+    except (HttpBackoffError, KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
+        raise ProposeError(f"gemini brainstorm failed: {exc!r}") from exc
+    return _normalize(phrases)[:n]
