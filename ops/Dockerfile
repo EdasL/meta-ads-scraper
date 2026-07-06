@@ -12,7 +12,14 @@ COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . /app
-RUN cd src/agf/enrich_full/sidecar && npm install --omit=dev || true   # Android sidecar deps
+# Android sidecar deps. The COPY above may bring a host node_modules along —
+# wipe it and install fresh, and FAIL the build if the install or the module
+# tree is broken (a silent `|| true` here shipped a corrupt undici that killed
+# Android triage in prod for a week: every gp_lookup crashed, whole Android
+# candidate groups stayed 'new' forever).
+RUN cd src/agf/enrich_full/sidecar && rm -rf node_modules \
+    && npm install --omit=dev \
+    && node -e "require('google-play-scraper')"
 
 ENV PYTHONPATH=/app/src
 RUN mkdir -p /var/log/agf
