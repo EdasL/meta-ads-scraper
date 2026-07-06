@@ -6,7 +6,7 @@ Embeddings are L2-normalized (cosine = dot product). Taste-blind.
 See docs/superpowers/specs/2026-07-06-keyword-novelty-engine-design.md."""
 from sqlalchemy import text
 
-from agf.scoring.embeddings import embed_texts
+from agf.scoring.embeddings import content_hash, embed_texts
 
 
 def _dot(a: list[float], b: list[float]) -> float:
@@ -34,30 +34,65 @@ def admit_by_novelty(scored: dict[str, float], *, threshold: float, limit: int) 
     return [p for p, _ in kept[:max(0, limit)]]
 
 
-def exhausted_basin_embeddings(conn, *, dry_floor, embed=embed_texts) -> list[list[float]]:
-    """Embeddings of keywords we've already worked out: status='retired', or live
-    (trial/active) with dry_streak >= dry_floor. Reads cached vectors from
-    dynamic_keyword_embeddings; lazily embeds + caches any basin keyword not yet cached.
-    Returns just the vectors (order irrelevant — the gate takes a max over them)."""
-    rows = conn.execute(text(
+def _basin_rows(conn, *, dry_floor):
+    """(id, keyword, cached embedding|None) for every exhausted-basin keyword:
+    status='retired', or live (trial/active) with dry_streak >= dry_floor."""
+    return conn.execute(text(
         "SELECT k.id, k.keyword, e.embedding "
         "FROM discovery.dynamic_keywords k "
         "LEFT JOIN discovery.dynamic_keyword_embeddings e ON e.keyword_id = k.id "
-        "WHERE k.status='retired' OR (k.status IN ('trial','active') AND k.dry_streak >= :f)"),
+        "WHERE k.status='retired' OR (k.status IN ('trial','active') AND k.dry_streak >= :f) "
+        "ORDER BY k.id"),
         {"f": dry_floor}).all()
+
+
+def _cache_embedding(conn, keyword_id, keyword, vec):
+    conn.execute(text(
+        "INSERT INTO discovery.dynamic_keyword_embeddings "
+        "(keyword_id, embedding, content_hash, dim, model) "
+        "VALUES (:i, :e, :h, :d, :m) ON CONFLICT (keyword_id) DO NOTHING"),
+        {"i": keyword_id, "e": vec, "h": content_hash(keyword), "d": len(vec),
+         "m": "gemini-embedding-001"})
+
+
+def _split_cached(rows):
     vectors, missing = [], []
     for r in rows:
         if r.embedding is not None:
             vectors.append([float(x) for x in r.embedding])
         else:
             missing.append((r.id, r.keyword))
+    return vectors, missing
+
+
+def exhausted_basin_embeddings(conn, *, dry_floor, embed=embed_texts) -> list[list[float]]:
+    """Basin embeddings on an already-open conn: reads cached vectors from
+    dynamic_keyword_embeddings; lazily embeds + caches any basin keyword not yet cached.
+    NOTE: the lazy embed is network I/O on the caller's conn/txn — hot paths should use
+    load_basin_embeddings(engine) instead, which keeps the embed outside any transaction.
+    Returns just the vectors (order irrelevant — the gate takes a max over them)."""
+    vectors, missing = _split_cached(_basin_rows(conn, dry_floor=dry_floor))
     if missing:
         new_vecs = embed([kw for _, kw in missing])
-        for (kid, _), vec in zip(missing, new_vecs):
-            conn.execute(text(
-                "INSERT INTO discovery.dynamic_keyword_embeddings "
-                "(keyword_id, embedding, content_hash, dim, model) "
-                "VALUES (:i, :e, :h, :d, :m) ON CONFLICT (keyword_id) DO NOTHING"),
-                {"i": kid, "e": vec, "h": "", "d": len(vec), "m": "gemini-embedding-001"})
+        for (kid, kw), vec in zip(missing, new_vecs):
+            _cache_embedding(conn, kid, kw, vec)
             vectors.append(vec)
+    return vectors
+
+
+def load_basin_embeddings(engine, *, dry_floor, embed=embed_texts,
+                          lazy_limit=200) -> list[list[float]]:
+    """Txn-safe basin load for hot paths: read cached vectors in a short read, embed at
+    most `lazy_limit` uncached basin keywords OUTSIDE any transaction (never the full
+    basin set — a cold cache catches up over runs or via the out-of-band pre-warm), then
+    cache the new vectors in a short write txn. Returns the vectors."""
+    with engine.connect() as conn:
+        vectors, missing = _split_cached(_basin_rows(conn, dry_floor=dry_floor))
+    missing = missing[:max(0, lazy_limit)]
+    if missing:
+        new_vecs = embed([kw for _, kw in missing])  # network — no txn held
+        with engine.begin() as conn:
+            for (kid, kw), vec in zip(missing, new_vecs):
+                _cache_embedding(conn, kid, kw, vec)
+                vectors.append(vec)
     return vectors

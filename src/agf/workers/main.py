@@ -93,7 +93,7 @@ from agf.db.funnel_candidates import (close_funnel_sweep_run, funnel_sweep_ran_t
 from agf.discovery.funnel_confirm import run_funnel_confirm
 import agf.discovery.keyword_redundancy as _kr
 from agf.discovery.keyword_redundancy import (admit_by_novelty,
-                                              exhausted_basin_embeddings,
+                                              load_basin_embeddings,
                                               redundancy_scores)
 from agf.discovery.keyword_mining import fetch_funnel_copy, fetch_gem_copy, mine_phrases
 from agf.discovery.funnel_sweep import run_funnel_sweep
@@ -384,9 +384,8 @@ def _gate_keywords(engine, phrases, *, limit):
     threshold = _env_float("AGF_KEYWORD_REDUNDANCY_THRESHOLD", 0.90)
     dry_floor = _env_int("AGF_KEYWORD_BASIN_DRY_FLOOR", retire_dry_streak())
     try:
-        with begin(engine) as conn:
-            basins = exhausted_basin_embeddings(conn, dry_floor=dry_floor,
-                                                embed=_kr.embed_texts)
+        basins = load_basin_embeddings(engine, dry_floor=dry_floor,
+                                       embed=_kr.embed_texts)
         scored = redundancy_scores(phrases, basins, embed=_kr.embed_texts)
     except Exception as exc:  # embed/API failure — do not block minting
         print(f"[flywheel] redundancy gate degraded open: {exc!r}", flush=True)

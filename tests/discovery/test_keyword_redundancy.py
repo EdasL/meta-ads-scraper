@@ -4,6 +4,7 @@ from sqlalchemy import text
 from agf.discovery.keyword_redundancy import (
     admit_by_novelty,
     exhausted_basin_embeddings,
+    load_basin_embeddings,
     redundancy_scores,
 )
 
@@ -70,3 +71,57 @@ def test_exhausted_basins_select_retired_and_dry_and_cache(pg_conn):
     new_texts = embedded[before:]
     assert "dead one" not in new_texts
     assert "dry live" not in new_texts
+    # cached rows carry a real content hash, not the '' placeholder
+    hashes = pg_conn.execute(text(
+        "SELECT e.content_hash FROM discovery.dynamic_keyword_embeddings e "
+        "WHERE e.keyword_id IN (90001, 90002)")).scalars().all()
+    assert hashes and all(h for h in hashes)
+
+
+def _clean_lbasin(eng):
+    with eng.begin() as conn:
+        conn.execute(text("DELETE FROM discovery.dynamic_keywords "
+                          "WHERE keyword LIKE 'LBASIN%'"))  # embeddings cascade
+
+
+def test_load_basin_embeddings_lazy_limit_bounds_embedding(_migrated_engine):
+    """load_basin_embeddings does the network embed OUTSIDE any transaction and never
+    embeds more than lazy_limit uncached basin keywords per call (the rest catch up on
+    later runs / the pre-warm). lazy_limit=0 -> pure cache read, no embed at all."""
+    eng = _migrated_engine
+    _clean_lbasin(eng)
+    try:
+        with eng.begin() as conn:
+            conn.execute(text(
+                "INSERT INTO discovery.dynamic_keywords (keyword, source, kind, status, dry_streak)"
+                " VALUES ('LBASIN one','gem_copy','app','retired',0),"
+                "('LBASIN two','gem_copy','app','retired',0)"))
+        embedded = []
+
+        def embed(texts, **kw):
+            embedded.extend(texts)
+            return [[1.0, 0.0] for _ in texts]
+
+        load_basin_embeddings(eng, dry_floor=5, embed=embed, lazy_limit=0)
+        assert not any(t.startswith("LBASIN") for t in embedded)  # bound respected
+        with eng.connect() as conn:
+            cached = conn.execute(text(
+                "SELECT count(*) FROM discovery.dynamic_keyword_embeddings e "
+                "JOIN discovery.dynamic_keywords k ON k.id = e.keyword_id "
+                "WHERE k.keyword LIKE 'LBASIN%'")).scalar()
+        assert cached == 0
+
+        load_basin_embeddings(eng, dry_floor=5, embed=embed, lazy_limit=10_000)
+        assert {"LBASIN one", "LBASIN two"} <= set(embedded)
+        with eng.connect() as conn:
+            hashes = conn.execute(text(
+                "SELECT e.content_hash FROM discovery.dynamic_keyword_embeddings e "
+                "JOIN discovery.dynamic_keywords k ON k.id = e.keyword_id "
+                "WHERE k.keyword LIKE 'LBASIN%'")).scalars().all()
+        assert len(hashes) == 2 and all(h for h in hashes)  # cached, real hash
+
+        before = len(embedded)
+        load_basin_embeddings(eng, dry_floor=5, embed=embed, lazy_limit=10_000)
+        assert not any(t.startswith("LBASIN") for t in embedded[before:])  # cache hit
+    finally:
+        _clean_lbasin(eng)
