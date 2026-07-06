@@ -78,7 +78,7 @@ def test_mint_from_releases_adds_biased_trials(_migrated_engine):
             return ["long distance relationship app", "couple countdown app"][:n]
 
         stats = mint_keywords_from_releases(
-            eng, client=None, K=15, floor=0, total_slots=40, autocomplete=False,
+            eng, client=None, K=15, floor=0, total_slots=40, autocomplete=False, brainstorm=False,
             fetch=fake_fetch, lookup=fake_lookup, propose=fake_propose)
 
         assert stats["seeds"] == 3
@@ -134,7 +134,7 @@ def test_mint_from_releases_funds_fertile_covered_category(_migrated_engine):
 
         # K=1: Social has found=2 >= K -> deficit 0. Yield must fund it anyway.
         stats = mint_keywords_from_releases(
-            eng, client=None, K=1, floor=0, total_slots=10, autocomplete=False,
+            eng, client=None, K=1, floor=0, total_slots=10, autocomplete=False, brainstorm=False,
             fetch=fake_fetch, lookup=fake_lookup, propose=fake_propose)
         assert stats["minted"] >= 1
         assert stats["minted_by_category"].get("Social", 0) >= 1
@@ -154,7 +154,7 @@ def test_mint_from_releases_lookup_error_is_isolated(_migrated_engine):
             raise RuntimeError("apple down")
 
         stats = mint_keywords_from_releases(
-            eng, client=None, floor=0, autocomplete=False,
+            eng, client=None, floor=0, autocomplete=False, brainstorm=False,
             fetch=fake_fetch, lookup=boom_lookup)
         assert stats["errors"] >= 1
         assert stats["minted"] == 0   # no crash, stats returned
@@ -177,7 +177,7 @@ def test_mint_from_releases_propose_error_is_isolated(_migrated_engine):
             raise ProposeError("gemini down")
 
         stats = mint_keywords_from_releases(
-            eng, client=None, floor=0, autocomplete=False,
+            eng, client=None, floor=0, autocomplete=False, brainstorm=False,
             fetch=fake_fetch, lookup=fake_lookup, propose=boom_propose)
         assert stats["errors"] >= 1
         assert stats["minted"] == 0   # Gemini failure isolated, no crash

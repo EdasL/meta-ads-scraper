@@ -17,7 +17,9 @@ import agf.discovery.keyword_redundancy as _kr
 from agf.discovery.keyword_redundancy import (admit_by_novelty,
                                               exhausted_basin_embeddings,
                                               redundancy_scores)
-from agf.discovery.release_keywords import ProposeError, propose_release_keywords
+from agf.discovery.release_keywords import (ProposeError,
+                                            brainstorm_niche_keywords,
+                                            propose_release_keywords)
 from agf.discovery.store_autocomplete import gather_autocomplete_candidates
 from agf.discovery.taxonomy import NICHE_TERMS_BY_CATEGORY
 from agf.enrich_full.appstore import fetch_itunes_new_releases, lookup_itunes_batch
@@ -41,6 +43,7 @@ def ensure_category_frame(conn, coverage, *, floor: int) -> int:
 def mint_keywords_from_releases(engine, client, *, country="us", limit=200, K=15,
                                 floor=5, total_slots=40, min_advertisers=2,
                                 explore_share=0.25, autocomplete=True,
+                                brainstorm=True,
                                 fetch=fetch_itunes_new_releases,
                                 lookup=lookup_itunes_batch,
                                 propose=propose_release_keywords) -> dict:
@@ -113,10 +116,22 @@ def mint_keywords_from_releases(engine, client, *, country="us", limit=200, K=15
             stats["minted_by_category"][cat] = added
             exclude.update(t.lower() for t in terms)  # don't re-mint within this run
 
+        # Redundancy gate basins for the Pipe 2 breadth passes (autocomplete + brainstorm)
+        # — fetched ONCE on the already-open conn (no nested transaction) and shared by
+        # both passes; a cache hit for the second pass. Degrades OPEN on any failure.
+        basins, gate_open = [], False
+        if autocomplete or brainstorm:
+            try:
+                basins = exhausted_basin_embeddings(
+                    conn, dry_floor=AUTOCOMPLETE_DRY_FLOOR, embed=_kr.embed_texts)
+                gate_open = True
+            except Exception as exc:
+                print(f"[frame_mint] mint gate degraded open: {exc!r}", flush=True)
+                basins, gate_open = [], False
+
         # Autocomplete pass — Pipe 2 breadth: expand every budgeted category's seed terms
-        # through store search-autocomplete, gate each candidate against exhausted basins
-        # (fetched ONCE on the already-open conn — no nested transaction), and admit the
-        # novel ones within the same yield-weighted slot budget. Degrades OPEN.
+        # through store search-autocomplete, gate each candidate against exhausted basins,
+        # and admit the novel ones within the same yield-weighted slot budget. Degrades OPEN.
         if autocomplete:
             try:
                 ac = gather_autocomplete_candidates(client, categories=list(coverage))
@@ -128,13 +143,6 @@ def mint_keywords_from_releases(engine, client, *, country="us", limit=200, K=15
             # no fresh listings (same yield-weighted lanes as the new-release budget).
             ac_budget = mint_budget(coverage, K=K, total_slots=total_slots,
                                     explore_share=explore_share, eligible=set(ac))
-            try:
-                basins = exhausted_basin_embeddings(
-                    conn, dry_floor=AUTOCOMPLETE_DRY_FLOOR, embed=_kr.embed_texts)
-                gate_open = True
-            except Exception as exc:
-                print(f"[frame_mint] autocomplete gate degraded open: {exc!r}", flush=True)
-                basins, gate_open = [], False
             for cat, slots in ac_budget.items():
                 cands = [p for p in ac.get(cat, []) if p.lower() not in exclude]
                 if not cands:
@@ -157,6 +165,43 @@ def mint_keywords_from_releases(engine, client, *, country="us", limit=200, K=15
                                            source=f"autocomplete:{cat}", kind="app")
                 stats["minted"] += added
                 stats.setdefault("autocomplete_by_category", {})[cat] = added
+                exclude.update(p.lower() for p in admitted)
+
+        # Brainstorm pass — Pipe 2 amplifier: an LLM proposes adjacent-niche keywords the
+        # new-release listings do NOT already name, grounded by those same per-category
+        # listings. Same shared gate + new-release budget; tagged brainstorm:<category>.
+        # ProposeError is isolated per category; the gate degrades OPEN.
+        if brainstorm:
+            for cat, slots in budget.items():
+                listings = by_cat.get(cat)
+                if not listings:
+                    continue
+                try:
+                    proposed = brainstorm_niche_keywords(cat, listings, slots)
+                except ProposeError:
+                    stats["errors"] += 1
+                    continue
+                cands = [p for p in proposed if p.lower() not in exclude]
+                if not cands:
+                    continue
+                if gate_open:
+                    try:
+                        scored = redundancy_scores(cands, basins, embed=_kr.embed_texts)
+                        admitted = admit_by_novelty(
+                            scored, threshold=AUTOCOMPLETE_THRESHOLD, limit=slots)
+                    except Exception as exc:
+                        print(f"[frame_mint] brainstorm scoring degraded open: {exc!r}",
+                              flush=True)
+                        admitted = cands[:slots]
+                else:
+                    admitted = cands[:slots]
+                admitted = [p for p in admitted if p.lower() not in exclude]
+                if not admitted:
+                    continue
+                added = add_trial_keywords(conn, admitted,
+                                           source=f"brainstorm:{cat}", kind="app")
+                stats["minted"] += added
+                stats.setdefault("brainstorm_by_category", {})[cat] = added
                 exclude.update(p.lower() for p in admitted)
 
         stats["frame_seeded"] = ensure_category_frame(conn, coverage, floor=floor)
