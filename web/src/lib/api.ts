@@ -210,14 +210,17 @@ export async function getEnrichStatus(advertiserId: number): Promise<EnrichStatu
 }
 
 /** Fetch the preference-ranked queue for a user.
- * Returns rows sorted by the model's predicted like probability (p_like desc).
- * Returns [] when the user has no ratings yet. */
+ * Scored at serve time from the user's latest ratings; `exclude` lists
+ * advertiser_ids the deck already holds so refills never duplicate cards.
+ * Returns [] when every candidate is rated. */
 export async function getPreferenceQueue(
   userEmail: string,
   limit = 2000,
+  exclude: number[] = [],
 ): Promise<PreferenceCard[]> {
+  const ex = exclude.length ? `&exclude=${exclude.join(",")}` : "";
   const rows = await live<ApiPreferenceCardRow[]>(
-    `/preference-queue?user_email=${encodeURIComponent(userEmail)}&limit=${limit}`,
+    `/preference-queue?user_email=${encodeURIComponent(userEmail)}&limit=${limit}${ex}`,
   );
   return rows.map((r) => adaptPreferenceCard(r, mediaUrl));
 }
