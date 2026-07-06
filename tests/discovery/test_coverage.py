@@ -39,7 +39,13 @@ def _cov(rows):  # rows: list[(category, found, live_keywords)]
     return {c: CategoryCoverage(c, f, lk) for c, f, lk in rows}
 
 
+def _cov4(rows):  # rows: list[(category, found, live_keywords, kept_recent)]
+    return {c: CategoryCoverage(c, f, lk, kr) for c, f, lk, kr in rows}
+
+
 def test_mint_budget_favors_deficit_and_floors_at_one():
+    # With zero recent yield anywhere, the whole budget flows through the explore
+    # (deficit) lane — the original allocation behavior.
     cov = _cov([
         ("Health & Fitness", 40, 9),  # over K -> deficit 0 -> no slots
         ("Dating", 0, 0),             # deficit 15
@@ -55,6 +61,50 @@ def test_mint_budget_favors_deficit_and_floors_at_one():
 def test_mint_budget_all_covered_returns_empty():
     cov = _cov([("Finance", 20, 8), ("Sports", 16, 6)])
     assert mint_budget(cov, K=15, total_slots=40) == {}
+
+
+def test_mint_budget_exploit_lane_weights_recent_yield():
+    # Fully-covered categories with recent keeper yield get the exploit lane (the
+    # inverted-bias fix); deficit categories keep the smaller explore lane.
+    cov = _cov4([
+        ("Health & Fitness", 40, 9, 90),   # deficit 0, high recent yield
+        ("Utilities", 30, 5, 30),          # deficit 0, some recent yield
+        ("Dating", 0, 0, 0),               # deficit 15, no yield
+        ("Beauty", 10, 2, 0),              # deficit 5, no yield
+    ])
+    budget = mint_budget(cov, K=15, total_slots=20, explore_share=0.25)
+    assert budget["Health & Fitness"] > budget["Utilities"] >= 1
+    assert budget["Dating"] >= 1
+    assert sum(budget.values()) <= 20
+    exploit = budget["Health & Fitness"] + budget["Utilities"]
+    explore = budget.get("Dating", 0) + budget.get("Beauty", 0)
+    assert exploit > explore
+
+
+def test_mint_budget_explore_share_edges():
+    cov = _cov4([("Health & Fitness", 40, 9, 90), ("Dating", 0, 0, 0)])
+    assert mint_budget(cov, K=15, total_slots=20,
+                       explore_share=0.0) == {"Health & Fitness": 20}
+    assert mint_budget(cov, K=15, total_slots=20,
+                       explore_share=1.0) == {"Dating": 20}
+
+
+def test_mint_budget_empty_lane_rolls_slots_to_the_other():
+    # No deficit anywhere -> explore slots roll to the exploit lane, none wasted.
+    cov = _cov4([("Health & Fitness", 40, 9, 90)])
+    assert mint_budget(cov, K=15, total_slots=20) == {"Health & Fitness": 20}
+
+
+def test_mint_budget_eligible_restricts_and_reallocates():
+    cov = _cov4([
+        ("Health & Fitness", 40, 9, 90),
+        ("Utilities", 30, 5, 30),
+        ("Dating", 0, 0, 0),
+    ])
+    # Only Utilities has listing material this run: it takes the whole budget.
+    assert mint_budget(cov, K=15, total_slots=20,
+                       eligible={"Utilities"}) == {"Utilities": 20}
+    assert mint_budget(cov, K=15, total_slots=20, eligible=set()) == {}
 
 
 def test_under_floor_categories_counts_static_taxonomy():
@@ -103,3 +153,19 @@ def test_category_coverage_counts_kept_apps_and_live_keywords(pg_conn):
     assert cov["Utilities"].live_keywords == 1  # retired excluded
     assert cov["Dating"].found == 0 and cov["Dating"].live_keywords == 0
     assert set(cov) == set(IN_SCOPE_CATEGORIES)
+
+
+def test_category_coverage_kept_recent_windows_by_first_seen(pg_conn):
+    pg_conn.execute(text(
+        "INSERT INTO public.apps (store, store_id, name, genre) VALUES "
+        "('ios','COVR_A','A','Health & Fitness'),"
+        "('ios','COVR_B','B','Health & Fitness')"))
+    pg_conn.execute(text(
+        "INSERT INTO discovery.candidates (page_id, store, store_id, source_keyword,"
+        " technique, status, first_seen_at) VALUES "
+        "('COVR_p1','ios','COVR_A','k','niche_term','kept', now()),"
+        "('COVR_p2','ios','COVR_B','k','niche_term','kept', now() - interval '45 days')"))
+    cov = category_coverage(pg_conn)
+    assert cov["Health & Fitness"].found == 2         # all-time count unchanged
+    assert cov["Health & Fitness"].kept_recent == 1   # 45-day-old keep outside window
+    assert cov["Dating"].kept_recent == 0

@@ -32,15 +32,19 @@ def ensure_category_frame(conn, coverage, *, floor: int) -> int:
 
 def mint_keywords_from_releases(engine, client, *, country="us", limit=200, K=15,
                                 floor=5, total_slots=40, min_advertisers=2,
+                                explore_share=0.25,
                                 fetch=fetch_itunes_new_releases,
                                 lookup=lookup_itunes_batch,
                                 propose=propose_release_keywords) -> dict:
     """Mint niche SEARCH keywords from App Store new-release listings, biased toward
-    under-covered categories, plus keep the category frame above its floor. Taste-blind.
-    Keywords are proposed by a cheap Gemini model per category (crisp 'X app' niche terms,
-    not n-grams of store prose). Network: Apple RSS + Lookup (zero Meta) + Gemini text.
-    Returns stats; never raises on a fetch/lookup/propose failure. `min_advertisers` is
-    retained for signature stability but no longer used by the LLM proposer."""
+    categories with recent keeper yield (exploit lane) plus an `explore_share` lane for
+    under-covered categories, and keep the category frame above its floor. Taste-blind
+    (yield = triage-kept counts, never ratings). Only categories with listing material
+    this run receive slots, so none evaporate. Keywords are proposed by a cheap Gemini
+    model per category (crisp 'X app' niche terms, not n-grams of store prose). Network:
+    Apple RSS + Lookup (zero Meta) + Gemini text. Returns stats; never raises on a
+    fetch/lookup/propose failure. `min_advertisers` is retained for signature stability
+    but no longer used by the LLM proposer."""
     stats = {"seeds": 0, "in_scope": 0, "looked_up": 0, "minted": 0,
              "minted_by_category": {}, "frame_seeded": 0, "coverage": {}, "errors": 0}
 
@@ -80,7 +84,8 @@ def mint_keywords_from_releases(engine, client, *, country="us", limit=200, K=15
 
     with engine.begin() as conn:
         coverage = category_coverage(conn)
-        budget = mint_budget(coverage, K=K, total_slots=total_slots)
+        budget = mint_budget(coverage, K=K, total_slots=total_slots,
+                             explore_share=explore_share, eligible=set(by_cat))
         exclude = tried_keywords(conn, kind="app")
         for cat, slots in budget.items():
             listings = by_cat.get(cat)

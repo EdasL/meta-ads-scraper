@@ -95,6 +95,54 @@ def test_mint_from_releases_adds_biased_trials(_migrated_engine):
         _clean_minted(eng)
 
 
+def test_mint_from_releases_funds_fertile_covered_category(_migrated_engine):
+    # The inverted-bias fix: a category ALREADY over the K coverage target but with
+    # recent keeper yield must still receive mint slots via the exploit lane. Under the
+    # old deficit-only rule this run minted nothing.
+    eng = _migrated_engine
+    _clean_minted(eng)
+
+    def _clean_sentinels():
+        with eng.begin() as conn:
+            conn.execute(text(
+                "DELETE FROM discovery.candidates WHERE store_id LIKE 'FMTY%'"))
+            conn.execute(text("DELETE FROM public.apps WHERE store_id LIKE 'FMTY%'"))
+
+    _clean_sentinels()
+    try:
+        with eng.begin() as conn:
+            conn.execute(text(
+                "INSERT INTO public.apps (store, store_id, name, genre) VALUES "
+                "('ios','FMTY_A','A','Social Networking'),"
+                "('ios','FMTY_B','B','Social Networking')"))
+            conn.execute(text(
+                "INSERT INTO discovery.candidates (page_id, store, store_id,"
+                " source_keyword, technique, status, first_seen_at) VALUES "
+                "('FMTY_p1','ios','FMTY_A','k','niche_term','kept', now()),"
+                "('FMTY_p2','ios','FMTY_B','k','niche_term','kept', now())"))
+
+        def fake_fetch(client, *, country, genre, limit):
+            return [{"store_id": "FMTY_C", "name": "PingPal", "genre": "Lifestyle"}]
+
+        def fake_lookup(client, ids, **kw):
+            return {"FMTY_C": _meta("FMTY_C", "PingPal", "Social Networking",
+                                    "voice notes for close friends")}
+
+        def fake_propose(category, listings, n):
+            assert category == "Social"
+            return ["voice note app", "close friends app"][:n]
+
+        # K=1: Social has found=2 >= K -> deficit 0. Yield must fund it anyway.
+        stats = mint_keywords_from_releases(
+            eng, client=None, K=1, floor=0, total_slots=10,
+            fetch=fake_fetch, lookup=fake_lookup, propose=fake_propose)
+        assert stats["minted"] >= 1
+        assert stats["minted_by_category"].get("Social", 0) >= 1
+    finally:
+        _clean_minted(eng)
+        _clean_sentinels()
+
+
 def test_mint_from_releases_lookup_error_is_isolated(_migrated_engine):
     eng = _migrated_engine
     _clean_minted(eng)

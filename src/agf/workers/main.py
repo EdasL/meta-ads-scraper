@@ -61,6 +61,7 @@ Env:
   AGF_FRAME_MINT_FLOOR         min live keywords per category        (default 5)
   AGF_FRAME_MINT_SLOTS         trial keyword slots minted per run    (default 40)
   AGF_FRAME_MINT_MIN_ADVERTISERS  distinct apps a minted phrase spans (default 2)
+  AGF_FRAME_MINT_EXPLORE_SHARE  slot share for under-covered categories (default 0.25)
 """
 import asyncio
 import os
@@ -435,6 +436,7 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
              flywheel_min_advertisers=3, mine_min_score=40.0,
              release_mint_enabled=False, frame_mint_k=15, frame_mint_floor=5,
              frame_mint_slots=40, frame_mint_min_advertisers=2,
+             frame_mint_explore_share=0.25,
              media_repair_per_cycle=5, funnel_repair_per_cycle=3,
              sweep_max_consecutive_errors=0,
              websub_bridge_limit=10) -> dict:
@@ -594,7 +596,8 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
                 release_mint = mint_keywords_from_releases(
                     engine, http_client, K=frame_mint_k, floor=frame_mint_floor,
                     total_slots=frame_mint_slots,
-                    min_advertisers=frame_mint_min_advertisers)
+                    min_advertisers=frame_mint_min_advertisers,
+                    explore_share=frame_mint_explore_share)
                 with begin(engine) as conn:
                     close_release_mint_run(conn, rm_run_id, stats=release_mint)
             except Exception as exc:
@@ -938,6 +941,7 @@ def main(argv=None) -> None:
         frame_mint_floor=_env_int("AGF_FRAME_MINT_FLOOR", 5),
         frame_mint_slots=_env_int("AGF_FRAME_MINT_SLOTS", 40),
         frame_mint_min_advertisers=_env_int("AGF_FRAME_MINT_MIN_ADVERTISERS", 2),
+        frame_mint_explore_share=_env_float("AGF_FRAME_MINT_EXPLORE_SHARE", 0.25),
         media_repair_per_cycle=_env_int("AGF_MEDIA_REPAIR_PER_CYCLE", 5),
         funnel_repair_per_cycle=_env_int("AGF_FUNNEL_REPAIR_PER_CYCLE", 3),
         sweep_max_consecutive_errors=_env_int("AGF_SWEEP_MAX_CONSECUTIVE_ERRORS", 5),
