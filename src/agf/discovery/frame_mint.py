@@ -13,9 +13,17 @@ from collections import defaultdict
 from agf.db.dynamic_keywords import add_trial_keywords, tried_keywords
 from agf.discovery.coverage import (canonical_category, category_coverage,
                                     mint_budget, under_floor_categories)
+import agf.discovery.keyword_redundancy as _kr
+from agf.discovery.keyword_redundancy import (admit_by_novelty,
+                                              exhausted_basin_embeddings,
+                                              redundancy_scores)
 from agf.discovery.release_keywords import ProposeError, propose_release_keywords
+from agf.discovery.store_autocomplete import gather_autocomplete_candidates
 from agf.discovery.taxonomy import NICHE_TERMS_BY_CATEGORY
 from agf.enrich_full.appstore import fetch_itunes_new_releases, lookup_itunes_batch
+
+AUTOCOMPLETE_THRESHOLD = 0.90
+AUTOCOMPLETE_DRY_FLOOR = 5
 
 
 def ensure_category_frame(conn, coverage, *, floor: int) -> int:
@@ -32,7 +40,7 @@ def ensure_category_frame(conn, coverage, *, floor: int) -> int:
 
 def mint_keywords_from_releases(engine, client, *, country="us", limit=200, K=15,
                                 floor=5, total_slots=40, min_advertisers=2,
-                                explore_share=0.25,
+                                explore_share=0.25, autocomplete=True,
                                 fetch=fetch_itunes_new_releases,
                                 lookup=lookup_itunes_batch,
                                 propose=propose_release_keywords) -> dict:
@@ -104,6 +112,53 @@ def mint_keywords_from_releases(engine, client, *, country="us", limit=200, K=15
             stats["minted"] += added
             stats["minted_by_category"][cat] = added
             exclude.update(t.lower() for t in terms)  # don't re-mint within this run
+
+        # Autocomplete pass — Pipe 2 breadth: expand every budgeted category's seed terms
+        # through store search-autocomplete, gate each candidate against exhausted basins
+        # (fetched ONCE on the already-open conn — no nested transaction), and admit the
+        # novel ones within the same yield-weighted slot budget. Degrades OPEN.
+        if autocomplete:
+            try:
+                ac = gather_autocomplete_candidates(client, categories=list(coverage))
+            except Exception:
+                stats["errors"] += 1
+                ac = {}
+            # Budget over the categories autocomplete actually returned material for —
+            # decoupled from new-release availability so breadth flows even on a run with
+            # no fresh listings (same yield-weighted lanes as the new-release budget).
+            ac_budget = mint_budget(coverage, K=K, total_slots=total_slots,
+                                    explore_share=explore_share, eligible=set(ac))
+            try:
+                basins = exhausted_basin_embeddings(
+                    conn, dry_floor=AUTOCOMPLETE_DRY_FLOOR, embed=_kr.embed_texts)
+                gate_open = True
+            except Exception as exc:
+                print(f"[frame_mint] autocomplete gate degraded open: {exc!r}", flush=True)
+                basins, gate_open = [], False
+            for cat, slots in ac_budget.items():
+                cands = [p for p in ac.get(cat, []) if p.lower() not in exclude]
+                if not cands:
+                    continue
+                if gate_open:
+                    try:
+                        scored = redundancy_scores(cands, basins, embed=_kr.embed_texts)
+                        admitted = admit_by_novelty(
+                            scored, threshold=AUTOCOMPLETE_THRESHOLD, limit=slots)
+                    except Exception as exc:
+                        print(f"[frame_mint] autocomplete scoring degraded open: {exc!r}",
+                              flush=True)
+                        admitted = cands[:slots]
+                else:
+                    admitted = cands[:slots]
+                admitted = [p for p in admitted if p.lower() not in exclude]
+                if not admitted:
+                    continue
+                added = add_trial_keywords(conn, admitted,
+                                           source=f"autocomplete:{cat}", kind="app")
+                stats["minted"] += added
+                stats.setdefault("autocomplete_by_category", {})[cat] = added
+                exclude.update(p.lower() for p in admitted)
+
         stats["frame_seeded"] = ensure_category_frame(conn, coverage, floor=floor)
         stats["coverage"] = {c: {"found": cov.found, "live_keywords": cov.live_keywords}
                              for c, cov in coverage.items()}
