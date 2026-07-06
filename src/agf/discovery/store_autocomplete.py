@@ -4,6 +4,10 @@ breadth source. Returns normalized 'X app' style phrases. All fetches degrade to
 failure (per-seed isolation). See the 2026-07-06 novelty-engine spec."""
 import plistlib
 
+from agf.discovery.release_keywords import _normalize
+from agf.discovery.taxonomy import IN_SCOPE_CATEGORIES, NICHE_TERMS_BY_CATEGORY
+from agf.enrich_full.appstore import gplay_suggest
+
 _APPLE_HINTS = ("https://search.itunes.apple.com/WebObjects/MZSearchHints.woa/wa/hints"
                 "?clientApplication=Software&term={term}")
 _APPLE_HEADERS = {"X-Apple-Store-Front": "143441-1,29", "User-Agent": "iTunes/12.11"}
@@ -18,3 +22,32 @@ def apple_hints(client, term: str) -> list[str]:
         return [h["term"] for h in data.get("hints", []) if h.get("term")]
     except Exception:
         return []
+
+
+def _seeds_for(category: str, n: int) -> list[str]:
+    """Seed terms to expand for a category: the category name + its top taxonomy terms."""
+    terms = [str(t) for t in NICHE_TERMS_BY_CATEGORY.get(category, [])][:n]
+    return [category.lower(), *terms]
+
+
+def gather_autocomplete_candidates(client, *, categories, seeds_per_category=3,
+                                   apple=apple_hints, gplay=gplay_suggest) -> dict:
+    """For each in-scope category, expand its seed terms through Apple + Google Play
+    autocomplete, normalize to 'X app' phrases, dedup per category. Each source failure
+    degrades to [] (isolated). Zero Meta traffic."""
+    out: dict[str, list[str]] = {}
+    for cat in categories:
+        if cat not in IN_SCOPE_CATEGORIES:
+            continue
+        raw: list[str] = []
+        for seed in _seeds_for(cat, seeds_per_category):
+            raw.extend(apple(client, seed))
+            raw.extend(gplay(seed))
+        seen, phrases = set(), []
+        for p in _normalize(raw):
+            if p not in seen:
+                seen.add(p)
+                phrases.append(p)
+        if phrases:
+            out[cat] = phrases
+    return out

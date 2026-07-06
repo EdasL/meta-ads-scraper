@@ -35,3 +35,18 @@ def test_gplay_suggest_parses_runner_json():
 
 def test_gplay_suggest_bad_json_returns_empty():
     assert gplay_suggest("sleep", runner=lambda term: "boom") == []
+
+
+from agf.discovery.store_autocomplete import gather_autocomplete_candidates
+
+
+def test_gather_unions_apple_and_gplay_normalized_and_deduped():
+    apple = lambda client, term: ["Sleep App", "meditation timer app"]
+    gplay = lambda term, **kw: ["sleep app", "white noise app"]  # 'sleep app' dup vs Apple
+    out = gather_autocomplete_candidates(
+        None, categories=["Health & Fitness"], seeds_per_category=1,
+        apple=apple, gplay=gplay)
+    got = set(out["Health & Fitness"])
+    assert "sleep app" in got and "white noise app" in got and "meditation timer app" in got
+    # normalized (lowercased) and deduped: 'Sleep App' and 'sleep app' collapse to one
+    assert sum(1 for p in out["Health & Fitness"] if p == "sleep app") == 1
