@@ -1,5 +1,11 @@
 """Redundancy gate: scoring (pure, fake embed) and novelty admission (pure)."""
-from agf.discovery.keyword_redundancy import admit_by_novelty, redundancy_scores
+from sqlalchemy import text
+
+from agf.discovery.keyword_redundancy import (
+    admit_by_novelty,
+    exhausted_basin_embeddings,
+    redundancy_scores,
+)
 
 
 def _fake_embed(mapping):
@@ -36,3 +42,24 @@ def test_admit_by_novelty_respects_limit():
 
 def test_admit_by_novelty_threshold_is_inclusive_drop():
     assert admit_by_novelty({"x": 0.90}, threshold=0.90, limit=5) == []
+
+
+def test_exhausted_basins_select_retired_and_dry_and_cache(pg_conn):
+    pg_conn.execute(text(
+        "INSERT INTO discovery.dynamic_keywords (id, keyword, source, kind, status, dry_streak)"
+        " VALUES "
+        "(90001,'dead one','gem_copy','app','retired',0),"
+        "(90002,'dry live','gem_copy','app','active',5),"
+        "(90003,'fresh live','gem_copy','app','active',0)"))  # excluded: live, low dry
+    calls = {"n": 0}
+
+    def embed(texts, **kw):
+        calls["n"] += len(texts)
+        return [[1.0, 0.0] for _ in texts]
+
+    vecs = exhausted_basin_embeddings(pg_conn, dry_floor=5, embed=embed)
+    assert len(vecs) == 2                      # retired + dry-live, not fresh-live
+    assert calls["n"] == 2                     # both embedded on first call
+    # second call reads from cache — no new embeds
+    vecs2 = exhausted_basin_embeddings(pg_conn, dry_floor=5, embed=embed)
+    assert len(vecs2) == 2 and calls["n"] == 2
