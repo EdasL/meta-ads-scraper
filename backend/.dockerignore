@@ -4,4 +4,7 @@ agf-api
 .env
 .env.*
 *_test.go
-internal/
+# Test-only packages (production code lives in internal/reco + internal/diversity,
+# which the API binary imports — do NOT exclude the whole internal/ tree).
+internal/integration/
+internal/parity/
