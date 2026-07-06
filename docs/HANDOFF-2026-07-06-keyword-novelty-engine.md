@@ -12,9 +12,15 @@ passed / 0 failed. Remaining §5 wall-clock lever (optional): parallelize the ~9
 sequential Apple-hints calls + batch per-category embeds if 145s ever matters. The
 shared run-wide slot ceiling (§5 item 4, "consider") was deliberately NOT built — it
 could let the new-release pass starve Pipe 2's slots; per-pass budgets stay (≤~45/run
-at SLOTS=15). Observed keyword quality: brainstorm/new_release crisp; autocomplete
-includes brand-name queries (e.g. "capcut: photo & video editor") — expected (real user
-vocabulary), the trial lifecycle retires duds; watch keeper yield by source tag.
+at SLOTS=15). QUALITY FIX (same day, commit c736fe6): the first live run showed the
+autocomplete lane minting raw app/brand names ("capcut: photo & video editor", "ugi
+utilities, inc." — ~12/15) — user flagged it. Raw autocomplete now routes through
+`generalize_autocomplete_keywords` (Gemini: keep generic queries, rewrite app-specific
+to their niche, drop no-niche business names) BEFORE the novelty gate; a generalize
+failure SKIPS the category (deliberately not degrade-open — raw autocomplete is
+majority junk). The 15 junk rows were deleted from prod (unswept trials). Re-verified
+live: 175s, 0 errors, 32 minted, autocomplete tag 100% generic niches ("sleep tracker
+app", "wifi analyzer app", "event ticketing app"). Suite 664 passed / 0 failed.
 
 ---
 
