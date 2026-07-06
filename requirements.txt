@@ -26,8 +26,10 @@ statsmodels==0.14.4   # pulls pandas + patsy (STL deseasonalize in vetoes.py)
 python-whois==0.9.5    # domain_age (WHOIS creation_date) in company.py
 # Node sidecar (Android enrichment) deps are NOT pip — see src/agf/enrich_full/sidecar/package.json
 #   cd src/agf/enrich_full/sidecar && npm install   (needs Node)
-# Playwright is the OPTIONAL standby (funnel capture); install only if used:
-#   playwright==1.49.0   (+ `playwright install chromium`)
+playwright==1.49.0     # funnel_capture renders landing pages (REQUIRED in prod since the
+                       # funnel-payoff engine, 2026-06-19; was never installed in the VM
+                       # image -> every probe failed since the 06-26 cutover).
+                       # Image/dev setup also needs: `playwright install chromium`
 
 # --- plan-7 ---
 fastapi==0.115.6
