@@ -30,21 +30,23 @@ type prefEmbRow struct {
 
 // buildPrefEmbMap parses fetched rows into an advertiser_id → vector map. A
 // refresh failure — including a single unparseable row — must not fail the
-// whole review queue: when a warm snapshot exists it is served stale instead.
+// whole review queue: when a warm snapshot exists it is served stale instead,
+// and usedFallback is true so the caller can leave the cache TTL untouched (a
+// failed refresh must retry on the next call, not wait out a fresh window).
 // With a cold cache (warm == nil) the parse error propagates.
-func buildPrefEmbMap(rows []prefEmbRow, warm map[int64][]float64) (map[int64][]float64, error) {
-	m := make(map[int64][]float64, len(rows))
+func buildPrefEmbMap(rows []prefEmbRow, warm map[int64][]float64) (m map[int64][]float64, usedFallback bool, err error) {
+	m = make(map[int64][]float64, len(rows))
 	for _, r := range rows {
-		v, err := reco.ParsePgFloat64Array(r.Emb)
-		if err != nil {
+		v, perr := reco.ParsePgFloat64Array(r.Emb)
+		if perr != nil {
 			if warm != nil {
-				return warm, nil // serve stale over failing the queue
+				return warm, true, nil // serve stale over failing the queue
 			}
-			return nil, err
+			return nil, false, perr
 		}
 		m[r.AdvertiserID] = v
 	}
-	return m, nil
+	return m, false, nil
 }
 
 func prefEmbeddings(g *gorm.DB) (map[int64][]float64, error) {
@@ -63,11 +65,22 @@ func prefEmbeddings(g *gorm.DB) (map[int64][]float64, error) {
 		}
 		return nil, err
 	}
-	m, err := buildPrefEmbMap(rows, prefEmbCache.vecs)
+	m, usedFallback, err := buildPrefEmbMap(rows, prefEmbCache.vecs)
 	if err != nil {
 		return nil, err
 	}
+	commitPrefEmbRefresh(m, usedFallback)
+	return m, nil
+}
+
+// commitPrefEmbRefresh installs a fresh snapshot and resets the TTL. A fallback
+// (stale) result is NOT committed: leaving loadedAt untouched means a failed
+// refresh retries on the very next call instead of waiting out a fresh window.
+// The caller must hold prefEmbCache.mu.
+func commitPrefEmbRefresh(m map[int64][]float64, usedFallback bool) {
+	if usedFallback {
+		return
+	}
 	prefEmbCache.vecs = m
 	prefEmbCache.loadedAt = time.Now()
-	return m, nil
 }
