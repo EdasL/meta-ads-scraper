@@ -215,7 +215,7 @@ export async function getEnrichStatus(advertiserId: number): Promise<EnrichStatu
  * Returns [] when every candidate is rated. */
 export async function getPreferenceQueue(
   userEmail: string,
-  limit = 2000,
+  limit = 50,
   exclude: number[] = [],
 ): Promise<PreferenceCard[]> {
   const ex = exclude.length ? `&exclude=${exclude.join(",")}` : "";

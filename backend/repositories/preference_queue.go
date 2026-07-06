@@ -55,7 +55,7 @@ func weightedSampleByPLike(in []prefCandidate, rng *rand.Rand) []prefCandidate {
 
 // prefCandidate is one app considered for the review queue: a renderable card
 // plus the selection inputs (uncertainty, source). Source is "scored" (has a
-// preference_scores row) or "fresh" (in the matview, not yet scored for user).
+// content embedding, scored at serve time) or "fresh" (no embedding yet).
 type prefCandidate struct {
 	models.PreferenceCardRow
 	Uncertainty float64
