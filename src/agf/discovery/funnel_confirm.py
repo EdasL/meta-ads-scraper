@@ -105,7 +105,7 @@ def run_funnel_confirm(engine, *, resolve, probe, ids=None, limit=None) -> dict:
         rows = _new_rows(conn, ids)
     if limit is not None:
         rows = rows[:limit]
-    stats = {"examined": len(rows), "confirmed": 0, "dropped": 0,
+    stats = {"examined": len(rows), "confirmed": 0, "dropped": 0, "probe_failed": 0,
              "kinds": {"install": 0, "subscribe": 0, "unknown": 0},
              "bridged_app_new": 0, "bridged_app_seen": 0}
     for r in rows:
@@ -117,7 +117,12 @@ def run_funnel_confirm(engine, *, resolve, probe, ids=None, limit=None) -> dict:
             probed = probe(r.landing_url)
             html, quiz_steps = probed.landing_html, probed.quiz_steps
         except Exception:
-            html, quiz_steps = "", None
+            # A CRASHED probe (browser missing/dead, not a slow page) proves nothing
+            # about the funnel — classifying html='' would file every candidate under
+            # payoff 'leadgen', a discarded bucket (the 06-26..07-06 prod incident:
+            # 2,341 misfiled). Leave the row 'new' so a healthy run retries it.
+            stats["probe_failed"] += 1
+            continue
         kind, status, store, store_id, reason, payoff_kind = classify_funnel(
             html, resolved, r.funnel_host, quiz_steps)
         with begin(engine) as conn:

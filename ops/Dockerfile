@@ -11,8 +11,10 @@ WORKDIR /app
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 # Chromium for funnel_capture's rendered-DOM probes (playwright itself comes from
-# requirements.txt). --with-deps pulls the browser's apt libraries.
-RUN playwright install --with-deps chromium && rm -rf /var/lib/apt/lists/*
+# requirements.txt). --with-deps apt-installs the browser's libraries, so the apt
+# lists must be refreshed first (the base layer wiped them).
+RUN apt-get update && playwright install --with-deps chromium \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY . /app
 # Android sidecar deps. The COPY above may bring a host node_modules along —

@@ -184,6 +184,41 @@ def test_run_funnel_confirm_labels_pool(_migrated_engine):
 
 # --- unit 6: confirm-time app bridge ---
 
+def test_run_funnel_confirm_probe_crash_leaves_row_new(_migrated_engine):
+    """A probe that RAISES (browser missing/dead — the 06-26..07-06 prod incident) must
+    NOT write a verdict: classifying html='' funnels everything into payoff 'leadgen',
+    a discarded bucket. The row stays 'new' and retries when the probe is healthy."""
+    eng = _migrated_engine
+    from agf.db.funnel_candidates import upsert_funnel_candidate
+    with eng.begin() as conn:
+        conn.execute(text("DELETE FROM discovery.funnel_candidates WHERE page_id LIKE 'FCRASH%'"))
+        upsert_funnel_candidate(conn, dict(
+            page_id="FCRASH1", page_name="C", page_like_count=1,
+            cta_type="LEARN_MORE", utm_source=None, utm_medium=None,
+            utm_campaign=None, utm_content=None, ad_start_date=None,
+            source_keyword="take the quiz", technique="funnel_phrase",
+            funnel_host=None, landing_url="https://fcrash.io/s",
+            landing_domain="fcrash.io"))
+
+    def boom_probe(url):
+        raise ModuleNotFoundError("No module named 'playwright'")
+
+    try:
+        stats = run_funnel_confirm(eng, resolve=lambda url: _resolved("web"),
+                                   probe=boom_probe, ids=_ids(eng, "FCRASH"))
+        assert stats.get("probe_failed", 0) == 1
+        assert stats["confirmed"] == 0 and stats["dropped"] == 0
+        with eng.connect() as c:
+            row = c.execute(text(
+                "SELECT status, payoff_kind FROM discovery.funnel_candidates "
+                "WHERE page_id = 'FCRASH1'")).one()
+        assert row.status == "new"           # no verdict from a dead probe
+        assert row.payoff_kind is None
+    finally:
+        with eng.begin() as conn:
+            conn.execute(text("DELETE FROM discovery.funnel_candidates WHERE page_id LIKE 'FCRASH%'"))
+
+
 def test_run_funnel_confirm_bridges_app(_migrated_engine):
     """When classify_funnel returns payoff_kind='app' + a store_id, run_funnel_confirm
     upserts a discovery.candidates row and tracks bridged_app_new/bridged_app_seen."""
