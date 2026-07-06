@@ -84,11 +84,15 @@ from agf.db.dynamic_keywords import (add_trial_keywords, apply_verdicts,
                                      flywheel_ran_today, flywheel_ran_within,
                                      live_keywords, open_flywheel_run,
                                      open_release_mint_run, record_keyword_sweep,
-                                     release_mint_ran_today, tried_keywords,
-                                     trial_count)
+                                     release_mint_ran_today, retire_dry_streak,
+                                     tried_keywords, trial_count)
 from agf.db.funnel_candidates import (close_funnel_sweep_run, funnel_sweep_ran_today,
                                       funnel_sweep_ran_within, open_funnel_sweep_run)
 from agf.discovery.funnel_confirm import run_funnel_confirm
+import agf.discovery.keyword_redundancy as _kr
+from agf.discovery.keyword_redundancy import (admit_by_novelty,
+                                              exhausted_basin_embeddings,
+                                              redundancy_scores)
 from agf.discovery.keyword_mining import fetch_funnel_copy, fetch_gem_copy, mine_phrases
 from agf.discovery.funnel_sweep import run_funnel_sweep
 from agf.discovery.keeper_history import pull_keeper_history
@@ -368,6 +372,31 @@ def release_mint_due(conn, as_of, *, dry_run) -> bool:
 
 
 # --- keyword flywheel ------------------------------------------------------------
+def _gate_keywords(engine, phrases, *, limit):
+    """Redundancy-gate a candidate keyword list against exhausted basins. Degrades OPEN
+    (returns the input, capped) if embedding fails or there are no basins yet — the gate
+    must never starve discovery. Threads the current `keyword_redundancy.embed_texts`
+    (not the def-time default) so a monkeypatched embedder takes effect."""
+    if not phrases:
+        return []
+    threshold = _env_float("AGF_KEYWORD_REDUNDANCY_THRESHOLD", 0.90)
+    dry_floor = _env_int("AGF_KEYWORD_BASIN_DRY_FLOOR", retire_dry_streak())
+    try:
+        with begin(engine) as conn:
+            basins = exhausted_basin_embeddings(conn, dry_floor=dry_floor,
+                                                embed=_kr.embed_texts)
+        scored = redundancy_scores(phrases, basins, embed=_kr.embed_texts)
+    except Exception as exc:  # embed/API failure — do not block minting
+        print(f"[flywheel] redundancy gate degraded open: {exc!r}", flush=True)
+        return list(phrases)[:limit]
+    return admit_by_novelty(scored, threshold=threshold, limit=limit)
+
+
+def _run_flywheel_admission(engine, phrases):
+    """Test-only wrapper: gate `phrases` and return the admitted list (no sweeping)."""
+    return _gate_keywords(engine, phrases, limit=len(phrases))
+
+
 def run_flywheel_stage(engine, extractor, *, max_pages=2, kw_delay=3.0,
                        mine_min_score=40.0, max_trials=40, min_advertisers=3,
                        corpus_fn=fetch_gem_copy) -> dict:
@@ -389,6 +418,7 @@ def run_flywheel_stage(engine, extractor, *, max_pages=2, kw_delay=3.0,
     static = {e.keyword for e in all_entries()}
     mined = mine_phrases(corpus, exclude=static | tried, limit=room,
                          min_advertisers=min_advertisers) if corpus else []
+    mined = _gate_keywords(engine, mined, limit=room) if mined else []
     if mined:
         with begin(engine) as conn:
             add_trial_keywords(conn, mined)

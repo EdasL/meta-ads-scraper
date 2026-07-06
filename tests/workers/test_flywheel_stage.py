@@ -11,7 +11,8 @@ from agf.db.dynamic_keywords import (PROMOTE_MIN_NEW, TRIAL_SWEEPS,
                                      live_keywords, open_flywheel_run,
                                      record_keyword_sweep, tried_keywords,
                                      trial_count)
-from agf.workers.main import flywheel_due, run_flywheel_stage
+from agf.workers.main import (_run_flywheel_admission, flywheel_due,
+                              run_flywheel_stage)
 
 TODAY = date(2026, 6, 4)
 
@@ -108,5 +109,34 @@ def test_run_flywheel_stage_mines_sweeps_and_records(_migrated_engine):
         assert kw.status == "trial" and kw.sweeps_used == 1
         assert kw.new_candidates_total >= 1
         assert cand.technique == "flywheel"
+    finally:
+        _clean()
+
+
+def test_flywheel_gate_drops_keyword_near_retired_basin(_migrated_engine, monkeypatch):
+    import agf.discovery.keyword_redundancy as kr
+    from sqlalchemy import text
+    eng = _migrated_engine
+
+    def _clean():
+        with eng.begin() as conn:
+            conn.execute(text(
+                "DELETE FROM discovery.dynamic_keywords WHERE keyword LIKE 'GATET%'"))
+    _clean()
+    try:
+        with eng.begin() as conn:
+            conn.execute(text(
+                "INSERT INTO discovery.dynamic_keywords (keyword, source, kind, status, dry_streak)"
+                " VALUES ('GATET retired basin','gem_copy','app','retired',0)"))
+
+        # fake embed: the mined phrase 'GATET twin' is identical to the retired basin
+        # vector; 'GATET novel' is orthogonal.
+        vecs = {"GATET retired basin": [1.0, 0.0], "GATET twin": [1.0, 0.0],
+                "GATET novel": [0.0, 1.0]}
+        monkeypatch.setattr(kr, "embed_texts", lambda texts, **kw: [vecs[t] for t in texts])
+
+        admitted = _run_flywheel_admission(eng, ["GATET twin", "GATET novel"])
+        assert "GATET novel" in admitted
+        assert "GATET twin" not in admitted
     finally:
         _clean()
