@@ -217,6 +217,33 @@ def gplay_suggest(term: str, *, runner=None) -> list[str]:
         return []
 
 
+_SUGGEST_BATCH_SIDECAR = Path(__file__).parent / "sidecar" / "gp_suggest_batch.js"
+
+
+def _default_suggest_batch_runner(terms):
+    return subprocess.run(["node", str(_SUGGEST_BATCH_SIDECAR)],
+                          input=json.dumps(list(terms)),
+                          capture_output=True, text=True, timeout=300).stdout
+
+
+def gplay_suggest_batch(terms, *, runner=None) -> dict[str, list[str]]:
+    """Google Play autocomplete for many terms in ONE sidecar process (gplay_suggest
+    spawns a node process per term — the ~120-spawn mint-run finding). `runner(terms) ->
+    stdout` JSON {term: [suggestions]}; a crashed sidecar / non-JSON degrades to {}."""
+    terms = [str(t) for t in terms if t]
+    if not terms:
+        return {}
+    runner = runner or _default_suggest_batch_runner
+    try:
+        data = json.loads(runner(terms))
+        if not isinstance(data, dict):
+            return {}
+        return {str(k): [str(t) for t in v if t]
+                for k, v in data.items() if isinstance(v, list)}
+    except Exception:
+        return {}
+
+
 def resolve_pending_app_metadata(conn, itunes_client, *, gplay_runner=None) -> int:
     """Fill name/genre/release/ratings for linked apps still missing a name (iTunes batch +
     gplay sidecar). Cheap — no Meta traffic — so it can run every sweep: it makes discovered

@@ -6,7 +6,7 @@ import plistlib
 
 from agf.discovery.release_keywords import _normalize
 from agf.discovery.taxonomy import IN_SCOPE_CATEGORIES, NICHE_TERMS_BY_CATEGORY
-from agf.enrich_full.appstore import gplay_suggest
+from agf.enrich_full.appstore import gplay_suggest_batch
 
 _APPLE_HINTS = ("https://search.itunes.apple.com/WebObjects/MZSearchHints.woa/wa/hints"
                 "?clientApplication=Software&term={term}")
@@ -31,23 +31,29 @@ def _seeds_for(category: str, n: int) -> list[str]:
 
 
 def gather_autocomplete_candidates(client, *, categories, seeds_per_category=3,
-                                   apple=apple_hints, gplay=gplay_suggest) -> dict:
+                                   apple=apple_hints,
+                                   gplay_batch=gplay_suggest_batch) -> dict:
     """For each in-scope category, expand its seed terms through Apple + Google Play
-    autocomplete, normalize to 'X app' phrases, dedup per category. Each source failure
-    degrades to [] (isolated). Zero Meta traffic."""
+    autocomplete, normalize to 'X app' phrases (dedup included), keyed per category.
+    Google Play runs as ONE batched sidecar call for all seeds (a per-seed call spawns
+    ~120 node processes per run). Each source failure degrades to []/{} (isolated).
+    Zero Meta traffic."""
+    seeds_by_cat = {cat: _seeds_for(cat, seeds_per_category)
+                    for cat in categories if cat in IN_SCOPE_CATEGORIES}
+    all_seeds, seen_seeds = [], set()
+    for seeds in seeds_by_cat.values():
+        for s in seeds:
+            if s not in seen_seeds:
+                seen_seeds.add(s)
+                all_seeds.append(s)
+    gp = gplay_batch(all_seeds) if all_seeds else {}
     out: dict[str, list[str]] = {}
-    for cat in categories:
-        if cat not in IN_SCOPE_CATEGORIES:
-            continue
+    for cat, seeds in seeds_by_cat.items():
         raw: list[str] = []
-        for seed in _seeds_for(cat, seeds_per_category):
+        for seed in seeds:
             raw.extend(apple(client, seed))
-            raw.extend(gplay(seed))
-        seen, phrases = set(), []
-        for p in _normalize(raw):
-            if p not in seen:
-                seen.add(p)
-                phrases.append(p)
+            raw.extend(gp.get(seed, []))
+        phrases = _normalize(raw)
         if phrases:
             out[cat] = phrases
     return out
