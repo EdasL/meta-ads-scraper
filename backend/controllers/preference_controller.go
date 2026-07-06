@@ -2,6 +2,8 @@ package controllers
 
 import (
 	"net/http"
+	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -16,24 +18,40 @@ type PreferenceController struct{}
 
 func NewPreferenceController() *PreferenceController { return &PreferenceController{} }
 
-// Queue handles GET /api/preference-queue?user_email=...&limit=...
+// Queue handles GET /api/preference-queue?user_email=...&limit=...&exclude=1,2,3
 func (c *PreferenceController) Queue(ctx *gin.Context) {
 	email, ok := ctx.GetQuery("user_email")
 	if !ok || email == "" {
 		helpers.Detail(ctx, http.StatusUnprocessableEntity, "user_email is required.")
 		return
 	}
-	// The review page fetches the whole unrated queue at once (continuous,
-	// page-size-free review), so allow a high ceiling — the scored set is only
-	// a few hundred apps. 5000 is a sane backstop, not a paging window.
+	// The review deck fetches a small buffer and refills in the background as
+	// the user rates; scoring happens at serve time so each refill reflects the
+	// latest ratings. The high ceiling stays as a backstop for API consumers.
 	limit, err := helpers.QueryInt(ctx, "limit", 50)
 	if err != nil || limit <= 0 || limit > 5000 {
 		helpers.Detail(ctx, http.StatusUnprocessableEntity, "bad limit.")
 		return
 	}
+	var exclude []int64
+	if raw := ctx.Query("exclude"); raw != "" {
+		parts := strings.Split(raw, ",")
+		if len(parts) > 500 {
+			helpers.Detail(ctx, http.StatusUnprocessableEntity, "too many excluded ids.")
+			return
+		}
+		for _, p := range parts {
+			id, perr := strconv.ParseInt(strings.TrimSpace(p), 10, 64)
+			if perr != nil {
+				helpers.Detail(ctx, http.StatusUnprocessableEntity, "bad exclude.")
+				return
+			}
+			exclude = append(exclude, id)
+		}
+	}
 	rctx, cancel := reqCtx(ctx)
 	defer cancel()
-	rows, err := repositories.PreferenceQueue(rctx, db.DB(), email, limit)
+	rows, err := repositories.PreferenceQueue(rctx, db.DB(), email, limit, exclude)
 	if err != nil {
 		helpers.Detail(ctx, http.StatusInternalServerError, "could not load the review queue.")
 		return

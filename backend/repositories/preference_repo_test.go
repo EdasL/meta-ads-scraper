@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
+	"github.com/edaslakavicius/emerging-app-finder/backend/models"
 	"github.com/edaslakavicius/emerging-app-finder/backend/repositories"
 )
 
@@ -49,57 +50,128 @@ func seedPrefCandidates(g *gorm.DB, n int) []int64 {
 	return ids
 }
 
-func TestPreferenceQueue(t *testing.T) {
+// seedEmbedding inserts an embedding row (a 2-dim vector is fine: the model/dot
+// code handles any length; the dim=768 column value just gates the cache query).
+func seedEmbedding(g *gorm.DB, advID int64, vec string) {
+	must(g.Exec(`DELETE FROM frontend.app_embeddings WHERE advertiser_id = ?`, advID).Error)
+	must(g.Exec(`INSERT INTO frontend.app_embeddings (advertiser_id, embedding, content_hash, dim)
+	             VALUES (?, ?, 'seed', 768)`, advID, vec).Error)
+}
+
+func TestPreferenceQueueServeTime(t *testing.T) {
 	if ratingsDB == nil {
 		t.Skip("AGF_IT_DB_URL not set")
 	}
 	g := ratingsDB
+	email := "pref-live-test@fielddesk.local"
 
-	email := "pref-repo-test@fielddesk.local"
-	// Clean slate for this user.
-	require.NoError(t, g.Exec(
-		`DELETE FROM frontend.preference_scores WHERE user_email = ?`, email).Error)
-	require.NoError(t, g.Exec(
-		`DELETE FROM frontend.app_ratings WHERE user_email = ?`, email).Error)
+	require.NoError(t, g.Exec(`DELETE FROM frontend.app_ratings WHERE user_email = ?`, email).Error)
+	ids := seedPrefCandidates(g, 12) // gem_score DESC: ids[0] highest
 
-	// Own a wide candidate pool so the queue is hermetic w.r.t. sibling packages
-	// that insert/refresh the same matview in parallel. ids are gem_score DESC.
-	ids := seedPrefCandidates(g, 8)
-
-	// Score every owned candidate for this user; rate the first so it's excluded.
-	for i, id := range ids {
-		require.NoError(t, g.Exec(
-			`INSERT INTO frontend.preference_scores
-			   (user_email, advertiser_id, p_like, uncertainty, queue_rank, why, model_version)
-			 VALUES (?, ?, ?, ?, ?, 'seeded', 'logit-v1')`,
-			email, id, 0.9-float64(i)*0.05, 0.5, i).Error)
+	// Embeddings: ids[0..9] on-axis vectors — ids[0..4] near e1, ids[5..9] near e2.
+	// ids[10..11] get NO embedding (fresh lane).
+	for i := 0; i < 5; i++ {
+		seedEmbedding(g, ids[i], "{0.9950371902099892,0.09950371902099892}")
 	}
-	require.NoError(t, g.Exec(
-		`INSERT INTO frontend.app_ratings (user_email, advertiser_id, rating, features)
-		 VALUES (?, ?, 'like', '{}')`, email, ids[0]).Error)
+	for i := 5; i < 10; i++ {
+		seedEmbedding(g, ids[i], "{0.09950371902099892,0.9950371902099892}")
+	}
+	must(g.Exec(`DELETE FROM frontend.app_embeddings WHERE advertiser_id IN (?, ?)`,
+		ids[10], ids[11]).Error)
+	repositories.ResetPrefEmbCacheForTest()
 
-	rows, err := repositories.PreferenceQueue(context.Background(), g, email, 50)
+	// 8 likes near e1 + 1 dislike near e2 → model direction ≈ e1.
+	// Rate ids[0..2] like (they're near e1) and ids[5] dislike; the remaining
+	// 5 likes come from extra sentinel advertisers outside the matview pool so
+	// the queue still has unrated e1-candidates (ids[3], ids[4]) to rank.
+	// Clean up prior-run extras first (do NOT rely on ON CONFLICT — advertisers
+	// may have no unique constraint on page_id).
+	must(g.Exec(`DELETE FROM frontend.app_embeddings WHERE advertiser_id IN (
+		SELECT id FROM public.advertisers WHERE page_id LIKE 'PREF_XLIKE%')`).Error)
+	must(g.Exec(`DELETE FROM frontend.app_ratings WHERE advertiser_id IN (
+		SELECT id FROM public.advertisers WHERE page_id LIKE 'PREF_XLIKE%')`).Error)
+	must(g.Exec(`DELETE FROM public.advertisers WHERE page_id LIKE 'PREF_XLIKE%'`).Error)
+	extra := make([]int64, 5)
+	for i := range extra {
+		var advID int64
+		must(g.Raw(`INSERT INTO public.advertisers (page_id, page_name)
+			VALUES (?, ?) RETURNING id`,
+			fmt.Sprintf("PREF_XLIKE%d", i), fmt.Sprintf("Pref extra %d", i)).Scan(&advID).Error)
+		extra[i] = advID
+		seedEmbedding(g, advID, "{0.9950371902099892,0.09950371902099892}")
+	}
+	for _, id := range append([]int64{ids[0], ids[1], ids[2]}, extra...) {
+		must(g.Exec(`INSERT INTO frontend.app_ratings (user_email, advertiser_id, rating, features)
+			VALUES (?, ?, 'like', '{}')
+			ON CONFLICT (user_email, advertiser_id) DO UPDATE SET rating = 'like'`,
+			email, id).Error)
+	}
+	must(g.Exec(`INSERT INTO frontend.app_ratings (user_email, advertiser_id, rating, features)
+		VALUES (?, ?, 'dislike', '{}')
+		ON CONFLICT (user_email, advertiser_id) DO UPDATE SET rating = 'dislike'`,
+		email, ids[5]).Error)
+
+	// limit 12 > the 10 unrated candidates → every candidate is served, so the
+	// assertions below are deterministic (no vacuous skips).
+	rows, err := repositories.PreferenceQueue(context.Background(), g, email, 12, nil)
 	require.NoError(t, err)
 	require.NotEmpty(t, rows)
 
-	got := map[int64]bool{}
+	byID := map[int64]models.PreferenceCardRow{}
 	for _, r := range rows {
-		got[int64(r.AdvertiserID)] = true
+		byID[int64(r.AdvertiserID)] = r
 	}
-	require.False(t, got[ids[0]], "rated app must be excluded")
-	require.True(t, got[ids[1]], "unrated scored app must surface")
+	require.NotContains(t, byID, ids[0], "rated app must be excluded")
+	require.NotContains(t, byID, ids[5], "disliked app must be excluded")
 
-	// Per-request variety: a second fetch should not be byte-identical order.
-	rows2, err := repositories.PreferenceQueue(context.Background(), g, email, 50)
+	// Live taste: an unrated e1-candidate must out-p_like an unrated e2-candidate.
+	require.Contains(t, byID, ids[3], "unrated e1 candidate must be served")
+	require.Contains(t, byID, ids[6], "unrated e2 candidate must be served")
+	require.Greater(t, byID[ids[3]].PLike, byID[ids[6]].PLike,
+		"on-taste candidate must outscore off-taste")
+	require.Contains(t, byID[ids[3]].Why, "similar to",
+		"fitted model must name a liked app")
+
+	// exclude param: excluded ids never come back.
+	rows2, err := repositories.PreferenceQueue(context.Background(), g, email, 12,
+		[]int64{ids[3], ids[4]})
 	require.NoError(t, err)
-	if len(rows) > 3 && len(rows2) > 3 {
-		var a, b []int
-		for _, r := range rows {
-			a = append(a, r.AdvertiserID)
+	for _, r := range rows2 {
+		require.NotEqual(t, ids[3], int64(r.AdvertiserID), "excluded id served")
+		require.NotEqual(t, ids[4], int64(r.AdvertiserID), "excluded id served")
+	}
+}
+
+func TestPreferenceQueueColdstart(t *testing.T) {
+	if ratingsDB == nil {
+		t.Skip("AGF_IT_DB_URL not set")
+	}
+	g := ratingsDB
+	email := "pref-cold-test@fielddesk.local"
+
+	require.NoError(t, g.Exec(`DELETE FROM frontend.app_ratings WHERE user_email = ?`, email).Error)
+	ids := seedPrefCandidates(g, 6)
+	for _, id := range ids {
+		seedEmbedding(g, id, "{1.0,0.0}")
+	}
+	repositories.ResetPrefEmbCacheForTest()
+
+	// One like (< MinLikes) → coldstart: embedded candidates serve gem_score/100.
+	must(g.Exec(`INSERT INTO frontend.app_ratings (user_email, advertiser_id, rating, features)
+		VALUES (?, ?, 'like', '{}')
+		ON CONFLICT (user_email, advertiser_id) DO UPDATE SET rating = 'like'`,
+		email, ids[0]).Error)
+
+	rows, err := repositories.PreferenceQueue(context.Background(), g, email, 6, nil)
+	require.NoError(t, err)
+	for _, r := range rows {
+		for i, id := range ids {
+			if int64(r.AdvertiserID) == id {
+				// seedPrefCandidates seeds gem_score = 90 - i
+				require.InDelta(t, float64(90-i)/100.0, r.PLike, 1e-9,
+					"coldstart p_like must be gem_score/100")
+				require.Equal(t, "", r.Why, "coldstart why must be empty")
+			}
 		}
-		for _, r := range rows2 {
-			b = append(b, r.AdvertiserID)
-		}
-		require.NotEqual(t, a, b, "two fetches should differ in order/content")
 	}
 }

@@ -17,7 +17,6 @@ const (
 	exploitFrac        = 0.60 // share ranked by p_like
 	uncertainFrac      = 0.25 // share ranked by uncertainty (p_like ≈ 0.5)
 	// freshFrac is the remainder (~0.15): fresh-unscored + leftover scored.
-	poolMultiplier = 4 // fresh candidates fetched = poolMultiplier * limit
 	// exploitSampleWindow is how many top-p_like apps the taste bucket samples
 	// from each request. Without this the top exploit cards are fully
 	// deterministic and recur on every refresh until rated; sampling the top
