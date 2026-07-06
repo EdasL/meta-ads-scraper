@@ -143,6 +143,30 @@ def test_mint_from_releases_funds_fertile_covered_category(_migrated_engine):
         _clean_sentinels()
 
 
+def test_gate_knobs_read_flywheel_env(monkeypatch):
+    # The mint gate reads the SAME env knobs as the flywheel gate so a tuned
+    # threshold / dry floor never desyncs the two basin definitions.
+    import agf.discovery.frame_mint as fm
+    from agf.db.dynamic_keywords import retire_dry_streak
+    monkeypatch.setenv("AGF_KEYWORD_REDUNDANCY_THRESHOLD", "0.5")
+    monkeypatch.setenv("AGF_KEYWORD_BASIN_DRY_FLOOR", "7")
+    assert fm._gate_threshold() == 0.5
+    assert fm._gate_dry_floor() == 7
+    monkeypatch.delenv("AGF_KEYWORD_REDUNDANCY_THRESHOLD")
+    monkeypatch.delenv("AGF_KEYWORD_BASIN_DRY_FLOOR")
+    assert fm._gate_threshold() == 0.90
+    assert fm._gate_dry_floor() == retire_dry_streak()
+
+
+def test_mint_stats_preinit_pass_buckets(_migrated_engine):
+    # autocomplete/brainstorm buckets always present (review minor), even when off.
+    stats = mint_keywords_from_releases(
+        _migrated_engine, client=None, floor=0, autocomplete=False, brainstorm=False,
+        fetch=lambda *a, **k: [], lookup=lambda *a, **k: {})
+    assert stats["autocomplete_by_category"] == {}
+    assert stats["brainstorm_by_category"] == {}
+
+
 def test_mint_from_releases_lookup_error_is_isolated(_migrated_engine):
     eng = _migrated_engine
     _clean_minted(eng)
