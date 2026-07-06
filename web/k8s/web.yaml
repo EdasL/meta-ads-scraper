@@ -34,6 +34,11 @@ spec:
               value: "https://app.peon.works"
             - name: AUTH_TRUST_HOST
               value: "true"
+            # Server-only: the web app's SSR/proxy/server-actions reach the Go API
+            # in-cluster and add the internal token + X-User-Email. AGF_API_TOKEN
+            # is injected via envFrom agf-web-secrets (same value as the API pod).
+            - name: AGF_API_INTERNAL_URL
+              value: "http://agf-api.agf.svc.cluster.local:8000/api"
           resources:
             requests: { memory: "128Mi", cpu: "100m" }
             limits: { memory: "256Mi", cpu: "500m" }
