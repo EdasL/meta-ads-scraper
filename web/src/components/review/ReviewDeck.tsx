@@ -63,6 +63,9 @@ export function ReviewDeck() {
       const { cards: cur, idx: curIdx } = stateRef.current;
       const exclude = refillExclude(cur, curIdx, ratedIdsRef.current);
       const fresh = await getPreferenceQueue(userEmail, REFILL_LIMIT, exclude);
+      // The user may have switched away while this fetch was in flight; the
+      // effect cleanup sets alive=false. Bail before touching this deck's state.
+      if (!alive) return;
       setExhausted(fresh.length === 0);
       if (fresh.length > 0) {
         setCards((prev) => mergeRefill(prev, stateRef.current.idx, fresh));
