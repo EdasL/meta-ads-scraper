@@ -1,9 +1,20 @@
 # HANDOFF — Keyword Novelty Engine (2026-07-06)
 
 **For:** the next session picking this up.
-**One-line state:** Pipe 1 (redundancy gate) is LIVE + verified in prod; Pipe 2 (store
-autocomplete + LLM brainstorm) is BUILT + reviewed GO but DISABLED behind env flags
-pending a performance refactor. Everything is committed to `main`.
+**One-line state (updated 2026-07-06, second session):** BOTH pipes are LIVE + verified
+in prod. The §5 fast-follow shipped (commits 9742f89 / 1f860e6 / 7e46188): all mint I/O
+moved outside the write txn (regression-tested), Google Play suggest batched into one
+sidecar process, basin lazy-embed bounded + txn-safe (`load_basin_embeddings`), gate env
+knobs unified. `AGF_MINT_AUTOCOMPLETE=1` + `AGF_MINT_BRAINSTORM=1` on the VM (backup:
+`docker-compose.yml.bak-preP2enable`). Live one-off mint in the deployed container:
+145s, 0 errors, 39 keywords across new_release/autocomplete/brainstorm tags. Suite 659
+passed / 0 failed. Remaining §5 wall-clock lever (optional): parallelize the ~90
+sequential Apple-hints calls + batch per-category embeds if 145s ever matters. The
+shared run-wide slot ceiling (§5 item 4, "consider") was deliberately NOT built — it
+could let the new-release pass starve Pipe 2's slots; per-pass budgets stay (≤~45/run
+at SLOTS=15). Observed keyword quality: brainstorm/new_release crisp; autocomplete
+includes brand-name queries (e.g. "capcut: photo & video editor") — expected (real user
+vocabulary), the trial lifecycle retires duds; watch keeper yield by source tag.
 
 ---
 
