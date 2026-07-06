@@ -51,15 +51,22 @@ def test_exhausted_basins_select_retired_and_dry_and_cache(pg_conn):
         "(90001,'dead one','gem_copy','app','retired',0),"
         "(90002,'dry live','gem_copy','app','active',5),"
         "(90003,'fresh live','gem_copy','app','active',0)"))  # excluded: live, low dry
-    calls = {"n": 0}
+    embedded = []                              # records every text embed() was asked for
 
     def embed(texts, **kw):
-        calls["n"] += len(texts)
+        embedded.extend(texts)
         return [[1.0, 0.0] for _ in texts]
 
-    vecs = exhausted_basin_embeddings(pg_conn, dry_floor=5, embed=embed)
-    assert len(vecs) == 2                      # retired + dry-live, not fresh-live
-    assert calls["n"] == 2                     # both embedded on first call
-    # second call reads from cache — no new embeds
-    vecs2 = exhausted_basin_embeddings(pg_conn, dry_floor=5, embed=embed)
-    assert len(vecs2) == 2 and calls["n"] == 2
+    # Scope assertions to our sentinel rows (90001-90003): exhausted_basin_embeddings
+    # reads retired/high-dry keywords DB-WIDE, so other tests' committed basin rows may
+    # be present. A DB-wide count is fragile; assert the sentinels' behavior instead.
+    exhausted_basin_embeddings(pg_conn, dry_floor=5, embed=embed)
+    assert "dead one" in embedded              # retired -> exhausted basin, embedded
+    assert "dry live" in embedded              # live but dry_streak>=floor, embedded
+    assert "fresh live" not in embedded        # live, low dry -> excluded, never embedded
+    # second call reads our sentinels from cache — neither is embedded again
+    before = len(embedded)
+    exhausted_basin_embeddings(pg_conn, dry_floor=5, embed=embed)
+    new_texts = embedded[before:]
+    assert "dead one" not in new_texts
+    assert "dry live" not in new_texts
