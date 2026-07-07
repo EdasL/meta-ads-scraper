@@ -103,7 +103,7 @@ def test_run_funnel_stage_sweeps_and_confirms(_migrated_engine):
         # same ad for every keyword, so the upsert folds them into ONE candidate row.
         summary = run_funnel_stage(
             eng, ex, max_pages=1, kw_delay=0,
-            confirm_limit=5, flywheel=False,        # flywheel has its own test
+            confirm_limit=5,
             resolve=lambda url: _Resolved(),
             probe=lambda url: SimpleNamespace(
                 landing_html="<html><script src='https://cdn.appsflyer.com/x.js'>"
