@@ -12,7 +12,7 @@ from agf.db.candidates import upsert_sweep_candidate
 from agf.db.engine import begin
 from agf.db.funnel_candidates import upsert_funnel_candidate
 from agf.discovery import funnel_classify as fc
-from agf.discovery.taxonomy import all_entries
+from agf.discovery.taxonomy import TaxonomyEntry, all_entries
 from agf.extract.errors import ExtractError
 from agf.scoring.vetoes import FUNNEL_INCUMBENT_PAGE_LIKES_MAX
 
@@ -48,9 +48,15 @@ def classify_funnel_candidate(ad, *, keyword: str, technique: str) -> tuple[str,
 
 async def run_funnel_sweep(engine, extractor, *, entries=None, countries=("US",),
                            max_pages: int = 3, kw_delay: float = 3.0,
-                           sleep=time.sleep) -> dict:
+                           sleep=time.sleep, heartbeat=None,
+                           track_pages: bool = False) -> dict:
     """Sweep the funnel_phrase layer (default) and persist funnel candidates.
-    Returns counters. Commits per keyword."""
+    Returns counters. Commits per keyword.
+
+    heartbeat: called once per keyword (deep passes are long; prove liveness per phrase).
+    track_pages: when True the returned stats carry a "page_log" — one row per keyword
+    ({"keyword", "pages", "ads", "ceiling_hit"}) so a to-exhaustion deep pass can log every
+    keyword whose pagination hit the page ceiling instead of running out (no silent caps)."""
     if entries is None:
         entries = all_entries(layer="funnel_phrase")
     stats = {"keywords_swept": 0, "serp_requests": 0, "raw_ads": 0,
@@ -58,11 +64,16 @@ async def run_funnel_sweep(engine, extractor, *, entries=None, countries=("US",)
              "bridged_app_new": 0, "bridged_app_seen": 0, "errors": 0,
              "drops": {"no_link": 0, "social": 0, "incumbent_likes": 0,
                        "app": 0, "not_funnel": 0}}
+    if track_pages:
+        stats["page_log"] = []
     for entry in entries:
         pages = min(entry.max_pages, max_pages)
+        page_stat = {} if track_pages else None
+        kwargs = {"stats": page_stat} if track_pages else {}
         try:
             ads = await extractor.search(query=entry.keyword, countries=list(countries),
-                                         search_type=entry.search_type, max_pages=pages)
+                                         search_type=entry.search_type, max_pages=pages,
+                                         **kwargs)
         except ExtractError:
             stats["errors"] += 1
             sleep(kw_delay * 2)
@@ -70,6 +81,10 @@ async def run_funnel_sweep(engine, extractor, *, entries=None, countries=("US",)
         stats["keywords_swept"] += 1
         stats["serp_requests"] += pages
         stats["raw_ads"] += len(ads)
+        if track_pages:
+            stats["page_log"].append({
+                "keyword": entry.keyword, "pages": page_stat.get("pages"),
+                "ads": len(ads), "ceiling_hit": bool(page_stat.get("has_next"))})
         rows, app_rows, seen, app_seen = [], [], set(), set()
         for ad in ads:
             disp, row = classify_funnel_candidate(ad, keyword=entry.keyword, technique=entry.layer)
@@ -103,5 +118,16 @@ async def run_funnel_sweep(engine, extractor, *, entries=None, countries=("US",)
                 for row in app_rows:
                     _, was_new = upsert_sweep_candidate(conn, row)
                     stats["bridged_app_new" if was_new else "bridged_app_seen"] += 1
+        if heartbeat is not None:
+            heartbeat()        # deep passes are long; prove liveness per phrase
         sleep(kw_delay)
     return stats
+
+
+def deep_funnel_entries(deep_pages: int) -> list[TaxonomyEntry]:
+    """The static funnel phrases with the per-entry page ceiling raised to deep_pages.
+    The taxonomy bakes 8 pages into the funnel_phrase layer and the sweep takes
+    min(entry.max_pages, max_pages) — so a to-exhaustion pass must raise the ENTRY
+    ceiling, not just the call's max_pages."""
+    return [TaxonomyEntry(e.keyword, e.layer, e.search_type, deep_pages)
+            for e in all_entries(layer="funnel_phrase")]

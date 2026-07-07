@@ -9,6 +9,7 @@ from sqlalchemy import text
 from agf.db.funnel_candidates import (close_funnel_sweep_run, funnel_sweep_ran_today,
                                       open_funnel_sweep_run)
 from agf.workers.main import funnel_due, run_funnel_stage
+from tests.discovery.conftest import FakeExtractor
 
 TODAY = date(2026, 6, 4)
 
@@ -121,3 +122,19 @@ def test_run_funnel_stage_sweeps_and_confirms(_migrated_engine):
         assert summary["confirm"]["kinds"]["install"] >= 1
     finally:
         _clean()
+
+
+def test_run_funnel_stage_deep_wiring(_migrated_engine, monkeypatch):
+    import agf.workers.main as wm
+    # stub confirm: the shared test DB may hold other tests' 'new' funnel rows, and this
+    # test is about the DEEP wiring, not the (already-tested) confirm stage
+    monkeypatch.setattr(wm, "run_funnel_confirm",
+                        lambda engine, *, resolve, probe, limit: {"examined": 0})
+    ext = FakeExtractor()                                  # no ads anywhere
+    out = wm.run_funnel_stage(_migrated_engine, ext, kw_delay=0, deep=True, deep_pages=100,
+                              resolve=lambda url: None, probe=lambda url: None)
+    assert out["deep"] is not None
+    assert len(out["deep"]["page_log"]) == 28              # every static phrase logged
+    out2 = wm.run_funnel_stage(_migrated_engine, ext, kw_delay=0, deep=False,
+                               resolve=lambda url: None, probe=lambda url: None)
+    assert out2["deep"] is None

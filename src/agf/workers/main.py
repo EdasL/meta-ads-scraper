@@ -41,6 +41,8 @@ Env:
                                phrases keep yielding NEW advertisers on deep pages —
                                the smaller/emerging ones rank below the big spenders)
   AGF_FUNNEL_CONFIRM_LIMIT     funnel candidates confirmed per run    (default 50)
+  AGF_FUNNEL_DEEP_PAGES        deep-sweep page ceiling per phrase    (default 100)
+  AGF_FUNNEL_DEEP_EVERY_DAYS   deep sweep cadence, 0 disables         (default 7)
   AGF_FUNNEL_EVERY_SEC         funnel-stage cadence in seconds       (0 = continuous
                                every tick when AGF_CONTINUOUS_DISCOVERY, else once/day)
   AGF_FUNNEL_REPAIR_PER_CYCLE  feed apps probed for a missing funnel (default 3; 0 off)
@@ -84,15 +86,16 @@ from agf.db.dynamic_keywords import (add_trial_keywords, apply_verdicts,
                                      open_release_mint_run, record_keyword_sweep,
                                      release_mint_ran_today, retire_dry_streak,
                                      tried_keywords, trial_count)
-from agf.db.funnel_candidates import (close_funnel_sweep_run, funnel_sweep_ran_today,
-                                      funnel_sweep_ran_within, open_funnel_sweep_run)
+from agf.db.funnel_candidates import (close_funnel_sweep_run, funnel_deep_ran_within_days,
+                                      funnel_sweep_ran_today, funnel_sweep_ran_within,
+                                      open_funnel_sweep_run)
 from agf.discovery.funnel_confirm import run_funnel_confirm
 import agf.discovery.keyword_redundancy as _kr
 from agf.discovery.keyword_redundancy import (admit_by_novelty,
                                               load_basin_embeddings,
                                               redundancy_scores)
 from agf.discovery.keyword_mining import fetch_gem_copy, mine_phrases
-from agf.discovery.funnel_sweep import run_funnel_sweep
+from agf.discovery.funnel_sweep import deep_funnel_entries, run_funnel_sweep
 from agf.discovery.keeper_history import pull_keeper_history
 from agf.discovery.sweep import run_sweep
 from agf.discovery.websub_bridge import run_websub_bridge
@@ -266,10 +269,14 @@ def websub_bridge_per_cycle() -> int:
 
 # --- funnel stage --------------------------------------------------------------
 def run_funnel_stage(engine, extractor, *, max_pages=8, kw_delay=3.0,
-                     confirm_limit=50, resolve=None, probe=None) -> dict:
+                     confirm_limit=50, deep=False, deep_pages=100,
+                     resolve=None, probe=None) -> dict:
     """One funnel sweep+confirm pass — the web2app sibling of the app discovery stage.
     Sweep: the funnel_phrase layer -> discovery.funnel_candidates (Meta via the proxied
     extractor) deep enough to reach the smaller advertisers below the big spenders.
+    Deep: when `deep`, a weekly to-exhaustion pass over the 28 static funnel phrases with
+    the entry page ceiling raised to `deep_pages` — it keeps paging until Meta's pagination
+    runs out, logging (not silently capping) any phrase that hits the ceiling.
     Confirm: render each new landing page DIRECT (no proxy, iOS UA — see funnel_capture)
     + quiz click-probe + resolve the deeplink, write the verdict. `resolve`/`probe` are
     injectable for tests; production wires the extractor's deeplink resolver and the
@@ -286,10 +293,25 @@ def run_funnel_stage(engine, extractor, *, max_pages=8, kw_delay=3.0,
     sweep = asyncio.run(run_funnel_sweep(engine, extractor,
                                          max_pages=max_pages, kw_delay=kw_delay))
     _touch_heartbeat()
+    deep_stats = None
+    if deep:
+        # Weekly to-exhaustion pass over the 28 static phrases. deep_pages is a
+        # circuit-breaker, not a target — search early-exits when Meta's pagination
+        # runs out. No silent caps: every ceiling hit is logged.
+        deep_stats = asyncio.run(run_funnel_sweep(
+            engine, extractor, entries=deep_funnel_entries(deep_pages),
+            max_pages=deep_pages, kw_delay=kw_delay,
+            heartbeat=_touch_heartbeat, track_pages=True))
+        for row in deep_stats["page_log"]:
+            if row["ceiling_hit"]:
+                print(f"[worker] funnel deep sweep: {row['keyword']!r} hit the "
+                      f"{deep_pages}-page ceiling ({row['ads']} ads) — more pages exist",
+                      file=sys.stderr, flush=True)
+        _touch_heartbeat()
     confirm = run_funnel_confirm(engine, resolve=resolve, probe=probe,
                                  limit=confirm_limit)
     _touch_heartbeat()
-    return {"sweep": sweep, "confirm": confirm}
+    return {"sweep": sweep, "deep": deep_stats, "confirm": confirm}
 
 
 def flywheel_due(conn, as_of, *, dry_run, continuous=False) -> bool:
@@ -404,6 +426,7 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
              enrich_media_cap=120, enrich_ttl_hours=168, score_after=False,
              min_score=ALERT_THRESHOLD, continuous_discovery=False,
              funnel_daily=True, funnel_pages=8, funnel_confirm_limit=50,
+             funnel_deep_pages=100, funnel_deep_every_days=7,
              flywheel_daily=True, flywheel_pages=2, flywheel_max_trials=40,
              flywheel_min_advertisers=3, mine_min_score=40.0,
              release_mint_enabled=False, frame_mint_k=15, frame_mint_floor=5,
@@ -528,12 +551,16 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
             f_due = funnel_due(conn, as_of, dry_run=dry_run,
                                continuous=continuous_discovery)
         if f_due:
+            with engine.connect() as conn:
+                deep_due = (funnel_deep_every_days > 0 and not
+                            funnel_deep_ran_within_days(conn, funnel_deep_every_days))
             with begin(engine) as conn:
                 f_run_id = open_funnel_sweep_run(conn)
             try:
                 funnel = run_funnel_stage(engine, extractor, max_pages=funnel_pages,
                                           kw_delay=kw_delay,
-                                          confirm_limit=funnel_confirm_limit)
+                                          confirm_limit=funnel_confirm_limit,
+                                          deep=deep_due, deep_pages=funnel_deep_pages)
                 with begin(engine) as conn:
                     close_funnel_sweep_run(conn, f_run_id, stats=funnel)
             except Exception as exc:
@@ -894,6 +921,8 @@ def main(argv=None) -> None:
         funnel_daily=_env_bool("AGF_FUNNEL_DAILY", True),
         funnel_pages=_env_int("AGF_FUNNEL_MAX_PAGES", 8),
         funnel_confirm_limit=_env_int("AGF_FUNNEL_CONFIRM_LIMIT", 50),
+        funnel_deep_pages=_env_int("AGF_FUNNEL_DEEP_PAGES", 100),
+        funnel_deep_every_days=_env_int("AGF_FUNNEL_DEEP_EVERY_DAYS", 7),
         flywheel_daily=_env_bool("AGF_FLYWHEEL_DAILY", True),
         flywheel_pages=_env_int("AGF_FLYWHEEL_MAX_PAGES", 2),
         flywheel_max_trials=_env_int("AGF_FLYWHEEL_MAX_TRIALS", 40),

@@ -80,6 +80,8 @@ services:
       AGF_FRAME_MINT_FLOOR: ${AGF_FRAME_MINT_FLOOR:-5}
       AGF_FRAME_MINT_SLOTS: ${AGF_FRAME_MINT_SLOTS:-40}
       AGF_FRAME_MINT_MIN_ADVERTISERS: ${AGF_FRAME_MINT_MIN_ADVERTISERS:-2}
+      AGF_FUNNEL_DEEP_PAGES: ${AGF_FUNNEL_DEEP_PAGES:-100}
+      AGF_FUNNEL_DEEP_EVERY_DAYS: ${AGF_FUNNEL_DEEP_EVERY_DAYS:-7}
       # Watchdog/healthcheck staleness budget (worker default: max(this, 2×sweep
       # interval + 300)). Bump via .env when a long backfill shares the box and
       # legitimately slows stages past the budget.

@@ -76,6 +76,18 @@ def funnel_sweep_ran_within(conn, seconds: int) -> bool:
         {"s": seconds}).scalar())
 
 
+def funnel_deep_ran_within_days(conn, days: int) -> bool:
+    """True when a FINISHED funnel run in the last `days` days carried a deep-sweep
+    result. A run that skipped deep stores JSON null at stats->'deep', so the check
+    is jsonb_typeof = 'object', not IS NOT NULL."""
+    return bool(conn.execute(text(
+        "SELECT EXISTS(SELECT 1 FROM discovery.funnel_sweep_runs "
+        "WHERE finished_at IS NOT NULL "
+        "AND jsonb_typeof(stats->'deep') = 'object' "
+        "AND finished_at > now() - make_interval(days => :d))"),
+        {"d": days}).scalar())
+
+
 def open_funnel_sweep_run(conn) -> int:
     return conn.execute(text(
         "INSERT INTO discovery.funnel_sweep_runs DEFAULT VALUES RETURNING id")).scalar_one()

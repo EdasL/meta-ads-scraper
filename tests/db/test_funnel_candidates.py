@@ -5,6 +5,9 @@ from datetime import date
 from sqlalchemy import text
 
 from agf.db import funnel_candidates as fcand
+from agf.db.funnel_candidates import (close_funnel_sweep_run,
+                                      funnel_deep_ran_within_days,
+                                      open_funnel_sweep_run)
 
 ROW = dict(page_id="FUNTEST1", page_name="Funnel Test", page_like_count=900,
            landing_url="https://quiz.funtest.world/start?utm_source=fb",
@@ -51,3 +54,14 @@ def test_mark_funnel_confirmed(pg_conn):
         "FROM discovery.funnel_candidates WHERE id=:i"), {"i": cid}).one()
     assert row.kind == "install" and row.status == "confirmed"
     assert row.store == "ios" and row.store_id == "555" and row.confirmed_at is not None
+
+
+def test_funnel_deep_ran_within_days(pg_conn):
+    assert funnel_deep_ran_within_days(pg_conn, 7) is False
+    rid = open_funnel_sweep_run(pg_conn)
+    close_funnel_sweep_run(pg_conn, rid, stats={"sweep": {}, "deep": None, "confirm": {}})
+    assert funnel_deep_ran_within_days(pg_conn, 7) is False      # JSON null != deep ran
+    rid2 = open_funnel_sweep_run(pg_conn)
+    close_funnel_sweep_run(pg_conn, rid2,
+                           stats={"sweep": {}, "deep": {"page_log": []}, "confirm": {}})
+    assert funnel_deep_ran_within_days(pg_conn, 7) is True

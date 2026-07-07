@@ -1,7 +1,8 @@
 import asyncio
 from sqlalchemy import text
 
-from agf.discovery.funnel_sweep import classify_funnel_candidate, run_funnel_sweep
+from agf.discovery.funnel_sweep import (classify_funnel_candidate, deep_funnel_entries,
+                                        run_funnel_sweep)
 from agf.discovery.taxonomy import TaxonomyEntry
 from agf.parse import AdRecord
 from tests.discovery.conftest import FakeExtractor
@@ -99,3 +100,23 @@ def test_run_funnel_sweep_persists(_migrated_engine):
         with eng.begin() as conn:
             conn.execute(text("DELETE FROM discovery.funnel_candidates WHERE page_id LIKE 'FUNSWEEP%'"))
             conn.execute(text("DELETE FROM discovery.candidates WHERE page_id LIKE 'FUNSWEEP%'"))
+
+
+def test_run_funnel_sweep_heartbeat_and_page_log(_migrated_engine):
+    beats = []
+    ext = FakeExtractor(keyword_ads={"take the quiz": [
+        ad("https://quiz.example.com/s", page_id="FUNDEEP1")]})
+    entry = TaxonomyEntry("take the quiz", "funnel_phrase", "KEYWORD_EXACT_PHRASE", 100)
+    stats = asyncio.run(run_funnel_sweep(
+        _migrated_engine, ext, entries=[entry], max_pages=100, kw_delay=0,
+        heartbeat=lambda: beats.append(1), track_pages=True))
+    assert beats == [1]                                   # one beat per keyword
+    assert stats["page_log"] == [
+        {"keyword": "take the quiz", "pages": 1, "ads": 1, "ceiling_hit": False}]
+
+
+def test_deep_funnel_entries_raise_the_entry_ceiling():
+    entries = deep_funnel_entries(100)
+    assert len(entries) == 28
+    assert all(e.layer == "funnel_phrase" and e.max_pages == 100 for e in entries)
+    assert all(e.search_type == "KEYWORD_EXACT_PHRASE" for e in entries)
