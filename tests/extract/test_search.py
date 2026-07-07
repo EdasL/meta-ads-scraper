@@ -123,6 +123,28 @@ def test_search_ads_sleeps_between_pages():
     assert slept == [1.0]            # exactly one inter-page sleep for two pages
 
 
+def test_search_ads_reports_page_stats():
+    session = FakeSession(responses={
+        ("POST", "/api/graphql/"): [
+            FakeResponse(200, "for (;;);" + PAGE1),
+            FakeResponse(200, PAGE2),
+        ],
+    })
+    st = {}
+    search_ads(session, TOKENS, query="x", countries=["US"], max_pages=5, stats=st)
+    assert st == {"pages": 2, "has_next": False}
+
+
+def test_search_ads_stats_flags_ceiling_hit():
+    # PAGE1 carries a cursor + has_next=true; max_pages=1 stops at the ceiling
+    session = FakeSession(responses={
+        ("POST", "/api/graphql/"): [FakeResponse(200, "for (;;);" + PAGE1)],
+    })
+    st = {}
+    search_ads(session, TOKENS, query="x", countries=["US"], max_pages=1, stats=st)
+    assert st["pages"] == 1 and st["has_next"] is True
+
+
 # --- count_active_ads (bounded view_all_page_id pagination) ----------------------
 def _count_page(ids, *, cursor=None, has_next=False):
     """A Page-scoped search response body with one collated ad per archive id."""

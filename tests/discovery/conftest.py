@@ -26,7 +26,9 @@ class FakeExtractor:
 
     async def search(self, *, query="", countries=("US",), active_status="ACTIVE",
                      sort_by_impressions=False, search_type="KEYWORD_UNORDERED",
-                     view_all_page_id=None, max_pages=10):
+                     view_all_page_id=None, max_pages=10, stats=None):
+        if stats is not None:
+            stats.update(pages=1, has_next=False)
         if view_all_page_id is not None:
             return list(self.page_ads.get(view_all_page_id, []))
         if sort_by_impressions:

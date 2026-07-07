@@ -67,7 +67,8 @@ class Extractor:
     async def search(self, *, query="", countries=["US"], active_status="ACTIVE",
                      sort_by_impressions=False, sort_mode: str | None = None,
                      search_type="KEYWORD_UNORDERED",
-                     view_all_page_id=None, max_pages=10) -> list[AdRecord]:
+                     view_all_page_id=None, max_pages=10,
+                     stats: dict | None = None) -> list[AdRecord]:
         def attempt():
             ws = self._pool.acquire()
             records, _cursor, _has_next = search_ads(
@@ -75,7 +76,8 @@ class Extractor:
                 active_status=active_status, sort_by_impressions=sort_by_impressions,
                 sort_mode=sort_mode, search_type=search_type,
                 view_all_page_id=view_all_page_id, max_pages=max_pages,
-                delay=self._search_delay, jitter=self._search_jitter, sleep=self._sleep)
+                delay=self._search_delay, jitter=self._search_jitter, sleep=self._sleep,
+                stats=stats)
             return records
         return await asyncio.to_thread(lambda: self._run_resilient(attempt))
 

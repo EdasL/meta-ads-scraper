@@ -50,7 +50,8 @@ def search_ads(session, tokens: SessionTokens, *, query: str, countries: list[st
                sort_mode: str | None = None,
                search_type: str = "KEYWORD_UNORDERED", view_all_page_id: str | None = None,
                max_pages: int = 10, delay: float = 0.0, jitter: float = 0.0,
-               sleep=_time.sleep) -> tuple[list[AdRecord], str | None, bool]:
+               sleep=_time.sleep,
+               stats: dict | None = None) -> tuple[list[AdRecord], str | None, bool]:
     """Page through an Ad Library search via `session` (curl_cffi-backed); collate ads.
 
     Returns (records, last_cursor, has_next). Reuses sessionID+collationToken across
@@ -68,6 +69,7 @@ def search_ads(session, tokens: SessionTokens, *, query: str, countries: list[st
                                   search_type=search_type, view_all_page_id=view_all_page_id)
     cursor: str | None = None
     has_next = False
+    pages_fetched = 0
     for i in range(max_pages):
         if i > 0 and (delay or jitter):
             sleep(delay + random.uniform(0, jitter))
@@ -83,9 +85,13 @@ def search_ads(session, tokens: SessionTokens, *, query: str, countries: list[st
         parsed = parse_fb_json(resp.text)
         raise_for_fb_error(parsed)
         records, cursor, has_next = parse_search_response(parsed)
+        pages_fetched = i + 1
         out.extend(records)
         if not has_next or not cursor:
             break
+    if stats is not None:
+        stats["pages"] = pages_fetched
+        stats["has_next"] = bool(has_next)
     return out, cursor, has_next
 
 
