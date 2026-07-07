@@ -29,6 +29,37 @@ def test_upsert_inserts_then_bumps(pg_conn):
     assert row.source_keyword == "pelvic floor app"   # first-seen provenance kept
 
 
+def _depth(pg_conn, cid):
+    return pg_conn.execute(text(
+        "SELECT first_seen_depth FROM discovery.candidates WHERE id=:i"), {"i": cid}).scalar()
+
+
+def test_first_seen_depth_keeps_shallowest_via_least(pg_conn):
+    # 1) new row at depth 5
+    cid, was_new = cand.upsert_sweep_candidate(pg_conn, {**ROW, "first_seen_depth": 5})
+    assert was_new is True
+    assert _depth(pg_conn, cid) == 5
+    # 2) re-seen shallower (2) -> LEAST wins
+    cid2, was_new2 = cand.upsert_sweep_candidate(pg_conn, {**ROW, "first_seen_depth": 2})
+    assert cid2 == cid and was_new2 is False
+    assert _depth(pg_conn, cid) == 2
+    # 3) re-seen deeper (8) -> stays 2
+    cand.upsert_sweep_candidate(pg_conn, {**ROW, "first_seen_depth": 8})
+    assert _depth(pg_conn, cid) == 2
+
+
+def test_first_seen_depth_null_semantics(pg_conn):
+    # Insert with NO depth (key absent) -> inserts fine, depth NULL.
+    row = dict(ROW, page_id="CANDTEST2", store_id="999222",
+               link_url="https://apps.apple.com/us/app/x/id999222")
+    cid, was_new = cand.upsert_sweep_candidate(pg_conn, row)
+    assert was_new is True
+    assert _depth(pg_conn, cid) is None
+    # Re-seen WITH a depth -> LEAST(NULL, d) = d (Postgres LEAST ignores NULLs).
+    cand.upsert_sweep_candidate(pg_conn, {**row, "first_seen_depth": 4})
+    assert _depth(pg_conn, cid) == 4
+
+
 def test_dropped_stays_dropped_on_reseen(pg_conn):
     cid, _ = cand.upsert_sweep_candidate(pg_conn, ROW)
     cand.mark_triaged(pg_conn, cid, status="dropped", drop_reason="game")

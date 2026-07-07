@@ -12,16 +12,18 @@ def upsert_sweep_candidate(conn, row: dict) -> tuple[int, bool]:
     got = conn.execute(text("""
         INSERT INTO discovery.candidates
           (page_id, page_name, page_like_count, store, store_id, link_url,
-           cta_type, ad_start_date, source_keyword, technique)
+           cta_type, ad_start_date, source_keyword, technique, first_seen_depth)
         VALUES (:page_id, :page_name, :page_like_count, :store, :store_id, :link_url,
-                :cta_type, :ad_start_date, :source_keyword, :technique)
+                :cta_type, :ad_start_date, :source_keyword, :technique, :first_seen_depth)
         ON CONFLICT (page_id, store, store_id) DO UPDATE SET
           times_seen      = discovery.candidates.times_seen + 1,
           last_seen_at    = now(),
           page_like_count = COALESCE(EXCLUDED.page_like_count,
-                                     discovery.candidates.page_like_count)
+                                     discovery.candidates.page_like_count),
+          first_seen_depth = LEAST(discovery.candidates.first_seen_depth,
+                                   EXCLUDED.first_seen_depth)
         RETURNING id, (xmax = 0) AS was_new
-    """), row).one()
+    """), {**row, "first_seen_depth": row.get("first_seen_depth")}).one()
     return got.id, bool(got.was_new)
 
 
