@@ -71,9 +71,9 @@ class _FakeExtractor:
     def __init__(self):
         self.searched = []
 
-    async def search(self, *, query, **kw):
+    async def search_page(self, *, query, cursor=None, **kw):
         self.searched.append(query)
-        return [_FakeAd("FWPAGE1", "777000888")]
+        return [_FakeAd("FWPAGE1", "777000888")], None, False   # one page, no next
 
 
 def test_run_flywheel_stage_mines_sweeps_and_records(_migrated_engine):

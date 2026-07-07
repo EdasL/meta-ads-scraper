@@ -44,10 +44,20 @@ class FakeExtractor:
                           sort_by_impressions=False, search_type="KEYWORD_UNORDERED",
                           view_all_page_id=None, cursor=None, stats=None):
         """Single-page fetch mirroring Extractor.search_page: returns
-        (records, next_cursor, has_next). Pages come from `page_scripts[query]`; the
-        cursor is an opaque "p<idx>" token encoding the NEXT page index (None => page 0,
-        and None again once exhausted). An empty/unknown query yields ([], None, False)."""
-        pages = self.page_scripts.get(query, [])
+        (records, next_cursor, has_next). Scripted multi-page queries (script_pages) win;
+        otherwise a query falls back to `keyword_ads`/`default_ads` as ONE page
+        (has_next False) so the AGF_DRY_RUN worker — which seeds the fake via .demo()'s
+        default_ads and never scripts pages — still discovers candidates through the
+        adaptive-depth sweep. Cursor is an opaque "p<idx>" token for the NEXT page index
+        (None => page 0, None again once exhausted)."""
+        if query not in self.page_scripts:
+            if cursor is not None:                    # single-page fallback already exhausted
+                return [], None, False
+            records = list(self.keyword_ads.get(query, self.default_ads))
+            if stats is not None:
+                stats.update(pages=1, has_next=False)
+            return records, None, False
+        pages = self.page_scripts[query]
         idx = 0 if cursor is None else int(str(cursor)[1:])
         if idx >= len(pages):
             if stats is not None:

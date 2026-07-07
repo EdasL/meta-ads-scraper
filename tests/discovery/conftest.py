@@ -23,6 +23,7 @@ class FakeExtractor:
     keyword_ads: dict = field(default_factory=dict)   # query -> [AdRecord] (link_app)
     links: dict = field(default_factory=dict)         # url -> ResolvedLink
     default_ads: list = field(default_factory=list)
+    page_scripts: dict = field(default_factory=dict)  # query -> [[AdRecord], ...] (search_page)
 
     async def search(self, *, query="", countries=("US",), active_status="ACTIVE",
                      sort_by_impressions=False, search_type="KEYWORD_UNORDERED",
@@ -34,6 +35,40 @@ class FakeExtractor:
         if sort_by_impressions:
             return list(self.eu_ads)
         return list(self.keyword_ads.get(query, self.default_ads))
+
+    def script_pages(self, query: str, pages: list) -> "FakeExtractor":
+        """Register the per-page record-lists successive search_page(query) calls return
+        (page 0 first). Mirrors the production fake so the adaptive-depth sweep tests can
+        drive multi-page paging. Returns self so it chains off the constructor."""
+        self.page_scripts[query] = [list(p) for p in pages]
+        return self
+
+    async def search_page(self, *, query="", countries=("US",), active_status="ACTIVE",
+                          sort_by_impressions=False, search_type="KEYWORD_UNORDERED",
+                          view_all_page_id=None, cursor=None, stats=None):
+        """Single-page fetch: (records, next_cursor, has_next). Scripted pages
+        (script_pages) win; otherwise fall back to keyword_ads/default_ads as ONE page
+        (has_next False) so the existing single-SERP fold tests still pass. Cursor is an
+        opaque "p<idx>" token for the NEXT page index (None => page 0, None at exhaustion)."""
+        if query in self.page_scripts:
+            pages = self.page_scripts[query]
+            idx = 0 if cursor is None else int(str(cursor)[1:])
+            if idx >= len(pages):
+                if stats is not None:
+                    stats.update(pages=0, has_next=False)
+                return [], None, False
+            records = list(pages[idx])
+            has_next = (idx + 1) < len(pages)
+            next_cursor = f"p{idx + 1}" if has_next else None
+            if stats is not None:
+                stats.update(pages=1, has_next=has_next)
+            return records, next_cursor, has_next
+        if cursor is not None:                    # single-page fallback is already exhausted
+            return [], None, False
+        records = list(self.keyword_ads.get(query, self.default_ads))
+        if stats is not None:
+            stats.update(pages=1, has_next=False)
+        return records, None, False
 
     async def search_listing(self, *, page_id, countries=("US",), max_pages=12):
         # delegate to self.search so subclasses that override search (e.g. to raise
