@@ -47,6 +47,12 @@ services:
   worker:
     image: europe-west1-docker.pkg.dev/peon-489013/agf/worker:latest
     restart: unless-stopped
+    # init is load-bearing: without it the worker is PID 1, so (a) the watchdog's
+    # self-SIGKILL is ignored by the kernel (unhandled fatal signals never reach
+    # PID 1 from its own namespace) and a wedged worker stays wedged forever, and
+    # (b) orphaned chromium/node helpers are never reaped (1,556 zombies in 15h
+    # on 2026-07-07).
+    init: true
     command: python -m agf.workers.main
     environment:
       AGF_DATABASE_URL: ${AGF_DATABASE_URL}
@@ -74,6 +80,10 @@ services:
       AGF_FRAME_MINT_FLOOR: ${AGF_FRAME_MINT_FLOOR:-5}
       AGF_FRAME_MINT_SLOTS: ${AGF_FRAME_MINT_SLOTS:-40}
       AGF_FRAME_MINT_MIN_ADVERTISERS: ${AGF_FRAME_MINT_MIN_ADVERTISERS:-2}
+      # Watchdog/healthcheck staleness budget (worker default: max(this, 2×sweep
+      # interval + 300)). Bump via .env when a long backfill shares the box and
+      # legitimately slows stages past the budget.
+      AGF_HEALTHCHECK_MAX_STALE_SEC: ${AGF_HEALTHCHECK_MAX_STALE_SEC:-3600}
     healthcheck:
       test: ["CMD", "python", "-m", "agf.workers.main", "--healthcheck"]
       interval: 60s
@@ -89,6 +99,7 @@ services:
   cron:
     image: europe-west1-docker.pkg.dev/peon-489013/agf/worker:latest
     restart: unless-stopped
+    init: true
     entrypoint: >
       /bin/sh -c "env >> /etc/environment && crontab /app/ops/prod/crontab && cron -f"
     environment:
