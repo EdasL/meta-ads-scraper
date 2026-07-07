@@ -102,6 +102,36 @@ def test_search_ads_respects_max_pages():
     assert sum(1 for m, u in session.calls if m == "POST") == 1
 
 
+class _RecordingSession(FakeSession):
+    """FakeSession that also records the POST `data` body so a test can assert the
+    outgoing GraphQL variables (e.g. the seeded cursor)."""
+
+    def post(self, url, data=None, headers=None, **kw):
+        if not hasattr(self, "bodies"):
+            self.bodies = []
+        self.bodies.append(data)
+        return self._pop("POST", url)
+
+
+def test_search_ads_seeds_cursor_on_first_page():
+    # a caller resuming from a prior page passes cursor= → the FIRST request carries it,
+    # so single-page (max_pages=1) adaptive paging can walk from any point.
+    session = _RecordingSession(responses={
+        ("POST", "/api/graphql/"): [FakeResponse(200, "for (;;);" + PAGE1)],
+    })
+    search_ads(session, TOKENS, query="x", countries=["US"], max_pages=1, cursor="SEED42")
+    assert session.bodies[0]["variables"] and '"cursor":"SEED42"' in session.bodies[0]["variables"]
+
+
+def test_search_ads_no_cursor_omits_it_on_first_page():
+    # default (cursor=None) is unchanged: the first request carries no cursor
+    session = _RecordingSession(responses={
+        ("POST", "/api/graphql/"): [FakeResponse(200, "for (;;);" + PAGE1)],
+    })
+    search_ads(session, TOKENS, query="x", countries=["US"], max_pages=1)
+    assert '"cursor"' not in session.bodies[0]["variables"]
+
+
 def test_search_ads_raises_on_rate_limit():
     # Meta returns HTTP 200 with an errors[] body when throttling; must surface as RATE_LIMIT
     session = FakeSession(responses={

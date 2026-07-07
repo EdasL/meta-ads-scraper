@@ -49,13 +49,18 @@ def search_ads(session, tokens: SessionTokens, *, query: str, countries: list[st
                active_status: str = "ACTIVE", sort_by_impressions: bool = False,
                sort_mode: str | None = None,
                search_type: str = "KEYWORD_UNORDERED", view_all_page_id: str | None = None,
-               max_pages: int = 10, delay: float = 0.0, jitter: float = 0.0,
+               max_pages: int = 10, cursor: str | None = None,
+               delay: float = 0.0, jitter: float = 0.0,
                sleep=_time.sleep,
                stats: dict | None = None) -> tuple[list[AdRecord], str | None, bool]:
     """Page through an Ad Library search via `session` (curl_cffi-backed); collate ads.
 
     Returns (records, last_cursor, has_next). Reuses sessionID+collationToken across
     pages by building base variables once and mutating only the cursor.
+
+    `cursor` SEEDS the pagination: pass a prior page's `last_cursor` to resume from the
+    next page (None => start at page 1). This lets a caller drive adaptive-depth paging
+    one page at a time (`max_pages=1`) without the pager owning the depth policy.
 
     `delay`/`jitter` add a polite `delay + U(0, jitter)` second pause BETWEEN page requests
     (never before the first) to avoid tripping Meta's per-IP throttle. A 200 response that
@@ -67,7 +72,6 @@ def search_ads(session, tokens: SessionTokens, *, query: str, countries: list[st
                                   sort_by_impressions=sort_by_impressions,
                                   sort_mode=sort_mode,
                                   search_type=search_type, view_all_page_id=view_all_page_id)
-    cursor: str | None = None
     has_next = False
     pages_fetched = 0
     for i in range(max_pages):

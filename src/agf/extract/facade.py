@@ -81,6 +81,29 @@ class Extractor:
             return records
         return await asyncio.to_thread(lambda: self._run_resilient(attempt))
 
+    async def search_page(self, *, query="", countries=["US"], active_status="ACTIVE",
+                          sort_by_impressions=False, sort_mode: str | None = None,
+                          search_type="KEYWORD_UNORDERED",
+                          view_all_page_id=None, cursor: str | None = None,
+                          stats: dict | None = None
+                          ) -> tuple[list[AdRecord], str | None, bool]:
+        """Fetch a SINGLE search page from `cursor` (None => first page) and return
+        (records, next_cursor, has_next) so a caller (the adaptive-depth sweep) can
+        decide page-by-page whether to keep going. `next_cursor` feeds the next call.
+        Same resilience path as search()/search_listing(): paced, backs off + rotates
+        the proxy IP on a rate-limit/session error."""
+        def attempt():
+            ws = self._pool.acquire()
+            records, next_cursor, has_next = search_ads(
+                ws.session, ws.tokens, query=query, countries=countries,
+                active_status=active_status, sort_by_impressions=sort_by_impressions,
+                sort_mode=sort_mode, search_type=search_type,
+                view_all_page_id=view_all_page_id, max_pages=1, cursor=cursor,
+                delay=self._search_delay, jitter=self._search_jitter, sleep=self._sleep,
+                stats=stats)
+            return records, next_cursor, bool(has_next)
+        return await asyncio.to_thread(lambda: self._run_resilient(attempt))
+
     async def count_active_ads(self, *, page_id, countries=["US"], cap=250,
                                max_pages=40) -> tuple[int, bool]:
         """True active-ad count for a Page (bounded view_all_page_id pagination, early

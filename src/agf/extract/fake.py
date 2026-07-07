@@ -20,6 +20,7 @@ class FakeExtractor:
     keyword_ads: dict = field(default_factory=dict)   # query -> [AdRecord]
     links: dict = field(default_factory=dict)         # url -> ResolvedLink
     default_ads: list = field(default_factory=list)
+    page_scripts: dict = field(default_factory=dict)  # query -> [[AdRecord], ...] (search_page)
 
     async def search(self, *, query="", countries=("US",), active_status="ACTIVE",
                      sort_by_impressions=False, search_type="KEYWORD_UNORDERED",
@@ -31,6 +32,33 @@ class FakeExtractor:
         if sort_by_impressions:
             return list(self.eu_ads)
         return list(self.keyword_ads.get(query, self.default_ads))
+
+    def script_pages(self, query: str, pages: list) -> "FakeExtractor":
+        """Register the per-page record-lists that successive `search_page(query)` calls
+        return (page 0 first). `pages` is a list of AdRecord lists. Returns self so it
+        chains off the constructor. This is how T4's sweep tests drive adaptive paging."""
+        self.page_scripts[query] = [list(p) for p in pages]
+        return self
+
+    async def search_page(self, *, query="", countries=("US",), active_status="ACTIVE",
+                          sort_by_impressions=False, search_type="KEYWORD_UNORDERED",
+                          view_all_page_id=None, cursor=None, stats=None):
+        """Single-page fetch mirroring Extractor.search_page: returns
+        (records, next_cursor, has_next). Pages come from `page_scripts[query]`; the
+        cursor is an opaque "p<idx>" token encoding the NEXT page index (None => page 0,
+        and None again once exhausted). An empty/unknown query yields ([], None, False)."""
+        pages = self.page_scripts.get(query, [])
+        idx = 0 if cursor is None else int(str(cursor)[1:])
+        if idx >= len(pages):
+            if stats is not None:
+                stats.update(pages=0, has_next=False)
+            return [], None, False
+        records = list(pages[idx])
+        has_next = (idx + 1) < len(pages)
+        next_cursor = f"p{idx + 1}" if has_next else None
+        if stats is not None:
+            stats.update(pages=1, has_next=has_next)
+        return records, next_cursor, has_next
 
     async def count_active_ads(self, *, page_id, countries=("US",), cap=250,
                                max_pages=40):
