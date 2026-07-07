@@ -6,7 +6,6 @@ Inline drops (cheapest-first): no link -> social host -> incumbent page likes ->
 (belongs to the APP pipeline) -> web destination without a funnel signal.
 Commits per keyword (short txns) so a mid-run throttle-kill keeps progress."""
 import time
-from datetime import datetime, timezone
 
 from agf.classify import classify_url
 from agf.db.candidates import upsert_sweep_candidate
@@ -16,15 +15,6 @@ from agf.discovery import funnel_classify as fc
 from agf.discovery.taxonomy import all_entries
 from agf.extract.errors import ExtractError
 from agf.scoring.vetoes import FUNNEL_INCUMBENT_PAGE_LIKES_MAX
-
-
-def _start_date(epoch):
-    if not epoch:
-        return None
-    try:
-        return datetime.fromtimestamp(float(epoch), tz=timezone.utc).date()
-    except (TypeError, ValueError, OSError):
-        return None
 
 
 def classify_funnel_candidate(ad, *, keyword: str, technique: str) -> tuple[str, dict | None]:
@@ -50,23 +40,10 @@ def classify_funnel_candidate(ad, *, keyword: str, technique: str) -> tuple[str,
         return "app", {                          # app-backed funnel -> bridge to APP pipeline
             "page_id": ad.page_id, "page_name": ad.page_name, "page_like_count": likes,
             "store": intent.kind, "store_id": intent.store_id, "link_url": ad.link_url,
-            "cta_type": ad.cta_type, "ad_start_date": _start_date(ad.start_date),
+            "cta_type": ad.cta_type, "ad_start_date": fc.start_date_of(ad.start_date),
             "source_keyword": keyword, "technique": "funnel_sweep",
         }
-    if not fc.funnel_signal(ad, technique):
-        return "not_funnel", None
-    domain = fc.landing_domain(ad.link_url)
-    if not domain:
-        return "no_link", None
-    return "candidate", {
-        "page_id": ad.page_id, "page_name": ad.page_name, "page_like_count": likes,
-        "landing_url": ad.link_url, "landing_domain": domain,
-        "funnel_host": fc.matched_funnel_host(ad.link_url),
-        "cta_type": ad.cta_type, "ad_start_date": _start_date(ad.start_date),
-        "source_keyword": keyword, "technique": technique,
-        "body_text": ad.body_text,                   # the flywheel mines this for new phrases
-        **fc.parse_utms(ad.link_url),
-    }
+    return fc.fold_web_funnel(ad, keyword=keyword, technique=technique)
 
 
 async def run_funnel_sweep(engine, extractor, *, entries=None, countries=("US",),

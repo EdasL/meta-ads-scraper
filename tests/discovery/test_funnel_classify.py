@@ -84,3 +84,44 @@ def test_store_ref_from_html_none_when_absent():
     assert fc.store_ref_from_html("<html>no app links here</html>") is None
     assert fc.store_ref_from_html("") is None
     assert fc.store_ref_from_html(None) is None
+
+
+# --- unit 3: fold_web_funnel (shared web-funnel classifier) ---
+
+from agf.discovery.funnel_classify import fold_web_funnel
+
+_NOW = 1_749_000_000
+
+
+def _fad(link, cta="LEARN_MORE", body="body", likes=500):
+    return AdRecord("a1", "FOLDTEST1", "Fold Test", True, _NOW - 5 * 86_400, None, 1,
+                    cta, "x", link, body, page_like_count=likes)
+
+
+def test_fold_web_funnel_candidate_row():
+    d, row = fold_web_funnel(_fad("https://quiz.example.com/start?utm_source=fb"),
+                             keyword="hair loss app", technique="niche_term")
+    assert d == "candidate"
+    assert row["landing_domain"] == "quiz.example.com"
+    assert row["funnel_host"] == "quiz." and row["utm_source"] == "fb"
+    assert row["source_keyword"] == "hair loss app" and row["technique"] == "niche_term"
+    assert row["body_text"] == "body"
+
+
+def test_fold_web_funnel_store_link_is_app_link():
+    d, row = fold_web_funnel(_fad("https://apps.apple.com/us/app/x/id12345"),
+                             keyword="k", technique="niche_term")
+    assert (d, row) == ("app_link", None)
+
+
+def test_fold_web_funnel_plain_site_is_not_funnel():
+    d, row = fold_web_funnel(_fad("https://plainsite.com/x", cta="NO", body="nothing"),
+                             keyword="k", technique="niche_term")
+    assert (d, row) == ("not_funnel", None)
+
+
+def test_fold_web_funnel_phrase_layer_auto_passes_gate():
+    # funnel_phrase layer bypasses funnel_signal — a plain site still folds
+    d, row = fold_web_funnel(_fad("https://plainsite.com/x", cta="NO", body="nothing"),
+                             keyword="take the quiz", technique="funnel_phrase")
+    assert d == "candidate" and row["landing_domain"] == "plainsite.com"

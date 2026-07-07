@@ -1,6 +1,8 @@
 """Pure funnel-classification helpers, promoted from scripts/discover_experiment.py so the
-funnel pipeline can share them. No DB, no network. The app pipeline never imports this."""
+funnel pipeline can share them. No DB, no network. Shared by BOTH pipelines since the
+2026-07-07 unification (the app sweep folds its web rejects through fold_web_funnel)."""
 import re
+from datetime import datetime, timezone
 from urllib.parse import urlparse, parse_qs
 
 _IOS_ID_RE = re.compile(r'(?:apps\.apple\.com|itunes\.apple\.com)/[^"\'<\s]*/id(\d+)', re.IGNORECASE)
@@ -20,7 +22,7 @@ def store_ref_from_html(html: str | None) -> tuple[str, str] | None:
         return ("android", m.group(1))
     return None
 
-from agf.classify import unwrap_fb_shim
+from agf.classify import classify_url, unwrap_fb_shim
 
 # Destinations that are neither an app nor a funnel — a social page or ad redirect.
 SOCIAL_HOSTS = {"facebook.com", "fb.me", "m.facebook.com", "l.facebook.com", "lm.facebook.com",
@@ -121,3 +123,41 @@ def funnel_signal(ad, keyword_layer: str) -> bool:
     if any(w in blob for w in FUNNEL_WORDS):
         return True
     return (ad.cta_type or "") in LEADGEN_CTAS
+
+
+def start_date_of(epoch) -> object | None:
+    """Ad start epoch -> UTC date; None when missing or garbage."""
+    if not epoch:
+        return None
+    try:
+        return datetime.fromtimestamp(float(epoch), tz=timezone.utc).date()
+    except (TypeError, ValueError, OSError):
+        return None
+
+
+def fold_web_funnel(ad, *, keyword: str, technique: str) -> tuple[str, dict | None]:
+    """Fold one SERP ad's WEB destination into a discovery.funnel_candidates row.
+
+    Shared by the funnel sweep (whose funnel_phrase layer auto-passes funnel_signal)
+    and the app sweep (where the gate really bites). The CALLER owns the no-link /
+    social-host / incumbent-likes drops; this owns store-link routing, the signal
+    gate, and the landing-domain check.
+    Dispositions: 'candidate' (with row) | 'app_link' | 'not_funnel' | 'no_link'."""
+    intent = classify_url(ad.link_url)
+    if intent.kind in ("ios", "android"):
+        return "app_link", None
+    if not funnel_signal(ad, technique):
+        return "not_funnel", None
+    domain = landing_domain(ad.link_url)
+    if not domain:
+        return "no_link", None
+    return "candidate", {
+        "page_id": ad.page_id, "page_name": ad.page_name,
+        "page_like_count": ad.page_like_count,
+        "landing_url": ad.link_url, "landing_domain": domain,
+        "funnel_host": matched_funnel_host(ad.link_url),
+        "cta_type": ad.cta_type, "ad_start_date": start_date_of(ad.start_date),
+        "source_keyword": keyword, "technique": technique,
+        "body_text": ad.body_text,
+        **parse_utms(ad.link_url),
+    }
