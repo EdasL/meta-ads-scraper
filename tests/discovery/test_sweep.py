@@ -94,6 +94,67 @@ def test_run_sweep_persists_and_counts(_migrated_engine):
             conn.execute(text("DELETE FROM discovery.candidates WHERE page_id LIKE 'SWEEPTEST%'"))
 
 
+# --- web-funnel capture (app sweep folds its web rejects) --------------------
+def _web_ad(link, likes=500, page_id="SWEEPFUN1", cta="LEARN_MORE", body="body"):
+    return AdRecord("a1", page_id, "Sweep Funnel", True, NOW - 5 * 86_400, None, 1,
+                    cta, "x", link, body, page_like_count=likes)
+
+
+def _clear_funnel_sentinels(eng):
+    with eng.begin() as conn:
+        conn.execute(text("DELETE FROM discovery.candidates WHERE page_id LIKE 'SWEEPFUN%'"))
+        conn.execute(text(
+            "DELETE FROM discovery.funnel_candidates WHERE page_id LIKE 'SWEEPFUN%'"))
+
+
+def test_sweep_captures_web_funnel(_migrated_engine):
+    _clear_funnel_sentinels(_migrated_engine)
+    try:
+        ext = FakeExtractor(keyword_ads={"hair loss app": [
+            ad("https://apps.apple.com/us/app/x/id111", page_id="SWEEPFUN_APP"),
+            _web_ad("https://quiz.example.com/start", page_id="SWEEPFUN1"),
+            _web_ad("https://plainsite.com/x", cta="NO", body="nothing", page_id="SWEEPFUN2"),
+        ]})
+        entry = TaxonomyEntry("hair loss app", "niche_term", "KEYWORD_UNORDERED", 2)
+        stats = asyncio.run(run_sweep(_migrated_engine, ext, entries=[entry], kw_delay=0))
+        assert stats["candidates_new"] == 1                    # the store ad
+        assert stats["funnel_new"] == 1 and stats["funnel_seen"] == 0
+        assert stats["drops"]["funnel_captured"] == 1
+        assert stats["drops"]["non_app"] == 1                  # plainsite: no signal
+        with _migrated_engine.connect() as conn:
+            row = conn.execute(text(
+                "SELECT source_keyword, technique, landing_domain "
+                "FROM discovery.funnel_candidates WHERE page_id = 'SWEEPFUN1'")).one()
+        assert row.source_keyword == "hair loss app"
+        assert row.technique == "niche_term"
+        assert row.landing_domain == "quiz.example.com"
+    finally:
+        _clear_funnel_sentinels(_migrated_engine)
+
+
+def test_sweep_funnel_capture_tolerates_big_pages(_migrated_engine):
+    # 200k likes: app pipeline vetoes (>10k) but the funnel ceiling is 5M -> captured.
+    # 6M likes: over the funnel ceiling too -> stays an incumbent_likes drop.
+    _clear_funnel_sentinels(_migrated_engine)
+    try:
+        ext = FakeExtractor(keyword_ads={"meal plan app": [
+            _web_ad("https://quiz.bigbrand.com/q", likes=200_000, page_id="SWEEPFUN3"),
+            _web_ad("https://quiz.megabrand.com/q", likes=6_000_000, page_id="SWEEPFUN4"),
+        ]})
+        entry = TaxonomyEntry("meal plan app", "niche_term", "KEYWORD_UNORDERED", 2)
+        stats = asyncio.run(run_sweep(_migrated_engine, ext, entries=[entry], kw_delay=0))
+        assert stats["funnel_new"] == 1
+        assert stats["drops"]["funnel_captured"] == 1
+        assert stats["drops"]["incumbent_likes"] == 1
+        with _migrated_engine.connect() as conn:
+            got = conn.execute(text(
+                "SELECT page_id FROM discovery.funnel_candidates "
+                "WHERE page_id LIKE 'SWEEPFUN%' AND page_id IN ('SWEEPFUN3','SWEEPFUN4')")).all()
+        assert [r.page_id for r in got] == ["SWEEPFUN3"]
+    finally:
+        _clear_funnel_sentinels(_migrated_engine)
+
+
 # --- circuit-breaker (dead-proxy death-march guard) --------------------------
 class _DeadProxyExtractor:
     """Every search raises — simulates a dead/throttling proxy where the facade has

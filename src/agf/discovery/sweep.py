@@ -4,7 +4,8 @@ on the SERP result — zero requests beyond the search pages themselves.
 
 Inline drops (cheapest-first): no link -> social host -> incumbent page likes
 (INCUMBENT_PAGE_LIKES_MAX, the user-set 10k constant — single source of truth in
-scoring.vetoes) -> non-app destination (funnels are v2) -> store link without an id.
+scoring.vetoes) -> non-app destination (web funnels fold into discovery.funnel_candidates
+via fold_web_funnel since 2026-07-07) -> store link without an id.
 
 Commits per keyword (short transactions), so a mid-run throttle-kill keeps progress."""
 import time
@@ -14,9 +15,11 @@ from urllib.parse import urlparse
 from agf.classify import classify_url
 from agf.db.candidates import upsert_sweep_candidate
 from agf.db.engine import begin
+from agf.db.funnel_candidates import upsert_funnel_candidate
+from agf.discovery.funnel_classify import fold_web_funnel
 from agf.discovery.taxonomy import sweep_entries
 from agf.extract.errors import ErrorKind, ExtractError
-from agf.scoring.vetoes import INCUMBENT_PAGE_LIKES_MAX
+from agf.scoring.vetoes import FUNNEL_INCUMBENT_PAGE_LIKES_MAX, INCUMBENT_PAGE_LIKES_MAX
 
 # Destinations that are neither an app nor a funnel — a social page or ad redirect.
 SOCIAL_HOSTS = {"facebook.com", "fb.me", "m.facebook.com", "l.facebook.com", "lm.facebook.com",
@@ -81,8 +84,9 @@ async def run_sweep(engine, extractor, *, entries=None, keywords=None,
         entries = [e for e in entries if e.keyword in set(keywords)]
     stats = {"keywords_swept": 0, "serp_requests": 0, "raw_ads": 0,
              "candidates_new": 0, "candidates_seen": 0, "errors": 0,
+             "funnel_new": 0, "funnel_seen": 0,
              "drops": {"no_link": 0, "social": 0, "incumbent_likes": 0,
-                       "non_app": 0, "no_store_id": 0}}
+                       "non_app": 0, "no_store_id": 0, "funnel_captured": 0}}
     consecutive_errors = 0
     for entry in entries:
         # entry.max_pages is the per-keyword ceiling (the experiment harness honors it
@@ -107,22 +111,44 @@ async def run_sweep(engine, extractor, *, entries=None, keywords=None,
         stats["serp_requests"] += pages              # upper bound; search may stop earlier
         stats["raw_ads"] += len(ads)
         rows, seen_keys = [], set()
+        funnel_rows, funnel_keys = [], set()
         for ad in ads:
             disposition, row = classify_candidate(ad, keyword=entry.keyword,
                                                   technique=entry.layer)
-            if disposition != "candidate":
-                stats["drops"][disposition] += 1
+            if disposition == "candidate":
+                key = (row["page_id"], row["store"], row["store_id"])
+                if key in seen_keys:                  # same candidate, several ads, one SERP
+                    continue
+                seen_keys.add(key)
+                rows.append(row)
                 continue
-            key = (row["page_id"], row["store"], row["store_id"])
-            if key in seen_keys:                      # same candidate, several ads, one SERP
-                continue
-            seen_keys.add(key)
-            rows.append(row)
+            if disposition in ("non_app", "incumbent_likes"):
+                # The app pipeline rejected this ad, but its destination may be a web
+                # funnel. Funnels deliberately tolerate much bigger pages than apps
+                # (a huge page can run a small new funnel), so only the funnel
+                # ceiling applies on this branch.
+                likes = ad.page_like_count
+                if likes is None or likes <= FUNNEL_INCUMBENT_PAGE_LIKES_MAX:
+                    fdisp, frow = fold_web_funnel(ad, keyword=entry.keyword,
+                                                  technique=entry.layer)
+                    if fdisp == "candidate":
+                        stats["drops"]["funnel_captured"] += 1
+                        fkey = (frow["page_id"], frow["landing_domain"])
+                        if fkey not in funnel_keys:
+                            funnel_keys.add(fkey)
+                            funnel_rows.append(frow)
+                        continue
+            stats["drops"][disposition] += 1
         if rows:                                      # one short txn per keyword
             with begin(engine) as conn:
                 for row in rows:
                     _, was_new = upsert_sweep_candidate(conn, row)
                     stats["candidates_new" if was_new else "candidates_seen"] += 1
+        if funnel_rows:                               # second short txn: the funnel pool
+            with begin(engine) as conn:
+                for frow in funnel_rows:
+                    _, was_new = upsert_funnel_candidate(conn, frow)
+                    stats["funnel_new" if was_new else "funnel_seen"] += 1
         if heartbeat is not None:
             heartbeat()        # prove liveness each keyword so the watchdog (stale-
                                # heartbeat kill) never fells a slow-but-progressing sweep
