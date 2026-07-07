@@ -375,11 +375,13 @@ def run_flywheel_stage(engine, extractor, *, max_pages=2, kw_delay=3.0,
                        mine_min_score=40.0, max_trials=40, min_advertisers=3,
                        corpus_fn=fetch_gem_copy) -> dict:
     """One mine+sweep pass of the keyword flywheel: phrases recurring across the ad
-    copy of scored gems become trial sweep keywords, every live (trial|active) dynamic
-    keyword gets one shallow exact-phrase sweep into the SAME app candidate pool the
-    static taxonomy feeds, and each trial's yield decides its fate (promote/retire —
-    policy constants in db/dynamic_keywords). A throttled keyword (search error)
-    doesn't burn trial budget. `corpus_fn` is injectable for tests."""
+    copy of scored gems become trial sweep keywords, every live keyword (trial|active,
+    plus resting keywords whose cooldown has elapsed) gets an adaptive-depth exact-phrase
+    sweep into the SAME app candidate pool the static taxonomy feeds — paging deeper while
+    pages keep yielding net-new, then stopping on the patience window / safety cap — and
+    each keyword's yield decides its fate (promote, or rest with a cooldown backoff instead
+    of terminal retirement — policy constants in db/dynamic_keywords). A throttled keyword
+    (search error) doesn't burn trial budget. `corpus_fn` is injectable for tests."""
     # Apply verdicts up front so a lowered AGF_FLYWHEEL_TRIAL_SWEEPS frees the trial
     # pool on this run (trials already past the threshold promote/retire immediately)
     # rather than waiting for each to be re-swept.
