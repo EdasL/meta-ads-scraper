@@ -103,16 +103,22 @@ def test_run_funnel_sweep_persists(_migrated_engine):
 
 
 def test_run_funnel_sweep_heartbeat_and_page_log(_migrated_engine):
-    beats = []
-    ext = FakeExtractor(keyword_ads={"take the quiz": [
-        ad("https://quiz.example.com/s", page_id="FUNDEEP1")]})
-    entry = TaxonomyEntry("take the quiz", "funnel_phrase", "KEYWORD_EXACT_PHRASE", 100)
-    stats = asyncio.run(run_funnel_sweep(
-        _migrated_engine, ext, entries=[entry], max_pages=100, kw_delay=0,
-        heartbeat=lambda: beats.append(1), track_pages=True))
-    assert beats == [1]                                   # one beat per keyword
-    assert stats["page_log"] == [
-        {"keyword": "take the quiz", "pages": 1, "ads": 1, "ceiling_hit": False}]
+    with _migrated_engine.begin() as conn:
+        conn.execute(text("DELETE FROM discovery.funnel_candidates WHERE page_id LIKE 'FUNDEEP%'"))
+    try:
+        beats = []
+        ext = FakeExtractor(keyword_ads={"take the quiz": [
+            ad("https://quiz.example.com/s", page_id="FUNDEEP1")]})
+        entry = TaxonomyEntry("take the quiz", "funnel_phrase", "KEYWORD_EXACT_PHRASE", 100)
+        stats = asyncio.run(run_funnel_sweep(
+            _migrated_engine, ext, entries=[entry], max_pages=100, kw_delay=0,
+            heartbeat=lambda: beats.append(1), track_pages=True))
+        assert beats == [1]                                   # one beat per keyword
+        assert stats["page_log"] == [
+            {"keyword": "take the quiz", "pages": 1, "ads": 1, "ceiling_hit": False}]
+    finally:
+        with _migrated_engine.begin() as conn:
+            conn.execute(text("DELETE FROM discovery.funnel_candidates WHERE page_id LIKE 'FUNDEEP%'"))
 
 
 def test_deep_funnel_entries_raise_the_entry_ceiling():
