@@ -40,7 +40,32 @@ def retire_dry_streak() -> int:
     # active is swept forever after its basin is harvested (gem_copy: 2,250 sweeps -> 336
     # new). Read at call time so the plist/env can tune it without a code edit; set very
     # high to disable. Saturated keywords leave the daily rotation and the never-re-mint set.
+    # NOTE: superseded by the never-drop resting lifecycle below (rest_dry_streak); kept for
+    # apply_verdicts/back-compat callers that still reference it.
     return _env_int("AGF_FLYWHEEL_RETIRE_DRY_STREAK", 5)
+
+
+# Never-drop lifecycle (migration 147): instead of terminally retiring a saturated ACTIVE
+# keyword, we REST it for a cooldown and wake it later so its basin can be re-tried once it
+# has had time to refill. rest_dry_streak() is the dry-sweep count that triggers a rest;
+# the cooldown grows exponentially per rest (base -> 2x -> 4x ... capped) so a repeatedly
+# dry basin backs off but is never abandoned.
+def rest_dry_streak() -> int:
+    return _env_int("AGF_FLYWHEEL_REST_DRY_STREAK", 3)
+
+
+def rest_cooldown_base_days() -> int:
+    return _env_int("AGF_FLYWHEEL_REST_COOLDOWN_DAYS", 7)
+
+
+def rest_cooldown_max_days() -> int:
+    return _env_int("AGF_FLYWHEEL_REST_COOLDOWN_MAX_DAYS", 28)
+
+
+def cooldown_days(rest_count: int) -> int:
+    """Exponential cooldown backoff, capped. rest_count 0->7, 1->14, 2->28, 3->28 (cap).
+    Pass (new_rest_count - 1) so a keyword's FIRST rest waits the base cooldown."""
+    return min(rest_cooldown_base_days() * (2 ** rest_count), rest_cooldown_max_days())
 
 
 # Back-compat aliases (some callers/tests import these names). These are the
@@ -77,34 +102,62 @@ def add_trial_keywords(conn, keywords, *, source: str = "gem_copy", kind: str = 
 
 
 def live_keywords(conn, *, kind: str = "app"):
-    """The keywords the daily flywheel sweep runs: trials + proven actives, this kind only."""
+    """The keywords the daily flywheel sweep runs: trials + proven actives + woken resting
+    keywords (cooldown elapsed / NULL), this kind only. A resting keyword whose
+    next_eligible_at is still in the future stays out of the rotation."""
     return conn.execute(text(
         "SELECT id, keyword, status, sweeps_used, new_candidates_total "
-        "FROM discovery.dynamic_keywords WHERE status IN ('trial','active') AND kind=:k "
-        "ORDER BY status DESC, id"), {"k": kind}).all()  # trials first
+        "FROM discovery.dynamic_keywords "
+        "WHERE kind=:k AND (status IN ('trial','active') "
+        "  OR (status='resting' AND (next_eligible_at IS NULL OR next_eligible_at <= now()))) "
+        "ORDER BY CASE status WHEN 'trial' THEN 0 WHEN 'active' THEN 1 ELSE 2 END, id"),
+        {"k": kind}).all()  # trials first, then active, then woken resting
 
 
 def record_keyword_sweep(conn, keyword_id: int, *, new_candidates: int) -> str:
     """Bump one keyword's counters after a sweep and apply the verdict; returns the
-    (possibly new) status. A 0-new sweep lengthens dry_streak, any new candidate resets
-    it. An ACTIVE keyword that has gone dry for retire_dry_streak() straight sweeps is
-    retired (drops out of the daily rotation). The trial verdict is unchanged."""
+    (possibly new) status. A 0-new sweep lengthens dry_streak, any new candidate resets it.
+
+    Never-drop lifecycle (migration 147): a proven ACTIVE keyword that has gone dry for
+    rest_dry_streak() straight sweeps RESTS (status='resting') for a growing cooldown
+    instead of retiring — it leaves the rotation but is woken later by live_keywords once
+    next_eligible_at passes. A woken RESTING keyword that yields on re-sweep REVIVES to
+    'active'; one that is still dry deepens its rest (rest_count++, longer cooldown). The
+    trial verdict is unchanged — an unproven trial still retires."""
     row = conn.execute(text(
         "UPDATE discovery.dynamic_keywords "
         "SET sweeps_used = sweeps_used + 1, "
         "    new_candidates_total = new_candidates_total + :n, "
         "    dry_streak = CASE WHEN :n > 0 THEN 0 ELSE dry_streak + 1 END, "
         "    last_swept_at = now() "
-        "WHERE id = :i RETURNING status, sweeps_used, new_candidates_total, dry_streak"),
+        "WHERE id = :i "
+        "RETURNING status, sweeps_used, new_candidates_total, dry_streak, rest_count"),
         {"n": new_candidates, "i": keyword_id}).one()
-    # Active-only: a trial never retires here even with a long streak (it earns its verdict
-    # below). A trial that promotes already carrying a streak retires fast afterwards — its
-    # basin was dry through the trial, so that is intended, not premature.
-    if row.status == "active" and row.dry_streak >= retire_dry_streak():
+
+    def _rest(new_rc: int) -> str:
+        # cooldown_days(new_rc - 1): first rest waits the base cooldown, then it doubles.
         conn.execute(text(
-            "UPDATE discovery.dynamic_keywords SET status='retired' WHERE id=:i"),
-            {"i": keyword_id})
-        return "retired"
+            "UPDATE discovery.dynamic_keywords "
+            "SET status='resting', rest_count=:rc, "
+            "    next_eligible_at = now() + make_interval(days => :d) WHERE id=:i"),
+            {"rc": new_rc, "d": cooldown_days(new_rc - 1), "i": keyword_id})
+        return "resting"
+
+    # A woken resting keyword: revive on any yield, else deepen the rest.
+    if row.status == "resting":
+        if new_candidates > 0:
+            conn.execute(text(
+                "UPDATE discovery.dynamic_keywords "
+                "SET status='active', rest_count=0, next_eligible_at=NULL WHERE id=:i"),
+                {"i": keyword_id})  # dry_streak already 0 from the UPDATE above
+            return "active"
+        return _rest(row.rest_count + 1)
+
+    # A proven active gone dry: REST (never retire).
+    if row.status == "active" and row.dry_streak >= rest_dry_streak():
+        return _rest(row.rest_count + 1)
+
+    # Trial verdict (unchanged): an unproven trial still retires.
     if row.status != "trial" or row.sweeps_used < trial_sweeps():
         return row.status
     verdict = "active" if row.new_candidates_total >= promote_min_new() else "retired"

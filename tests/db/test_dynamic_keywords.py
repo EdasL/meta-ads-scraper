@@ -86,11 +86,12 @@ def test_retire_dry_streak_reads_env(monkeypatch):
     assert dk.retire_dry_streak() == 5   # default
 
 
-def test_active_retires_after_dry_streak(pg_conn, monkeypatch):
-    monkeypatch.setenv("AGF_FLYWHEEL_RETIRE_DRY_STREAK", "5")
+def test_active_rests_after_dry_streak(pg_conn, monkeypatch):
+    # Never-drop (migration 147): a saturated active RESTS (cooldown), it does NOT retire.
+    monkeypatch.setenv("AGF_FLYWHEEL_REST_DRY_STREAK", "5")
     kid = _make_active(pg_conn, "FWTEST dryout", dry_streak=4)   # one short of K
-    assert dk.record_keyword_sweep(pg_conn, kid, new_candidates=0) == "retired"
-    assert _status(pg_conn, "FWTEST dryout") == "retired"
+    assert dk.record_keyword_sweep(pg_conn, kid, new_candidates=0) == "resting"
+    assert _status(pg_conn, "FWTEST dryout") == "resting"
 
 
 def test_active_new_candidate_resets_streak(pg_conn, monkeypatch):
@@ -101,7 +102,7 @@ def test_active_new_candidate_resets_streak(pg_conn, monkeypatch):
 
 
 def test_active_below_threshold_stays_active(pg_conn, monkeypatch):
-    monkeypatch.setenv("AGF_FLYWHEEL_RETIRE_DRY_STREAK", "5")
+    monkeypatch.setenv("AGF_FLYWHEEL_REST_DRY_STREAK", "5")
     kid = _make_active(pg_conn, "FWTEST patient", dry_streak=2)
     assert dk.record_keyword_sweep(pg_conn, kid, new_candidates=0) == "active"
     assert _dry(pg_conn, "FWTEST patient") == 3
