@@ -297,16 +297,24 @@ def run_funnel_stage(engine, extractor, *, max_pages=8, kw_delay=3.0,
     if deep:
         # Weekly to-exhaustion pass over the 28 static phrases. deep_pages is a
         # circuit-breaker, not a target — search early-exits when Meta's pagination
-        # runs out. No silent caps: every ceiling hit is logged.
-        deep_stats = asyncio.run(run_funnel_sweep(
-            engine, extractor, entries=deep_funnel_entries(deep_pages),
-            max_pages=deep_pages, kw_delay=kw_delay,
-            heartbeat=_touch_heartbeat, track_pages=True))
-        for row in deep_stats["page_log"]:
-            if row["ceiling_hit"]:
-                print(f"[worker] funnel deep sweep: {row['keyword']!r} hit the "
-                      f"{deep_pages}-page ceiling ({row['ads']} ads) — more pages exist",
-                      file=sys.stderr, flush=True)
+        # runs out. No silent caps: every ceiling hit is logged. Isolated in its OWN
+        # try/except: it's the longest/riskiest sub-stage, and a crash here must NOT
+        # starve confirm (which drains a ~2,000-row backlog). A failed deep leaves
+        # deep_stats None -> "deep": None in the stage stats -> funnel_deep_ran_within_days
+        # stays False -> the weekly pass simply retries next day.
+        try:
+            deep_stats = asyncio.run(run_funnel_sweep(
+                engine, extractor, entries=deep_funnel_entries(deep_pages),
+                max_pages=deep_pages, kw_delay=kw_delay,
+                heartbeat=_touch_heartbeat, track_pages=True))
+            for row in deep_stats["page_log"]:
+                if row["ceiling_hit"]:
+                    print(f"[worker] funnel deep sweep: {row['keyword']!r} hit the "
+                          f"{deep_pages}-page ceiling ({row['ads']} ads) — more pages exist",
+                          file=sys.stderr, flush=True)
+        except Exception as exc:
+            print(f"[worker] funnel deep sweep failed: {exc!r}", file=sys.stderr, flush=True)
+            deep_stats = None
         _touch_heartbeat()
     confirm = run_funnel_confirm(engine, resolve=resolve, probe=probe,
                                  limit=confirm_limit)
@@ -862,6 +870,10 @@ def _summary_line(s: dict) -> str:
         line += (f" funnel(new={fs['candidates_new']} seen={fs['candidates_seen']} "
                  f"bridged={fs.get('bridged_app_new', 0)} "
                  f"confirmed={fco['confirmed']}/{fco['examined']})")
+        dp = s["funnel"].get("deep")
+        if dp is not None:
+            ceiling_hits = sum(1 for r in dp["page_log"] if r["ceiling_hit"])
+            line += f" deep(kw={len(dp['page_log'])} ceiling_hits={ceiling_hits})"
     if s.get("flywheel") is not None:
         fw = s["flywheel"]
         line += (f" flywheel(kw={fw['keywords_swept']} mined={len(fw['mined'])} "

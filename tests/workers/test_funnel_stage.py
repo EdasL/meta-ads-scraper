@@ -138,3 +138,31 @@ def test_run_funnel_stage_deep_wiring(_migrated_engine, monkeypatch):
     out2 = wm.run_funnel_stage(_migrated_engine, ext, kw_delay=0, deep=False,
                                resolve=lambda url: None, probe=lambda url: None)
     assert out2["deep"] is None
+
+
+def test_deep_crash_does_not_starve_confirm(_migrated_engine, monkeypatch):
+    """A deep-pass crash (the longest/riskiest sub-stage) must NOT stop confirm from
+    running this cycle, and must leave {"deep": None} — so funnel_deep_ran_within_days
+    stays False and the weekly pass retries next day (the gate is not falsely closed)."""
+    import agf.workers.main as wm
+    from agf.discovery.funnel_sweep import run_funnel_sweep as real_sweep
+    from agf.extract.errors import ExtractError
+
+    confirm_calls = {"n": 0}
+
+    def _confirm(engine, *, resolve, probe, limit):
+        confirm_calls["n"] += 1
+        return {"examined": 0}
+    monkeypatch.setattr(wm, "run_funnel_confirm", _confirm)
+
+    async def _sweep(engine, extractor, **kwargs):
+        if kwargs.get("track_pages"):                      # only the deep pass sets this
+            raise ExtractError("deep sweep boom")
+        return await real_sweep(engine, extractor, **kwargs)
+    monkeypatch.setattr(wm, "run_funnel_sweep", _sweep)
+
+    ext = FakeExtractor()                                  # no ads anywhere
+    out = wm.run_funnel_stage(_migrated_engine, ext, kw_delay=0, deep=True, deep_pages=100,
+                              resolve=lambda url: None, probe=lambda url: None)
+    assert out["deep"] is None                             # weekly gate stays open
+    assert confirm_calls["n"] == 1                         # confirm still ran this cycle
