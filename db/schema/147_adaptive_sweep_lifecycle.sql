@@ -23,6 +23,6 @@ ALTER TABLE discovery.candidates
 -- forward from there.
 UPDATE discovery.dynamic_keywords
    SET status = 'resting',
-       next_eligible_at = now() + make_interval(days => (id % 7)::int),
+       next_eligible_at = now() + make_interval(days => mod(id, 7)::int),
        rest_count = 0
  WHERE status = 'retired' AND new_candidates_total > 0;
