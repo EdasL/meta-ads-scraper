@@ -125,36 +125,36 @@ class _NoAdExtractor:
 
 
 def test_run_flywheel_stage_drops_token_superset_of_tried(_migrated_engine):
-    # gem_copy path: a mined phrase that is an existing (tried) keyword + extra modifier
-    # word is dropped before it becomes a trial, even though the exact-match mine exclusion
-    # and the retired-basin embedding gate both pass it. The two 2-gram sub-phrases are
-    # already tried, so 'glute sculpt method' is the only mine survivor — and it is a strict
-    # token-superset of 'sculpt method', so the subset-dedup must drop it (mined -> empty,
-    # no gate/embed side effects).
+    # gem_copy path: a mined phrase that is an existing (tried) keyword + ONLY a noise
+    # modifier word is dropped before it becomes a trial, even though the exact-match mine
+    # exclusion and the retired-basin embedding gate both pass it. The two 2-gram sub-phrases
+    # are already tried, so 'daily sculpt method' is the only mine survivor — and it is a
+    # strict token-superset of 'sculpt method' whose only extra token ('daily') is a noise
+    # modifier, so the subset-dedup must drop it (mined -> empty, no gate/embed side effects).
     eng = _migrated_engine
 
     def _clean():
         with eng.begin() as conn:
             conn.execute(text(
                 "DELETE FROM discovery.dynamic_keywords "
-                "WHERE keyword IN ('sculpt method','glute sculpt','glute sculpt method')"))
+                "WHERE keyword IN ('sculpt method','daily sculpt','daily sculpt method')"))
     _clean()
     try:
         with eng.begin() as conn:
             conn.execute(text(
                 "INSERT INTO discovery.dynamic_keywords (keyword, source, kind, status) "
                 "VALUES ('sculpt method','gem_copy','app','retired'),"
-                "('glute sculpt','gem_copy','app','retired')"))
-        corpus = [(21, "Try the glute sculpt method that everyone shares."),
-                  (22, "The glute sculpt method works in weeks.")]
+                "('daily sculpt','gem_copy','app','retired')"))
+        corpus = [(21, "Try the daily sculpt method that everyone shares."),
+                  (22, "The daily sculpt method works in weeks.")]
         stats = run_flywheel_stage(eng, _NoAdExtractor(), max_pages=1, kw_delay=0,
                                    min_advertisers=2,
                                    corpus_fn=lambda conn, min_score: corpus)
-        assert "glute sculpt method" not in stats["mined"]   # superset of tried -> dropped
+        assert "daily sculpt method" not in stats["mined"]   # noise-modifier superset -> dropped
         with eng.connect() as conn:
             n = conn.execute(text(
                 "SELECT count(*) FROM discovery.dynamic_keywords "
-                "WHERE keyword='glute sculpt method'")).scalar()
+                "WHERE keyword='daily sculpt method'")).scalar()
         assert n == 0
     finally:
         _clean()

@@ -36,18 +36,30 @@ def _token_set(keyword) -> frozenset:
     return frozenset(toks)
 
 
+# Content-free modifier words: an existing head-phrase stacked with only these is an
+# over-specified re-find, not a new niche. A candidate whose EXTRA tokens (beyond a matched
+# existing keyword) are all real words instead is a genuine niche discriminator and MUST be
+# kept — dropping 'student focus app' just because 'focus app' exists would collapse breadth.
+_NOISE_MODIFIERS = frozenset({
+    "daily", "best", "free", "top", "new", "my", "the",
+    "ai", "pro", "plus", "premium", "easy", "simple", "quick", "smart",
+})
+
+
 def drop_token_supersets(candidates, existing) -> list[str]:
-    """Drop any candidate whose normalized token-set is a STRICT superset of some existing
-    keyword's token-set — i.e. the candidate is an existing head-phrase plus extra modifier
-    words ('daily gratitude journal app' vs the existing 'gratitude journal app'), an
-    over-specified re-find of a niche we already cover. Keeps candidates that are subsets
-    (broader), disjoint, or an exact set match (exact dups are handled elsewhere). Cheap,
-    pure-Python (no embeddings); order-stable. Complements the embedding-basin gate."""
+    """Drop any candidate that is an existing keyword's token-set plus ONLY noise-modifier
+    words ('daily gratitude journal app' vs the existing 'gratitude journal app') — an
+    over-specified re-find of a niche we already cover. A candidate whose extra tokens
+    include a real niche word ('student focus app' vs 'focus app': extra={student}) is KEPT:
+    that word is a genuine niche discriminator, not a modifier, and dropping it would
+    collapse breadth. Keeps subsets (broader), disjoint, and exact set matches (exact dups
+    handled elsewhere). Cheap, pure-Python (no embeddings); order-stable. Complements the
+    embedding-basin gate."""
     existing_sets = [s for s in (_token_set(e) for e in existing) if s]
     out = []
     for c in candidates:
         cs = _token_set(c)
-        if cs and any(cs > es for es in existing_sets):
+        if cs and any(cs > es and (cs - es) <= _NOISE_MODIFIERS for es in existing_sets):
             continue
         out.append(c)
     return out

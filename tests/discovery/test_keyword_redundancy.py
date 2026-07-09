@@ -18,6 +18,18 @@ def test_drop_token_supersets_drops_strict_superset():
     assert drop_token_supersets(cands, existing) == ["gratitude journal app"]
 
 
+def test_drop_token_supersets_keeps_niche_word_superset():
+    # A candidate whose EXTRA token beyond an existing generic is a real niche word (not a
+    # noise modifier) is a genuine niche discriminator and MUST be kept — dropping it would
+    # collapse breadth. 'student focus app' ⊃ 'focus app' (extra={student}); 'route weather
+    # forecast app' ⊃ 'weather forecast app' (extra={route}) — both kept.
+    existing = ["focus app", "weather forecast app"]
+    cands = ["student focus app", "route weather forecast app"]
+    assert drop_token_supersets(cands, existing) == cands
+    # but stacking ONLY a noise modifier onto the same generic IS dropped
+    assert drop_token_supersets(["daily focus app", "best focus app"], ["focus app"]) == []
+
+
 def test_drop_token_supersets_keeps_subset_and_disjoint():
     existing = ["daily gratitude journal app"]
     # subset (broader) and disjoint candidates are both KEPT
