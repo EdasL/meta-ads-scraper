@@ -7,8 +7,11 @@ Pure unit tests: no DB, no real Meta traffic, no real process kill (on_stale inj
 import threading
 import time
 
+import types
+
 from agf.workers.main import (_heartbeat_stale, _run_watchdog, _touch_heartbeat,
-                              _watchdog_max_stale, start_watchdog)
+                              _watchdog_max_stale, start_watchdog,
+                              _call_with_ceiling, prefetch_creative_urls)
 from agf.extract.tls_client import session_timeout
 
 
@@ -82,3 +85,81 @@ def test_session_timeout_env_override(monkeypatch):
     monkeypatch.setenv("AGF_META_CONNECT_TIMEOUT", "5")
     monkeypatch.setenv("AGF_META_READ_TIMEOUT", "12")
     assert session_timeout() == (5.0, 12.0)
+
+
+# --- creative-prefetch wall-clock ceiling -----------------------------------
+# A Meta search egresses through a proxy CONNECT tunnel; libcurl's TIMEOUT_MS does not
+# reliably bound a proxy that stalls the tunnel, so the 2026-07 wedge parked the single
+# worker process in epoll_wait for hours. The ceiling must abandon a stuck prefetch and
+# let the loop continue instead of freezing.
+class _FakeScalar:
+    def __init__(self, v):
+        self._v = v
+
+    def scalar(self):
+        return self._v
+
+
+class _FakeConn:
+    """Duck-typed conn: every SELECT page_id returns a truthy page id."""
+    def execute(self, *a, **k):
+        return _FakeScalar("PAGE")
+
+
+class _HangingExtractor:
+    """search() blocks until released — simulates a stuck proxy tunnel that never
+    returns (the real hang was an uncancellable C call in curl, so we block hard)."""
+    def __init__(self, release):
+        self._release = release
+
+    async def search(self, **kw):
+        self._release.wait()      # blocks the daemon thread's event loop
+        return []
+
+
+class _FastExtractor:
+    async def search(self, **kw):
+        ad = types.SimpleNamespace(ad_archive_id="A1",
+                                   image_urls=["http://img"], video_urls=[])
+        return [ad]
+
+
+def test_call_with_ceiling_raises_on_overrun():
+    def never_returns():
+        threading.Event().wait()   # blocks forever (daemon thread abandoned on timeout)
+    t0 = time.time()
+    try:
+        _call_with_ceiling(never_returns, 0.2, label="probe")
+        assert False, "expected TimeoutError"
+    except TimeoutError:
+        pass
+    assert time.time() - t0 < 3.0   # returned control promptly, did not hang
+
+
+def test_call_with_ceiling_propagates_result_and_errors():
+    assert _call_with_ceiling(lambda: 42, 5, label="ok") == 42
+    try:
+        _call_with_ceiling(lambda: (_ for _ in ()).throw(ValueError("boom")), 5, label="err")
+        assert False, "expected ValueError to propagate"
+    except ValueError as e:
+        assert str(e) == "boom"
+
+
+def test_prefetch_ceiling_skips_a_stuck_advertiser_without_hanging(monkeypatch):
+    monkeypatch.setenv("AGF_PREFETCH_TIMEOUT_SEC", "0.3")
+    release = threading.Event()
+    try:
+        t0 = time.time()
+        out = prefetch_creative_urls(_HangingExtractor(release), _FakeConn(),
+                                     [1], max_pages=1)
+        elapsed = time.time() - t0
+        assert out == {}               # stuck advertiser dropped, not hung
+        assert elapsed < 5.0           # the worker loop was never frozen
+    finally:
+        release.set()                  # let the abandoned daemon thread exit cleanly
+
+
+def test_prefetch_collects_urls_on_success(monkeypatch):
+    monkeypatch.setenv("AGF_PREFETCH_TIMEOUT_SEC", "10")
+    out = prefetch_creative_urls(_FastExtractor(), _FakeConn(), [7], max_pages=1)
+    assert out == {7: {"A1": [("image", "http://img")]}}

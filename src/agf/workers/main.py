@@ -164,6 +164,38 @@ def _demo_lookup(ids):
             for i in ids}
 
 
+def _call_with_ceiling(fn: Callable[[], object], timeout_s: float, *, label: str):
+    """Run blocking `fn()` under a hard wall-clock ceiling in a daemon thread.
+
+    A Meta search egresses through a DataImpulse proxy CONNECT tunnel. libcurl's own
+    TIMEOUT_MS does NOT reliably bound a proxy that accepts the CONNECT then stalls the
+    tunnel (the 2026-07 wedge: a CLOSE_WAIT :443 socket parked the single worker process
+    in epoll_wait for hours, long outliving the 30s curl cap, and the masking healthcheck
+    knob let it sit). A daemon thread + join(timeout) guarantees the caller regains
+    control no matter how the underlying C call misbehaves: the stuck call is abandoned
+    (daemon => never blocks interpreter exit) and the worker loop moves on instead of
+    freezing. Raises TimeoutError on overrun so callers treat it like any other
+    per-item network failure (skip + continue). NOTE: do not swap this for
+    asyncio.wait_for — asyncio.run() blocks up to THREAD_JOIN_TIMEOUT (300s) waiting on
+    the orphaned to_thread curl worker at loop shutdown, re-introducing the hang."""
+    box: dict = {}
+
+    def run():
+        try:
+            box["v"] = fn()
+        except BaseException as e:  # ferry any error to the caller thread
+            box["e"] = e
+
+    t = threading.Thread(target=run, name=f"ceiling-{label}", daemon=True)
+    t.start()
+    t.join(timeout_s)
+    if t.is_alive():
+        raise TimeoutError(f"{label} exceeded {timeout_s:.0f}s wall-clock (stuck proxy tunnel)")
+    if "e" in box:
+        raise box["e"]
+    return box.get("v")
+
+
 def prefetch_creative_urls(extractor, conn, advertiser_ids, max_pages: int = 10) -> dict:
     """Fetch current creative URLs per gem via a live page search, OUTSIDE any write
     transaction (fbcdn signed URLs expire, so they must be fresh). This is deliberately
@@ -179,14 +211,19 @@ def prefetch_creative_urls(extractor, conn, advertiser_ids, max_pages: int = 10)
         if not page_id:
             continue
         # Per-gem isolation: a page whose search exhausts the facade's retries (hard
-        # proxy timeout) costs that gem's media this pass, not the whole batch.
+        # proxy timeout) — OR stalls a proxy CONNECT tunnel past curl's own timeout —
+        # costs that gem's media this pass, not the whole worker loop. The wall-clock
+        # ceiling is the backstop the curl timeout can't guarantee through a proxy.
+        timeout_s = _env_float("AGF_PREFETCH_TIMEOUT_SEC", 180.0)
         try:
             # active_status="ALL": ended ads often still serve media for a while —
             # the media-only enrich pass needs their URLs too, same page budget.
-            ads = asyncio.run(extractor.search(query="", countries=["US"],
-                                               search_type="page", view_all_page_id=page_id,
-                                               active_status="ALL", max_pages=max_pages))
-        except ExtractError as exc:
+            ads = _call_with_ceiling(
+                lambda: asyncio.run(extractor.search(
+                    query="", countries=["US"], search_type="page",
+                    view_all_page_id=page_id, active_status="ALL", max_pages=max_pages)),
+                timeout_s, label=f"prefetch adv={aid}")
+        except (ExtractError, TimeoutError) as exc:
             print(f"[worker] creative prefetch failed for advertiser {aid}: {exc}",
                   file=sys.stderr, flush=True)
             continue
