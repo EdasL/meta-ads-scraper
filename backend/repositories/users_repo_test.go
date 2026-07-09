@@ -11,11 +11,7 @@ import (
 	"github.com/edaslakavicius/emerging-app-finder/backend/repositories"
 )
 
-// usersDB reuses the connection opened by the package TestMain (ratings_repo_test.go).
-// If that file's TestMain does NOT export a shared *gorm.DB, add the same
-// TestMain-guarded var pattern here under a different name and guard against
-// double-TestMain (only one TestMain per package — extend the existing one
-// with a seedUsers(g) call instead of adding a second).
+// ratingsDB and must come from ratings_repo_test.go (the package's one TestMain).
 
 func seedUsers(t *testing.T) {
 	t.Helper()
