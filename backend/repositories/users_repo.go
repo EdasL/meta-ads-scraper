@@ -144,3 +144,53 @@ func UpsertUser(ctx context.Context, g *gorm.DB, email, passwordHash, name, role
 			email, passwordHash, name, role).Error
 	})
 }
+
+type UserProfile struct {
+	Email        string     `json:"email"`
+	Name         string     `json:"name"`
+	Role         string     `json:"role"`
+	AuthProvider string     `json:"auth_provider"`
+	AvatarURL    *string    `json:"avatar_url"`
+	OnboardedAt  *time.Time `json:"onboarded_at"`
+}
+
+// OAuthUpsertUser registers or refreshes an OAuth identity. On conflict it
+// updates name/avatar only — auth_provider and role are set once at insert, so
+// a later OAuth sign-in can never clobber an existing account's provider or
+// privileges. Email is normalized to lowercase.
+func OAuthUpsertUser(ctx context.Context, g *gorm.DB, email, name, provider, avatarURL string) (*UserProfile, error) {
+	var rows []UserProfile
+	err := db.WithWriteTx(ctx, g, func(tx *gorm.DB) error {
+		return tx.Raw(`INSERT INTO frontend.users (email, password_hash, name, role, auth_provider, avatar_url)
+		               VALUES (lower(?), NULL, NULLIF(?, ''), 'member', ?, NULLIF(?, ''))
+		               ON CONFLICT (email) DO UPDATE SET
+		                 name       = COALESCE(NULLIF(EXCLUDED.name, ''), frontend.users.name),
+		                 avatar_url = COALESCE(EXCLUDED.avatar_url, frontend.users.avatar_url)
+		               RETURNING email, COALESCE(name, '') AS name, role, auth_provider, avatar_url, onboarded_at`,
+			email, name, provider, avatarURL).Scan(&rows).Error
+	})
+	if err != nil || len(rows) == 0 {
+		return nil, err
+	}
+	return &rows[0], nil
+}
+
+func GetUserProfile(ctx context.Context, g *gorm.DB, email string) (*UserProfile, error) {
+	var rows []UserProfile
+	err := db.WithReadTx(ctx, g, func(tx *gorm.DB) error {
+		return tx.Raw(`SELECT email, COALESCE(name, '') AS name, role, auth_provider, avatar_url, onboarded_at
+		               FROM frontend.users WHERE lower(email) = lower(?)`, email).Scan(&rows).Error
+	})
+	if err != nil || len(rows) == 0 {
+		return nil, err
+	}
+	return &rows[0], nil
+}
+
+// MarkOnboarded is idempotent: only the first call sets the timestamp.
+func MarkOnboarded(ctx context.Context, g *gorm.DB, email string) error {
+	return db.WithWriteTx(ctx, g, func(tx *gorm.DB) error {
+		return tx.Exec(`UPDATE frontend.users SET onboarded_at = now()
+		                WHERE lower(email) = lower(?) AND onboarded_at IS NULL`, email).Error
+	})
+}
