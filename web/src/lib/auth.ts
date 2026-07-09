@@ -5,6 +5,36 @@ import Google from "next-auth/providers/google";
 import { authConfig } from "./auth.config";
 import { oauthLogin, verifyLogin } from "./users";
 
+// GitHub's Auth.js provider resolves the account email via GitHub's
+// /user/emails endpoint but picks `primary ?? first` WITHOUT checking the
+// `verified` field, so an unconfirmed email can reach us. Verify explicitly:
+// call /user/emails ourselves and require the matching entry's verified flag.
+// Fail closed on every path (no token, fetch/HTTP error, email absent,
+// unverified) — an unverified email must never complete sign-in.
+async function githubEmailVerified(
+  accessToken: string,
+  email: string,
+): Promise<boolean> {
+  try {
+    const res = await fetch("https://api.github.com/user/emails", {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: "application/vnd.github+json",
+      },
+    });
+    if (!res.ok) return false;
+    const emails = (await res.json()) as
+      | { email?: string; verified?: boolean }[]
+      | null;
+    if (!Array.isArray(emails)) return false;
+    const target = email.toLowerCase();
+    const match = emails.find((e) => e.email?.toLowerCase() === target);
+    return match?.verified === true;
+  } catch {
+    return false;
+  }
+}
+
 export const { handlers, auth, signIn, signOut } = NextAuth({
   ...authConfig,
   session: { strategy: "jwt" },
@@ -34,11 +64,17 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       if (!account || account.provider === "credentials") return true;
       const email = user.email;
       if (!email) return false;
-      // Google marks verification explicitly; GitHub's provider only returns
-      // verified primary emails, so presence is sufficient there.
+      // Both providers must supply a verified email (fail closed). Google
+      // marks verification explicitly on the profile. GitHub does not — its
+      // provider does not check the `verified` flag — so we verify the email
+      // ourselves via /user/emails using the OAuth access token.
       if (account.provider === "google") {
         const verified = (profile as { email_verified?: boolean } | null)?.email_verified;
         if (verified !== true) return false;
+      }
+      if (account.provider === "github") {
+        const token = account.access_token;
+        if (!token || !(await githubEmailVerified(token, email))) return false;
       }
       const u = await oauthLogin(
         email,
