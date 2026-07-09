@@ -335,3 +335,41 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* App header nav: inline links on wide screens, burger menu below 760px. */
+.nav-links {
+  display: flex;
+  gap: 20px;
+  align-items: center;
+}
+.nav-burger {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  padding: 4px;
+  cursor: pointer;
+  color: var(--ink);
+}
+.nav-mobile-panel {
+  display: none;
+}
+@media (max-width: 760px) {
+  .nav-links {
+    display: none;
+  }
+  .nav-burger {
+    display: inline-flex;
+  }
+  .nav-mobile-panel {
+    display: flex;
+    flex-direction: column;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    background: var(--surface-1);
+    border-bottom: 1.5px solid var(--ink);
+  }
+}
