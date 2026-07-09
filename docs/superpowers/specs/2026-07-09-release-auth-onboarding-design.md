@@ -56,9 +56,9 @@ Prepare the Field Desk web dashboard (app.peon.works) for public release:
 
 ## Design
 
-### 1. DB migration 148 — OAuth-capable users
+### 1. DB migration 149 — OAuth-capable users
 
-`db/schema/148_oauth_users.sql`:
+`db/schema/149_oauth_users.sql`:
 
 - `ALTER TABLE frontend.users ALTER COLUMN password_hash DROP NOT NULL;`
 - `ADD COLUMN auth_provider TEXT NOT NULL DEFAULT 'password'`

@@ -23,10 +23,10 @@
 
 ---
 
-### Task 1: Migration 148 + user-repo OAuth/profile functions
+### Task 1: migration 149 + user-repo OAuth/profile functions
 
 **Files:**
-- Create: `db/schema/148_oauth_users.sql`
+- Create: `db/schema/149_oauth_users.sql`
 - Modify: `backend/repositories/users_repo.go` (append)
 - Test: `backend/repositories/users_repo_test.go` (new)
 
@@ -39,7 +39,7 @@
 
 - [ ] **Step 1: Write the migration**
 
-`db/schema/148_oauth_users.sql`:
+`db/schema/149_oauth_users.sql`:
 
 ```sql
 -- OAuth-capable accounts: password becomes optional (Google/GitHub users have
@@ -58,7 +58,7 @@ UPDATE frontend.users SET onboarded_at = now();
 - [ ] **Step 2: Apply it to the integration test DB**
 
 ```bash
-docker exec -i $(docker ps -qf name=agf_test_pg) psql -U agf -d agf_it < db/schema/148_oauth_users.sql
+docker exec -i $(docker ps -qf name=agf_test_pg) psql -U agf -d agf_it < db/schema/149_oauth_users.sql
 ```
 
 (If the container name differs, find it with `docker ps` — the test Postgres listens on host port 55433.) Also verify the placeholder lint passes: `pytest tests/db/test_migrations_placeholder_safe.py -q`.
@@ -223,8 +223,8 @@ Same command as Step 4. Expected: PASS (all 4). Then `go vet ./...` and `go buil
 - [ ] **Step 7: Commit**
 
 ```bash
-git add db/schema/148_oauth_users.sql backend/repositories/users_repo.go backend/repositories/users_repo_test.go
-git commit -m "feat(db,api): OAuth-capable users — nullable password, provider, onboarded_at (migration 148)"
+git add db/schema/149_oauth_users.sql backend/repositories/users_repo.go backend/repositories/users_repo_test.go
+git commit -m "feat(db,api): OAuth-capable users — nullable password, provider, onboarded_at (migration 149)"
 ```
 
 ---
@@ -1248,5 +1248,5 @@ Controller-run (not a subagent): local `next dev` + local Go API against the int
 ### Post-plan (controller + founder, not subagent tasks)
 
 1. **Founder action gate:** create the Google OAuth client (consent screen: external/production, app name "Field Desk", scopes email+profile, privacy/terms URLs `https://app.peon.works/privacy|terms`; redirect URIs `https://app.peon.works/api/auth/callback/google` + `http://localhost:3000/api/auth/callback/google`) and the GitHub OAuth app (callback `https://app.peon.works/api/auth/callback/github`). Hand the four values over.
-2. **Deploy order:** migration 148 to prod DB → `agf-api` image (`backend/`, `kubectl set image deployment/agf-api api=...`) → add the four AUTH_ vars to the web pod's secret env → `agf-web` image. Both images built from a clean `git worktree add ... HEAD`.
+2. **Deploy order:** migration 149 to prod DB → `agf-api` image (`backend/`, `kubectl set image deployment/agf-api api=...`) → add the four AUTH_ vars to the web pod's secret env → `agf-web` image. Both images built from a clean `git worktree add ... HEAD`.
 3. **Live verify:** real Google + GitHub sign-in on app.peon.works (new `frontend.users` rows, onboarding shown once, ratings land, feed renders); cookieless probes of /terms /privacy /discover; founder signs in with Google, then run `scripts/reassign_user_email.py founder@fielddesk.local <founder-google-email> --execute` against prod.
