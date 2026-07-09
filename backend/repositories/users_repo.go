@@ -89,7 +89,9 @@ func CreateAPIKey(ctx context.Context, g *gorm.DB, email, label string) (string,
 }
 
 func ListAPIKeys(ctx context.Context, g *gorm.DB, email string) ([]APIKeyInfo, error) {
-	var rows []APIKeyInfo
+	// Non-nil so a keyless user serializes as [] — the settings page consumes
+	// this JSON directly and crashes on null.
+	rows := []APIKeyInfo{}
 	err := db.WithReadTx(ctx, g, func(tx *gorm.DB) error {
 		return tx.Raw(`SELECT key_hash, label, created_at, last_used_at, revoked_at
 		               FROM frontend.api_keys WHERE user_email = ? ORDER BY created_at DESC`, email).Scan(&rows).Error

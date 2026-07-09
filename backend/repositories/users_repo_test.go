@@ -74,3 +74,11 @@ func TestGetUserProfile_NotFound(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, p)
 }
+
+func TestListAPIKeys_KeylessUserIsEmptyNotNil(t *testing.T) {
+	seedUsers(t)
+	keys, err := repositories.ListAPIKeys(context.Background(), ratingsDB, "oauth-test-nokeys@t.local")
+	require.NoError(t, err)
+	require.NotNil(t, keys) // nil serializes as JSON null and crashes /settings
+	require.Empty(t, keys)
+}
