@@ -41,15 +41,19 @@ export function OnboardingFlow() {
 
   const inDeck = panel === PANELS.length;
 
-  // Each (re)entry into the deck and each retry bumps the fetch token. Resetting
-  // loading/error during render (guarded by the token change) is React's
-  // recommended replacement for calling setState synchronously in an effect —
-  // it avoids the cascading-render warning and applies before the fetch runs.
-  const fetchToken = inDeck ? refreshKey + 1 : 0;
+  // Each (re)entry into the deck, each retry, and each signed-in-user change
+  // bumps the fetch token — the same three triggers as the fetch effect's deps
+  // below, so loading/error reset in lockstep with every refetch (a user switch
+  // must not leave a stale error banner over the new user's fetch — mirrors
+  // ReviewDeck's user-change reset). Resetting during render (guarded by the
+  // token change) is React's recommended replacement for calling setState
+  // synchronously in an effect — it avoids the cascading-render warning and
+  // applies before the fetch runs.
+  const fetchToken = inDeck ? `${refreshKey}:${userEmail ?? ""}` : null;
   const [prevToken, setPrevToken] = useState(fetchToken);
   if (fetchToken !== prevToken) {
     setPrevToken(fetchToken);
-    if (fetchToken !== 0) {
+    if (inDeck) {
       setLoading(true);
       setDeckError(false);
     }
