@@ -28,3 +28,36 @@ export async function verifyLogin(
   if (!res.ok) return null;
   return (await res.json()) as VerifiedUser;
 }
+
+export interface OAuthUser {
+  email: string;
+  name: string;
+  role: "admin" | "member";
+  onboarded: boolean;
+}
+
+/** Upsert an OAuth identity into frontend.users. First sign-in IS
+ * registration. Returns null on any failure — the sign-in is then denied
+ * (fail closed). */
+export async function oauthLogin(
+  email: string,
+  name: string,
+  provider: "google" | "github",
+  avatarUrl: string,
+): Promise<OAuthUser | null> {
+  try {
+    const res = await fetch(`${API}/internal/oauth-login`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${TOKEN}`,
+      },
+      body: JSON.stringify({ email, name, provider, avatar_url: avatarUrl }),
+      cache: "no-store",
+    });
+    if (!res.ok) return null;
+    return (await res.json()) as OAuthUser;
+  } catch {
+    return null;
+  }
+}
