@@ -62,6 +62,9 @@ Env:
   AGF_FRAME_MINT_EXPLORE_SHARE  slot share for under-covered categories (default 0.25)
   AGF_MINT_AUTOCOMPLETE        mint keywords from store search-autocomplete (default 1; 0 disables)
   AGF_MINT_BRAINSTORM          mint LLM-brainstormed adjacent-niche keywords (default 1; 0 disables)
+  AGF_CORPUS_REFRESH_DAILY     re-scrape found advertisers' live Meta listings (default 1; 0 disables)
+  AGF_CORPUS_REFRESH_EVERY_SEC  run corpus refresh on this interval instead of once/day (default 0)
+  AGF_CORPUS_REFRESH_BUDGET    proxy-request budget for corpus refresh, its OWN (default 3000)
 """
 import asyncio
 import os
@@ -86,6 +89,10 @@ from agf.db.dynamic_keywords import (add_trial_keywords, apply_verdicts,
                                      open_release_mint_run, record_keyword_sweep,
                                      release_mint_ran_today, retire_dry_streak,
                                      tried_keywords, trial_count)
+from agf.db.corpus_refresh_runs import (close_corpus_refresh_run,
+                                        corpus_refresh_ran_today,
+                                        corpus_refresh_ran_within,
+                                        open_corpus_refresh_run)
 from agf.db.funnel_candidates import (close_funnel_sweep_run, funnel_deep_ran_within_days,
                                       funnel_sweep_ran_today, funnel_sweep_ran_within,
                                       open_funnel_sweep_run)
@@ -96,6 +103,7 @@ from agf.discovery.keyword_redundancy import (admit_by_novelty,
                                               redundancy_scores)
 from agf.discovery.keyword_mining import fetch_gem_copy, mine_phrases
 from agf.discovery.funnel_sweep import deep_funnel_entries, run_funnel_sweep
+from agf.discovery.corpus_refresh import refresh_corpus
 from agf.discovery.keeper_history import pull_keeper_history
 from agf.discovery.sweep import run_sweep
 from agf.discovery.websub_bridge import run_websub_bridge
@@ -297,6 +305,21 @@ def funnel_due(conn, as_of, *, dry_run, continuous=False) -> bool:
     return not funnel_sweep_ran_today(conn, as_of)
 
 
+def corpus_refresh_due(conn, as_of, *, dry_run, continuous=False) -> bool:
+    """Whether this tick re-scrapes found advertisers' live Meta listings. Never in a
+    dry-run (it needs real proxies + Meta traffic — there is no offline fake). With
+    AGF_CORPUS_REFRESH_EVERY_SEC>0 it runs on that interval; otherwise once per calendar
+    day (a FINISHED discovery.corpus_refresh_runs row gates the rest of the day). Mirrors
+    funnel_due; `continuous` is accepted for signature parity but the corpus rotates
+    stalest-first across cycles, so the daily gate is the intended cadence."""
+    if dry_run:
+        return False
+    every = _env_int("AGF_CORPUS_REFRESH_EVERY_SEC", 0)
+    if every > 0:
+        return not corpus_refresh_ran_within(conn, every)
+    return not corpus_refresh_ran_today(conn, as_of)
+
+
 def websub_bridge_per_cycle() -> int:
     try:
         return int(os.environ.get("AGF_WEBSUB_BRIDGE_PER_CYCLE", "10"))
@@ -474,6 +497,7 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
              min_score=ALERT_THRESHOLD, continuous_discovery=False,
              funnel_daily=True, funnel_pages=8, funnel_confirm_limit=50,
              funnel_deep_pages=100, funnel_deep_every_days=7,
+             corpus_refresh_daily=True, corpus_refresh_budget=3000,
              flywheel_daily=True, flywheel_pages=2, flywheel_max_trials=40,
              flywheel_min_advertisers=3, mine_min_score=40.0,
              release_mint_enabled=False, frame_mint_k=15, frame_mint_floor=5,
@@ -616,6 +640,34 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
                 print(f"[worker] funnel stage failed: {exc!r}", file=sys.stderr,
                       flush=True)
         _touch_heartbeat()  # funnel renders landing pages — another long, blocking stage
+
+    # 1.91) corpus refresh — re-scrape found advertisers' live Meta listings (stalest
+    #       first) so GemScore's running-days/new-ads/depth stay current and vanished ads
+    #       flip is_active=false. Revives the dead manual refresh_corpus one-shot as a
+    #       recurring budget-bounded stage on the ~90% idle proxy headroom (re-scraping
+    #       knowns, not keyword search). Its OWN budget (AGF_CORPUS_REFRESH_BUDGET) — NOT
+    #       carved from enrich's, so it can't starve keeper enrich. Same isolation contract
+    #       as funnel: a failure lands on the run row and NEVER aborts the tick. The 30-min
+    #       scoring cron consumes the refreshed is_active/metrics — no scoring change.
+    if corpus_refresh_daily:
+        with engine.connect() as conn:
+            cr_due = corpus_refresh_due(conn, as_of, dry_run=dry_run,
+                                        continuous=continuous_discovery)
+        if cr_due:
+            with begin(engine) as conn:
+                cr_run_id = open_corpus_refresh_run(conn)
+            try:
+                cr_stats = asyncio.run(refresh_corpus(
+                    engine, extractor, budget_requests=corpus_refresh_budget,
+                    hist_pages=12))
+                with begin(engine) as conn:
+                    close_corpus_refresh_run(conn, cr_run_id, stats=cr_stats)
+            except Exception as exc:
+                with begin(engine) as conn:
+                    close_corpus_refresh_run(conn, cr_run_id, error=repr(exc))
+                print(f"[worker] corpus refresh stage failed: {exc!r}", file=sys.stderr,
+                      flush=True)
+            _touch_heartbeat()  # corpus refresh is a long, blocking Meta stage
 
     # 1.93) frame-mint — daily EXTERNAL-frame keyword minting (breaks the flywheel's
     #       topical-locality trap). Mints head-term SEARCH keywords from App Store
@@ -974,6 +1026,8 @@ def main(argv=None) -> None:
         funnel_confirm_limit=_env_int("AGF_FUNNEL_CONFIRM_LIMIT", 50),
         funnel_deep_pages=_env_int("AGF_FUNNEL_DEEP_PAGES", 100),
         funnel_deep_every_days=_env_int("AGF_FUNNEL_DEEP_EVERY_DAYS", 7),
+        corpus_refresh_daily=_env_bool("AGF_CORPUS_REFRESH_DAILY", True),
+        corpus_refresh_budget=_env_int("AGF_CORPUS_REFRESH_BUDGET", 3000),
         flywheel_daily=_env_bool("AGF_FLYWHEEL_DAILY", True),
         flywheel_pages=_env_int("AGF_FLYWHEEL_MAX_PAGES", 2),
         flywheel_max_trials=_env_int("AGF_FLYWHEEL_MAX_TRIALS", 40),
