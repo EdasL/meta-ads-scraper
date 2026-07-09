@@ -34,6 +34,30 @@ func (ia *InternalAuthController) Login(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, gin.H{"email": ku.Email, "name": name, "role": ku.Role})
 }
 
+func (ia *InternalAuthController) OAuthLogin(ctx *gin.Context) {
+	var body struct {
+		Email     string `json:"email"`
+		Name      string `json:"name"`
+		Provider  string `json:"provider"`
+		AvatarURL string `json:"avatar_url"`
+	}
+	if err := ctx.ShouldBindJSON(&body); err != nil || body.Email == "" ||
+		(body.Provider != "google" && body.Provider != "github") {
+		helpers.Detail(ctx, http.StatusBadRequest, "email and a known provider are required.")
+		return
+	}
+	rctx, cancel := reqCtx(ctx)
+	defer cancel()
+	p, err := repositories.OAuthUpsertUser(rctx, db.DB(), body.Email, body.Name, body.Provider, body.AvatarURL)
+	if err != nil || p == nil {
+		helpers.Detail(ctx, http.StatusInternalServerError, "something went wrong.")
+		return
+	}
+	ctx.JSON(http.StatusOK, gin.H{
+		"email": p.Email, "name": p.Name, "role": p.Role, "onboarded": p.OnboardedAt != nil,
+	})
+}
+
 func (ia *InternalAuthController) ListKeys(ctx *gin.Context) {
 	email := ctx.Query("email")
 	if email == "" {

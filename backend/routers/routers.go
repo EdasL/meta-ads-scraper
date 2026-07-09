@@ -28,6 +28,7 @@ func Init(r *gin.Engine) {
 	preference := controllers.NewPreferenceController()
 	health := controllers.NewHealthController()
 	media := controllers.NewMediaController()
+	users := controllers.NewUsersController()
 
 	// Every /api route requires auth: a personal fd_ key OR the static internal
 	// token with a resolvable X-User-Email (KeyAuth(true)). This closes the
@@ -62,6 +63,9 @@ func Init(r *gin.Engine) {
 		// token-guarded like saved gems and review decisions.
 		api.GET("/ratings", ratings.List)
 		api.POST("/ratings/:advertiser_id", middlewares.RequireToken(), ratings.Save)
+		// The caller's own account (identity from KeyAuth, never a query param).
+		api.GET("/me", users.Me)
+		api.POST("/me/onboarded", middlewares.RequireToken(), users.MarkOnboarded)
 		api.GET("/health/metrics", health.Metrics)
 		api.GET("/health/coverage", health.Coverage)
 		api.GET("/media/*key", media.Get)
@@ -74,6 +78,7 @@ func Init(r *gin.Engine) {
 	ia := controllers.NewInternalAuthController()
 	internal := r.Group("/api/internal", middlewares.RequireInternalToken())
 	internal.POST("/login", ia.Login)
+	internal.POST("/oauth-login", ia.OAuthLogin)
 	internal.GET("/keys", ia.ListKeys)
 	internal.POST("/keys", ia.MintKey)
 	internal.POST("/keys/revoke", ia.RevokeKey)
