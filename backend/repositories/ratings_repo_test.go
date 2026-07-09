@@ -36,7 +36,10 @@ var ratingsAdvID int64
 // UpsertRating (and the matview) actually read. The integration test's
 // seed() owns the full suite; here we just need a minimal fixture.
 func seedRatings(g *gorm.DB) {
-	must(g.Exec(`TRUNCATE frontend.app_ratings RESTART IDENTITY`).Error)
+	// Scoped to this package's sentinel user — a global TRUNCATE races the
+	// integration package's own ratings fixtures when packages run in parallel
+	// against the shared DB.
+	must(g.Exec(`DELETE FROM frontend.app_ratings WHERE user_email = 'test@example.com'`).Error)
 	// Remove any stale test advertiser and its dependents in FK-safe order.
 	must(g.Exec(`DELETE FROM public.creatives
 		WHERE ad_id IN (
