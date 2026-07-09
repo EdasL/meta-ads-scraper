@@ -26,6 +26,33 @@ def redundancy_scores(phrases, basin_vectors, *, embed=embed_texts) -> dict[str,
             for p, v in zip(phrases, vecs)}
 
 
+def _token_set(keyword) -> frozenset:
+    """Normalized token-set of a keyword: lowercase, whitespace-split, and drop a single
+    trailing 'app' (the near-universal head-term suffix — stripped on both sides so a
+    candidate that only adds 'app' is NOT counted as a real extra modifier)."""
+    toks = str(keyword).lower().split()
+    if len(toks) > 1 and toks[-1] == "app":
+        toks = toks[:-1]
+    return frozenset(toks)
+
+
+def drop_token_supersets(candidates, existing) -> list[str]:
+    """Drop any candidate whose normalized token-set is a STRICT superset of some existing
+    keyword's token-set — i.e. the candidate is an existing head-phrase plus extra modifier
+    words ('daily gratitude journal app' vs the existing 'gratitude journal app'), an
+    over-specified re-find of a niche we already cover. Keeps candidates that are subsets
+    (broader), disjoint, or an exact set match (exact dups are handled elsewhere). Cheap,
+    pure-Python (no embeddings); order-stable. Complements the embedding-basin gate."""
+    existing_sets = [s for s in (_token_set(e) for e in existing) if s]
+    out = []
+    for c in candidates:
+        cs = _token_set(c)
+        if cs and any(cs > es for es in existing_sets):
+            continue
+        out.append(c)
+    return out
+
+
 def admit_by_novelty(scored: dict[str, float], *, threshold: float, limit: int) -> list[str]:
     """Drop phrases scoring >= threshold (too close to an exhausted basin); return the
     rest sorted ascending by score (most novel first), capped at limit."""

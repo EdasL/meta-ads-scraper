@@ -95,6 +95,88 @@ def test_mint_from_releases_adds_biased_trials(_migrated_engine):
         _clean_minted(eng)
 
 
+def test_new_release_lane_toggle(_migrated_engine):
+    # new_release=False skips the App Store new-release mint entirely (near-zero yield
+    # lane, off by default in production); default/True runs it.
+    eng = _migrated_engine
+    _clean_minted(eng)
+    try:
+        def fake_fetch(client, *, country, genre, limit):
+            return [{"store_id": "NRT10", "name": "PingPal", "genre": "Lifestyle"}]
+
+        def fake_lookup(client, ids, **kw):
+            return {"NRT10": _meta("NRT10", "PingPal", "Social Networking",
+                                   "voice notes for close friends")}
+
+        proposed_calls = []
+
+        def fake_propose(category, listings, n):
+            proposed_calls.append(category)
+            return ["voice note app", "close friends app"][:n]
+
+        # OFF: proposer never called, nothing minted from the new_release lane
+        stats = mint_keywords_from_releases(
+            eng, client=None, floor=0, total_slots=40, autocomplete=False,
+            brainstorm=False, new_release=False,
+            fetch=fake_fetch, lookup=fake_lookup, propose=fake_propose)
+        assert proposed_calls == []
+        assert stats["minted"] == 0
+        assert stats["minted_by_category"] == {}
+
+        # ON: proposer runs, keywords minted
+        stats = mint_keywords_from_releases(
+            eng, client=None, floor=0, total_slots=40, autocomplete=False,
+            brainstorm=False, new_release=True,
+            fetch=fake_fetch, lookup=fake_lookup, propose=fake_propose)
+        assert proposed_calls == ["Social"]
+        assert stats["minted"] >= 1
+    finally:
+        _clean_minted(eng)
+
+
+def test_new_release_lane_drops_token_supersets(_migrated_engine):
+    # A minted phrase that is an existing keyword + extra modifier word ('daily voice
+    # note app' vs the tried 'voice note app') is dropped BEFORE the gate; the novel
+    # head-phrase is kept.
+    eng = _migrated_engine
+    _clean_minted(eng)
+    with eng.begin() as conn:
+        conn.execute(text("DELETE FROM discovery.dynamic_keywords "
+                          "WHERE keyword IN ('voice note app','daily voice note app',"
+                          "'close friends app')"))
+    try:
+        with eng.begin() as conn:
+            conn.execute(text(
+                "INSERT INTO discovery.dynamic_keywords (keyword, source, kind, status) "
+                "VALUES ('voice note app','gem_copy','app','active')"))
+
+        def fake_fetch(client, *, country, genre, limit):
+            return [{"store_id": "NRS10", "name": "PingPal", "genre": "Lifestyle"}]
+
+        def fake_lookup(client, ids, **kw):
+            return {"NRS10": _meta("NRS10", "PingPal", "Social Networking", "d")}
+
+        def fake_propose(category, listings, n):
+            return ["daily voice note app", "close friends app"][:n]
+
+        mint_keywords_from_releases(
+            eng, client=None, floor=0, total_slots=40, autocomplete=False,
+            brainstorm=False, new_release=True,
+            fetch=fake_fetch, lookup=fake_lookup, propose=fake_propose)
+        with eng.connect() as conn:
+            kws = {r.keyword for r in conn.execute(text(
+                "SELECT keyword FROM discovery.dynamic_keywords "
+                "WHERE source = 'new_release:Social'")).all()}
+        assert "close friends app" in kws              # novel head-phrase minted
+        assert "daily voice note app" not in kws       # superset of tried keyword dropped
+    finally:
+        _clean_minted(eng)
+        with eng.begin() as conn:
+            conn.execute(text("DELETE FROM discovery.dynamic_keywords "
+                              "WHERE keyword IN ('voice note app','daily voice note app',"
+                              "'close friends app')"))
+
+
 def test_mint_from_releases_funds_fertile_covered_category(_migrated_engine):
     # The inverted-bias fix: a category ALREADY over the K coverage target but with
     # recent keeper yield must still receive mint slots via the exploit lane. Under the

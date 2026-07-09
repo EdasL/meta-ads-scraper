@@ -113,6 +113,53 @@ def test_run_flywheel_stage_mines_sweeps_and_records(_migrated_engine):
         _clean()
 
 
+class _NoAdExtractor:
+    """Returns no ads for any query — sweeps live keywords without creating candidates,
+    so the gem_copy-path superset-dedup test leaves zero candidate/app side effects."""
+    def __init__(self):
+        self.searched = []
+
+    async def search_page(self, *, query, cursor=None, **kw):
+        self.searched.append(query)
+        return [], None, False
+
+
+def test_run_flywheel_stage_drops_token_superset_of_tried(_migrated_engine):
+    # gem_copy path: a mined phrase that is an existing (tried) keyword + extra modifier
+    # word is dropped before it becomes a trial, even though the exact-match mine exclusion
+    # and the retired-basin embedding gate both pass it. The two 2-gram sub-phrases are
+    # already tried, so 'glute sculpt method' is the only mine survivor — and it is a strict
+    # token-superset of 'sculpt method', so the subset-dedup must drop it (mined -> empty,
+    # no gate/embed side effects).
+    eng = _migrated_engine
+
+    def _clean():
+        with eng.begin() as conn:
+            conn.execute(text(
+                "DELETE FROM discovery.dynamic_keywords "
+                "WHERE keyword IN ('sculpt method','glute sculpt','glute sculpt method')"))
+    _clean()
+    try:
+        with eng.begin() as conn:
+            conn.execute(text(
+                "INSERT INTO discovery.dynamic_keywords (keyword, source, kind, status) "
+                "VALUES ('sculpt method','gem_copy','app','retired'),"
+                "('glute sculpt','gem_copy','app','retired')"))
+        corpus = [(21, "Try the glute sculpt method that everyone shares."),
+                  (22, "The glute sculpt method works in weeks.")]
+        stats = run_flywheel_stage(eng, _NoAdExtractor(), max_pages=1, kw_delay=0,
+                                   min_advertisers=2,
+                                   corpus_fn=lambda conn, min_score: corpus)
+        assert "glute sculpt method" not in stats["mined"]   # superset of tried -> dropped
+        with eng.connect() as conn:
+            n = conn.execute(text(
+                "SELECT count(*) FROM discovery.dynamic_keywords "
+                "WHERE keyword='glute sculpt method'")).scalar()
+        assert n == 0
+    finally:
+        _clean()
+
+
 def test_flywheel_gate_drops_keyword_near_retired_basin(_migrated_engine, monkeypatch):
     import agf.discovery.keyword_redundancy as kr
     from sqlalchemy import text

@@ -73,9 +73,12 @@ def test_gather_calls_gplay_batch_once_for_all_seeds():
         calls.append(list(terms))
         return {}
 
+    # constant ≤3-word head phrase so both categories yield a normalized result (the
+    # tightened _normalize caps at 3 words, and 'health & fitness' is itself 3 tokens —
+    # this test is about the single batched sidecar call, not per-seed phrase shape).
     out = gather_autocomplete_candidates(
         None, categories=["Health & Fitness", "Dating"], seeds_per_category=3,
-        apple=lambda client, term: [f"{term} tracker app"], gplay_batch=gplay_batch)
+        apple=lambda client, term: ["habit tracker app"], gplay_batch=gplay_batch)
     assert len(calls) == 1                     # one spawn per run
     assert "health & fitness" in calls[0] and "dating" in calls[0]
     assert set(out) == {"Health & Fitness", "Dating"}

@@ -17,6 +17,7 @@ from agf.discovery.coverage import (canonical_category, category_coverage,
                                     mint_budget, under_floor_categories)
 import agf.discovery.keyword_redundancy as _kr
 from agf.discovery.keyword_redundancy import (admit_by_novelty,
+                                              drop_token_supersets,
                                               load_basin_embeddings,
                                               redundancy_scores)
 from agf.discovery.release_keywords import (ProposeError,
@@ -59,7 +60,7 @@ def ensure_category_frame(conn, coverage, *, floor: int) -> int:
 def mint_keywords_from_releases(engine, client, *, country="us", limit=200, K=15,
                                 floor=5, total_slots=40, min_advertisers=2,
                                 explore_share=0.25, autocomplete=True,
-                                brainstorm=True,
+                                brainstorm=True, new_release=True,
                                 fetch=fetch_itunes_new_releases,
                                 lookup=lookup_itunes_batch,
                                 propose=propose_release_keywords) -> dict:
@@ -139,7 +140,11 @@ def mint_keywords_from_releases(engine, client, *, country="us", limit=200, K=15
             basins, gate_open = [], False
 
     def _gate(cands, slots, *, label):
-        """Novelty-gate `cands` down to `slots`; degrades OPEN (head of list)."""
+        """Subset-dedup then novelty-gate `cands` down to `slots`; degrades OPEN (head of
+        list). The token-superset drop is against the running `exclude` set (all live +
+        already-minted keywords), catching over-specified re-finds the embedding basin
+        gate (retired/dry only) would pass."""
+        cands = drop_token_supersets(cands, exclude)
         if not gate_open:
             return cands[:slots]
         try:
@@ -154,7 +159,9 @@ def mint_keywords_from_releases(engine, client, *, country="us", limit=200, K=15
     # for the single short write txn at the end.
     pending = []
 
-    for cat, slots in budget.items():
+    # new_release lane (Gemini paraphrases each listing's own name+description, so it
+    # echoes the app's vocabulary → near-zero novelty; off by default in production).
+    for cat, slots in (budget.items() if new_release else ()):
         listings = by_cat.get(cat)
         if not listings:
             continue
@@ -164,6 +171,7 @@ def mint_keywords_from_releases(engine, client, *, country="us", limit=200, K=15
             stats["errors"] += 1
             continue
         terms = [t for t in proposed if t.lower() not in exclude]  # dedup vs tried
+        terms = drop_token_supersets(terms, exclude)               # drop over-specified re-finds
         if not terms:
             continue
         pending.append((f"new_release:{cat}", cat, terms, "minted_by_category"))

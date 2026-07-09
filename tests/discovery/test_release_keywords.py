@@ -31,6 +31,17 @@ def test_proposes_and_normalizes_phrases():
     assert "liked" not in captured["prompt"].lower()
 
 
+def test_normalize_rejects_over_three_word_phrases():
+    # head-phrase bias: 2-3 word phrases kept, single words and 4+ word (stacked-modifier)
+    # phrases rejected.
+    from agf.discovery.release_keywords import _normalize
+    out = _normalize(["gratitude journal app",          # 3 words -> kept
+                      "daily gratitude journal app",    # 4 words -> rejected
+                      "meditation",                     # single word -> rejected
+                      "sleep app"])                     # 2 words -> kept
+    assert out == ["gratitude journal app", "sleep app"]
+
+
 def test_limit_respected():
     def fake_post(url, body):
         return _gemini_reply([f"niche {i} app" for i in range(10)])

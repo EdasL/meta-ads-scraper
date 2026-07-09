@@ -29,9 +29,10 @@ _SCHEMA = {
 _PROMPT = (
     "Propose up to {n} Meta Ad Library search keywords for finding NEW, emerging mobile "
     "apps in the '{category}' category, similar to the example apps below. Each keyword is "
-    "a short niche or pain-point phrase (2-4 words, lowercase, the kind of term a person "
-    "searches — usually ending in 'app', e.g. 'medication reminder app', 'ai hairstyle "
-    "app', 'invoice maker app'). Rules: no brand or product names; no generic ad-speak "
+    "a short niche or pain-point phrase (1-3 words, lowercase, the SHORTEST phrase a person "
+    "would actually type — usually ending in 'app', e.g. 'medication reminder app', "
+    "'hairstyle app', 'invoice app'). NO stacked modifiers like 'daily', 'best', 'free', "
+    "'ai', 'smart' — give the bare head term. Rules: no brand or product names; no generic ad-speak "
     "(free trial, download now, key features, best app); no single words. Return only the "
     "phrases.\n\nExample new-release apps:\n{apps}")
 
@@ -41,11 +42,12 @@ class ProposeError(RuntimeError):
 
 
 def _normalize(phrases) -> list[str]:
-    """Lowercase, collapse whitespace, keep 2-5 word phrases, dedup (order-stable)."""
+    """Lowercase, collapse whitespace, keep 2-3 word head phrases (over-specified 4+ word
+    phrases with stacked modifiers are rejected), dedup (order-stable)."""
     out, seen = [], set()
     for p in phrases:
         norm = " ".join(str(p).lower().split())
-        if norm and 1 < len(norm.split()) <= 5 and norm not in seen:
+        if norm and 1 < len(norm.split()) <= 3 and norm not in seen:
             seen.add(norm)
             out.append(norm)
     return out
@@ -87,7 +89,8 @@ _GENERALIZE_PROMPT = (
     "already a generic niche phrase; replace an app- or brand-specific query with the "
     "niche it represents (e.g. 'capcut: photo & video editor' -> 'video editing app'); "
     "DROP queries with no mobile-app niche behind them (companies, credit unions, "
-    "utilities, venues). Each keyword: 2-4 words, lowercase, usually ending in 'app'. "
+    "utilities, venues). Each keyword: 1-3 words, lowercase, the SHORTEST head term, "
+    "usually ending in 'app'; NO stacked modifiers like 'daily'/'best'/'free'/'ai'. "
     "No brand or product names. Return only the phrases.\n\nAutocomplete queries:\n"
     "{queries}")
 
@@ -128,8 +131,9 @@ _BRAINSTORM_PROMPT = (
     "For the '{category}' category, list up to {n} EMERGING SUB-NICHES that are adjacent "
     "to — but different from — the example app(s) below, and give the search keyword a "
     "person would type to find apps in each sub-niche. Reach into niches the examples do "
-    "NOT already name. Each keyword: 2-4 words, lowercase, usually ending in 'app' "
-    "(e.g. 'lucid dreaming app', 'snore detection app'). No brand names, no generic "
+    "NOT already name. Each keyword: 1-3 words, lowercase, the SHORTEST head term, "
+    "usually ending in 'app' (e.g. 'lucid dream app', 'snore app'); NO stacked modifiers "
+    "like 'daily'/'best'/'free'/'ai'. No brand names, no generic "
     "ad-speak. Return only the phrases.\n\nExample app(s):\n{apps}")
 
 

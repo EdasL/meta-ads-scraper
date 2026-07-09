@@ -3,10 +3,45 @@ from sqlalchemy import text
 
 from agf.discovery.keyword_redundancy import (
     admit_by_novelty,
+    drop_token_supersets,
     exhausted_basin_embeddings,
     load_basin_embeddings,
     redundancy_scores,
 )
+
+
+def test_drop_token_supersets_drops_strict_superset():
+    # candidate = existing head-phrase + an extra modifier word -> dropped
+    existing = ["gratitude journal app"]
+    cands = ["daily gratitude journal app", "gratitude journal app"]
+    # the over-specified one goes; the exact head-phrase stays (exact dup handled elsewhere)
+    assert drop_token_supersets(cands, existing) == ["gratitude journal app"]
+
+
+def test_drop_token_supersets_keeps_subset_and_disjoint():
+    existing = ["daily gratitude journal app"]
+    # subset (broader) and disjoint candidates are both KEPT
+    cands = ["gratitude journal app", "sleep tracker app"]
+    assert drop_token_supersets(cands, existing) == cands
+
+
+def test_drop_token_supersets_exact_set_match_kept():
+    # equal token-set (not a STRICT superset) is not dropped by this gate
+    assert drop_token_supersets(["meal timing app"], ["meal timing app"]) == ["meal timing app"]
+
+
+def test_drop_token_supersets_app_suffix_and_case_normalized():
+    # trailing 'app' stripped both sides + case-insensitive:
+    # {daily,gratitude,journal} strictly ⊇ {gratitude,journal} -> drop
+    assert drop_token_supersets(["Daily Gratitude Journal"], ["gratitude journal app"]) == []
+    # candidate that only adds 'app' is NOT a real extra modifier -> kept
+    assert drop_token_supersets(["gratitude journal app"], ["gratitude journal"]) \
+        == ["gratitude journal app"]
+
+
+def test_drop_token_supersets_empty_existing_is_passthrough():
+    cands = ["anything app", "another one app"]
+    assert drop_token_supersets(cands, []) == cands
 
 
 def _fake_embed(mapping):

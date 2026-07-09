@@ -62,6 +62,7 @@ Env:
   AGF_FRAME_MINT_EXPLORE_SHARE  slot share for under-covered categories (default 0.25)
   AGF_MINT_AUTOCOMPLETE        mint keywords from store search-autocomplete (default 1; 0 disables)
   AGF_MINT_BRAINSTORM          mint LLM-brainstormed adjacent-niche keywords (default 1; 0 disables)
+  AGF_MINT_NEW_RELEASE         mint from App Store new-release listings (default 0; near-zero yield)
   AGF_CORPUS_REFRESH_DAILY     re-scrape found advertisers' live Meta listings (default 1; 0 disables)
   AGF_CORPUS_REFRESH_EVERY_SEC  run corpus refresh on this interval instead of once/day (default 0)
   AGF_CORPUS_REFRESH_BUDGET    proxy-request budget for corpus refresh, its OWN (default 3000)
@@ -99,6 +100,7 @@ from agf.db.funnel_candidates import (close_funnel_sweep_run, funnel_deep_ran_wi
 from agf.discovery.funnel_confirm import run_funnel_confirm
 import agf.discovery.keyword_redundancy as _kr
 from agf.discovery.keyword_redundancy import (admit_by_novelty,
+                                              drop_token_supersets,
                                               load_basin_embeddings,
                                               redundancy_scores)
 from agf.discovery.keyword_mining import fetch_gem_copy, mine_phrases
@@ -454,6 +456,10 @@ def run_flywheel_stage(engine, extractor, *, max_pages=2, kw_delay=3.0,
     static = {e.keyword for e in all_entries()}
     mined = mine_phrases(corpus, exclude=static | tried, limit=room,
                          min_advertisers=min_advertisers) if corpus else []
+    # Drop over-specified re-finds (a mined phrase = an existing keyword + extra modifier
+    # words) BEFORE the embedding basin gate, which only compares vs retired/dry basins
+    # and so passes a superset of an ACTIVE productive keyword. Pure-Python, additive.
+    mined = drop_token_supersets(mined, static | tried) if mined else []
     mined = _gate_keywords(engine, mined, limit=room) if mined else []
     if mined:
         with begin(engine) as conn:
@@ -503,7 +509,7 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
              release_mint_enabled=False, frame_mint_k=15, frame_mint_floor=5,
              frame_mint_slots=40, frame_mint_min_advertisers=2,
              frame_mint_explore_share=0.25, mint_autocomplete=True,
-             mint_brainstorm=True,
+             mint_brainstorm=True, mint_new_release=False,
              media_repair_per_cycle=5, funnel_repair_per_cycle=3,
              sweep_max_consecutive_errors=0,
              websub_bridge_limit=10) -> dict:
@@ -694,7 +700,8 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
                     min_advertisers=frame_mint_min_advertisers,
                     explore_share=frame_mint_explore_share,
                     autocomplete=mint_autocomplete,
-                    brainstorm=mint_brainstorm)
+                    brainstorm=mint_brainstorm,
+                    new_release=mint_new_release)
                 with begin(engine) as conn:
                     close_release_mint_run(conn, rm_run_id, stats=release_mint)
             except Exception as exc:
@@ -1041,6 +1048,7 @@ def main(argv=None) -> None:
         frame_mint_explore_share=_env_float("AGF_FRAME_MINT_EXPLORE_SHARE", 0.25),
         mint_autocomplete=_env_bool("AGF_MINT_AUTOCOMPLETE", True),
         mint_brainstorm=_env_bool("AGF_MINT_BRAINSTORM", True),
+        mint_new_release=_env_bool("AGF_MINT_NEW_RELEASE", False),
         media_repair_per_cycle=_env_int("AGF_MEDIA_REPAIR_PER_CYCLE", 5),
         funnel_repair_per_cycle=_env_int("AGF_FUNNEL_REPAIR_PER_CYCLE", 3),
         sweep_max_consecutive_errors=_env_int("AGF_SWEEP_MAX_CONSECUTIVE_ERRORS", 5),
