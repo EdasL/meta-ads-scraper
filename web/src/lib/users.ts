@@ -61,3 +61,27 @@ export async function oauthLogin(
     return null;
   }
 }
+
+export interface Profile {
+  email: string;
+  name: string;
+  role: string;
+  auth_provider: string;
+  avatar_url: string | null;
+  onboarded_at: string | null;
+}
+
+/** Server-only profile read (internal token + X-User-Email, same trust path
+ * as the /backend proxy). Returns null on any failure — callers fail open. */
+export async function getProfile(email: string): Promise<Profile | null> {
+  try {
+    const res = await fetch(`${API}/me`, {
+      headers: { Authorization: `Bearer ${TOKEN}`, "X-User-Email": email },
+      cache: "no-store",
+    });
+    if (!res.ok) return null;
+    return (await res.json()) as Profile;
+  } catch {
+    return null;
+  }
+}

@@ -224,3 +224,8 @@ export async function getPreferenceQueue(
   );
   return rows.map((r) => adaptPreferenceCard(r, mediaUrl));
 }
+
+/** Marks the signed-in user as onboarded (first-run flow finished or skipped). */
+export async function completeOnboarding(): Promise<void> {
+  await live(`/me/onboarded`, { method: "POST", body: "{}" });
+}

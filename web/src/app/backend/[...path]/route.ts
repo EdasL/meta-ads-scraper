@@ -32,6 +32,7 @@ const ALLOWED_RESOURCES = new Set([
   "ratings", // /ratings (+ /:id)
   "health", // /health/metrics, /health/coverage
   "media", // /media/*key
+  "me", // /me (profile), /me/onboarded
 ]);
 
 function notFound() {
