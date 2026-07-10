@@ -1,3 +1,4 @@
+import json
 import random
 import time as _time
 from collections.abc import Callable
@@ -31,7 +32,14 @@ def classify_exception(exc: BaseException) -> ErrorKind | None:
     not a known network error (so real bugs propagate instead of being silently retried).
 
     curl_cffi raises Timeout/ConnectionError/etc. on a slow or dead proxy exit — those are
-    TRANSIENT: retry (the rotating gateway hands out a fresh IP on the next request)."""
+    TRANSIENT: retry (the rotating gateway hands out a fresh IP on the next request).
+
+    A JSONDecodeError means Meta answered 200 with a non-JSON body (challenge page /
+    empty throttle response): the SESSION is burned, not the code — rotate + retry.
+    Checked before the generic pass-through because it subclasses ValueError, which
+    (like any other plain exception) must stay unclassified so real bugs propagate."""
+    if isinstance(exc, json.JSONDecodeError):
+        return ErrorKind.SESSION
     if type(exc).__module__.startswith("curl_cffi"):
         return ErrorKind.TRANSIENT
     return None

@@ -127,3 +127,18 @@ def test_with_backoff_on_retry_not_called_on_fatal():
         with_backoff(fatal, max_attempts=3, base=0.0, sleep=lambda s: None,
                      on_retry=lambda e, a: seen.append(a))
     assert seen == []  # fatal isn't retried, so no rotation happens
+
+
+def test_classify_exception_json_decode_is_session():
+    # Meta answered 200 with a non-JSON body (challenge page / empty throttle response):
+    # the SESSION/IP is burned, not the code — rotate + retry. Raw JSONDecodeError used to
+    # bypass the whole ExtractError machinery and crash the calling stage (first live
+    # generic-deep pass, 2026-07-10). Plain ValueError must STAY unclassified (real bug).
+    import json
+    with pytest.raises(json.JSONDecodeError):
+        json.loads("<html>challenge</html>")
+    try:
+        json.loads("")
+    except json.JSONDecodeError as exc:
+        assert classify_exception(exc) is ErrorKind.SESSION
+    assert classify_exception(ValueError("a bug")) is None
