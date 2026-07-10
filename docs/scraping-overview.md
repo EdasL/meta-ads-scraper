@@ -107,7 +107,7 @@ the 301 static keywords never change. growth happens in a second table, `discove
 - "token supersets" — an existing keyword plus a noise word ("best sleep tracker app 2026" when "sleep tracker app" already exists). those just re-find the same ads.
 - anything too similar to a **dead basin**: every retired/dried-up keyword has an embedding, and a new candidate that lands ≥ 0.90 cosine to one gets rejected — that ground is already hunted out. (this gate fails OPEN: if embeddings break, candidates pass. gate must never starve discovery.)
 
-survivors become trials — but only up to a pool cap of **40 trials at a time**. mining fills the room left, no more. pool grows as fast as trials graduate, not explosively.
+survivors become trials. the mining pipe only fills up to **40 trials of its own at a time** — it mines into the room left, no more. (frame mint's daily slots land on top of that cap, so the live trial pool is usually bigger than 40.)
 
 **pipe 2 — frame mint (once a day, taste-blind on purpose).** the flywheel only finds cousins of what grug already keeps — left alone it converges into a bubble. frame mint pushes outward from an external frame: the app-store category taxonomy. **15 slots a day**, split across categories by yield — **75% to categories that recently produced keepers, 25% to under-covered ones** — so fertile ground gets most of the budget but deserts still get a probe (not more than a probe: a category can be "under-covered" because emerging apps there simply don't advertise on meta). two lanes fill the slots:
 
@@ -123,6 +123,8 @@ same subset-dedup and dead-basin novelty gate as pipe 1, then into the trial poo
 - an **active** that goes dry → **rests** with an exponentially growing cooldown, then wakes and gets retried. nothing is deleted; dry keywords sleep, they don't die.
 
 so the pool only ever gains rows. what the user likes → mined into keywords (pipe 1). what categories yield → more mint slots (pipe 2). what dries up → becomes a lesson the gate enforces. that is the whole self-improvement loop.
+
+**live numbers (2026-07-10, prod DB):** the dynamic pool went 140 → 1,899 keywords in five weeks (+473 this week). right now: 22 active, 136 in trial, 668 resting, 1,073 retired. the graduation funnel is brutal on purpose — most mints die in trial, and that's the gate doing its job, not a bug. hit rate ("ever found a candidate") by source: funnel-copy mining 64%, gem-copy mining 39%, autocomplete 18%, brainstorm 5%, new-release 1% — which is exactly why the new-release lane was killed on 07-09.
 
 ## side lane: funnels
 
