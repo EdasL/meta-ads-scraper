@@ -177,10 +177,14 @@ def build_extractors(dry_run, now_epoch, k):
     from agf.extract.proxy import ProxyPool
     proxies = ProxyPool.list_from_env()
     k = max(1, k)
-    if len(proxies) >= k and proxies:
+    if not proxies:
+        # No proxy pool: K workers would all egress from the one host IP — a rate-limit
+        # footgun with zero concurrency benefit. Collapse to a single direct worker.
+        return [Extractor(proxies=ProxyPool(proxies))]
+    if len(proxies) >= k:
         slices = [proxies[i::k] for i in range(k)]          # disjoint round-robin slices
         return [Extractor(proxies=ProxyPool(sl)) for sl in slices]
-    # fewer proxies than workers (or none): each worker its own pool over the full list
+    # fewer proxies than workers: each worker its own pool over the full list
     return [Extractor(proxies=ProxyPool(proxies)) for _ in range(k)]
 
 

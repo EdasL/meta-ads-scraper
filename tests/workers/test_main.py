@@ -87,6 +87,16 @@ def test_build_extractors_fewer_proxies_than_workers_share_full_pool(monkeypatch
     assert pools == [["p0", "p1"], ["p0", "p1"], ["p0", "p1"]]
 
 
+def test_build_extractors_empty_proxies_is_single_worker(monkeypatch):
+    # No proxy pool: K direct-connection workers would all egress from the one host IP
+    # (rate-limit footgun, no concurrency benefit) -> collapse to a single worker.
+    monkeypatch.delenv("AGF_PROXIES", raising=False)
+    pools = _spy_extractor_pools(monkeypatch)
+    exts = build_extractors(dry_run=False, now_epoch=NOW, k=3)
+    assert len(exts) == 1                        # single direct-connection worker
+    assert pools == [[]]                          # one Extractor over the empty pool
+
+
 class _Stop(Exception):
     pass
 
