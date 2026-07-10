@@ -20,7 +20,6 @@ Run:
     ... .venv/bin/python -m scripts.audit_crowded_keywords --apply
 """
 import argparse
-import os
 from dataclasses import dataclass
 
 from sqlalchemy import text
@@ -79,25 +78,32 @@ def find_offenders(conn, *, min_kept: int, share: float, tail: float) -> list[Of
 
 
 def apply_rests(conn, offenders: list[Offender]) -> int:
-    """Rest each offender, mirroring record_keyword_sweep._rest. Returns the count rested.
+    """Rest each offender, mirroring record_keyword_sweep._rest. Returns the count actually
+    rested (sum of affected rows), which can be < len(offenders) — see the race guard below.
 
     cooldown_days(new_rest_count - 1) reproduces the flywheel's cooldown exactly: a
     keyword's first rest waits the base cooldown, doubling on each subsequent rest.
     The cooldown is computed in Python and bound as an integer day count via
-    make_interval(days => :cd) — no bare `%` / interval literal reaches the executed SQL."""
+    make_interval(days => :cd) — no bare `%` / interval literal reaches the executed SQL.
+
+    The `status='active'` guard makes each rest a no-op if a concurrent worker rested or
+    revived the keyword between find_offenders' read and this write: rest_count and status
+    were captured under an active keyword, so clobbering a now-resting row would double-count
+    the rest (stale rest_count) or resurrect a just-revived one."""
     stmt = text(
         "UPDATE discovery.dynamic_keywords "
         "SET status='resting', dry_streak=0, rest_count=:rc, "
         "    next_eligible_at = now() + make_interval(days => :cd) "
-        "WHERE id=:i")
+        "WHERE id=:i AND status='active'")
+    rested = 0
     for o in offenders:
         new_rc = o.rest_count + 1
-        conn.execute(stmt, {"rc": new_rc, "cd": dk.cooldown_days(new_rc - 1),
-                            "i": o.keyword_id})
-    return len(offenders)
+        rested += conn.execute(stmt, {"rc": new_rc, "cd": dk.cooldown_days(new_rc - 1),
+                                      "i": o.keyword_id}).rowcount
+    return rested
 
 
-def _report(offenders: list[Offender], *, applied: bool) -> None:
+def _report(offenders: list[Offender], *, applied: bool, rested: int | None = None) -> None:
     print(f"=== Crowded-keyword audit ({'APPLY' if applied else 'dry run'}) ===\n")
     if not offenders:
         print("No crowded offenders found.")
@@ -106,8 +112,12 @@ def _report(offenders: list[Offender], *, applied: bool) -> None:
         names = "; ".join(o.top_names) if o.top_names else "(none)"
         print(f"  {o.keyword!r:<40} kept_n={o.kept_n:<3} "
               f"crowded_share={o.crowded_share:.2f}  top: {names}")
-    verb = "rested" if applied else "offenders (dry run — nothing changed)"
-    print(f"\n{len(offenders)} {verb}.")
+    if applied:
+        # rested is the real affected-row count; it can trail len(offenders) when a
+        # concurrent worker moved a keyword out of 'active' before the rest landed.
+        print(f"\n{rested} rested (of {len(offenders)} offenders).")
+    else:
+        print(f"\n{len(offenders)} offenders (dry run — nothing changed).")
 
 
 def main() -> None:
@@ -122,16 +132,17 @@ def main() -> None:
                     help="crowding >= tail is 'crowded' (default AGF_CROWDING_TAIL / 0.80)")
     args = ap.parse_args()
 
-    db_url = os.environ.get("AGF_DATABASE_URL")
-    engine = get_engine(db_url) if db_url else get_engine()
+    # get_engine() already resolves AGF_DATABASE_URL → AGF_TEST_DB_URL on its own.
+    engine = get_engine()
     with engine.begin() as conn:
         offenders = find_offenders(
             conn, min_kept=args.min_kept, share=args.share, tail=args.tail)
+        rested = None
         if args.apply:
-            apply_rests(conn, offenders)
+            rested = apply_rests(conn, offenders)
         else:
             conn.rollback()  # belt-and-suspenders: dry run commits nothing
-        _report(offenders, applied=args.apply)
+        _report(offenders, applied=args.apply, rested=rested)
 
 
 if __name__ == "__main__":

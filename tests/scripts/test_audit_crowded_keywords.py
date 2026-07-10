@@ -8,11 +8,13 @@ under the new uncrowded-yield promotion rules.
 
 Shared agf_it DB — everything is scoped to AUDITCROWD sentinel keywords and a
 high sentinel candidate-id range; pg_conn rolls it all back."""
+import sys
 from datetime import datetime, timezone
 
 from sqlalchemy import text
 
 from agf.db import dynamic_keywords as dk
+from scripts import audit_crowded_keywords as audit
 from scripts.audit_crowded_keywords import apply_rests, find_offenders
 
 CAND_BASE = 9_310_000_000
@@ -26,16 +28,19 @@ def _row(conn, keyword):
         {"k": keyword}).one()
 
 
-def _seed_active(conn, keyword, *, offset, crowdings, rest_count=0):
-    """Create an ACTIVE app keyword with one kept candidate per entry in `crowdings`
-    (a float crowding to store, or None for a NULL-crowding embedding row). Ids are
-    sentinel-scoped by `offset`."""
-    dk.add_trial_keywords(conn, [keyword])
+def _seed_active(conn, keyword, *, offset, crowdings, rest_count=0,
+                 kind="app", status="active"):
+    """Create a keyword (default ACTIVE app) with one kept candidate per entry in
+    `crowdings` (a float crowding to store, or None for a NULL-crowding embedding row).
+    `kind`/`status` let a test seed a funnel or trial keyword with an identical crowded
+    profile to prove find_offenders' scope filters exclude it. Ids are sentinel-scoped
+    by `offset`."""
+    dk.add_trial_keywords(conn, [keyword], kind=kind)
     conn.execute(text(
         "UPDATE discovery.dynamic_keywords "
-        "SET status='active', dry_streak=2, rest_count=:rc, sweeps_used=4, "
-        "    new_candidates_total=:n WHERE keyword=:k"),
-        {"rc": rest_count, "n": len(crowdings), "k": keyword})
+        "SET status=:st, dry_streak=2, rest_count=:rc, sweeps_used=4, "
+        "    new_candidates_total=:n WHERE keyword=:k AND kind=:kind"),
+        {"st": status, "rc": rest_count, "n": len(crowdings), "k": keyword, "kind": kind})
     cand = text("INSERT INTO discovery.candidates "
                 "(id, page_id, page_name, store, store_id, status, source_keyword) "
                 "VALUES (:id, :pg, :nm, 'ios', :sid, 'kept', :kw)")
@@ -130,3 +135,57 @@ def test_thresholds_are_overridable(pg_conn, monkeypatch):
     assert kw not in [o.keyword for o in _find(pg_conn)]
     # Lowered share 0.5 -> now flagged.
     assert kw in [o.keyword for o in _find(pg_conn, share=0.5)]
+
+
+def test_find_offenders_scope_locked_to_active_app(pg_conn, monkeypatch):
+    # A funnel keyword and a trial keyword, both with a fully crowded profile that would
+    # flag if scope were ignored, must be excluded: find_offenders is WHERE status='active'
+    # AND kind='app'. Only the plain active-app control is flagged.
+    monkeypatch.delenv("AGF_CROWDING_TAIL", raising=False)
+    ctrl = "AUDITCROWD scope-app"
+    funnel = "AUDITCROWD scope-funnel"
+    trial = "AUDITCROWD scope-trial"
+    _seed_active(pg_conn, ctrl, offset=800, crowdings=[0.9] * 5)
+    _seed_active(pg_conn, funnel, offset=900, crowdings=[0.9] * 5, kind="funnel")
+    _seed_active(pg_conn, trial, offset=1000, crowdings=[0.9] * 5, status="trial")
+
+    flagged = {o.keyword for o in _find(pg_conn) if o.keyword.startswith("AUDITCROWD")}
+    assert flagged == {ctrl}
+
+
+def test_apply_rests_skips_concurrently_rested(pg_conn, monkeypatch):
+    # Race guard: find_offenders reads the keyword while ACTIVE, then a concurrent worker
+    # rests it before apply_rests writes. The status='active' guard must leave that row
+    # untouched (no stale-rest_count clobber) and count it as 0 rested.
+    monkeypatch.delenv("AGF_CROWDING_TAIL", raising=False)
+    off = "AUDITCROWD race-off"
+    _seed_active(pg_conn, off, offset=1100, crowdings=[0.9] * 5, rest_count=0)
+
+    offenders = _find(pg_conn)
+    assert [o.keyword for o in offenders if o.keyword.startswith("AUDITCROWD")] == [off]
+
+    # Simulate the concurrent worker resting it between the read and the write.
+    pg_conn.execute(text("UPDATE discovery.dynamic_keywords SET status='resting' "
+                         "WHERE keyword=:k"), {"k": off})
+
+    rested = apply_rests(pg_conn, offenders)
+    assert rested == 0
+
+    r = _row(pg_conn, off)
+    assert r.status == "resting"     # left exactly as the concurrent worker set it
+    assert r.rest_count == 0         # NOT bumped to 1 — no stale-rest_count clobber
+    assert r.dry_streak == 2         # untouched
+
+
+def test_main_dry_run_smoke(pg_conn, monkeypatch, capsys):
+    # End-to-end smoke of main(): argparse path + get_engine() + the begin/rollback
+    # wrapper, in dry-run mode. main opens its own connection (not pg_conn), so it does
+    # not see this txn's seed — it just has to run and print the dry-run header. Depending
+    # on pg_conn keeps it skipped when AGF_TEST_DB_URL is unset and the schema migrated.
+    monkeypatch.delenv("AGF_CROWDING_TAIL", raising=False)
+    monkeypatch.setattr(sys, "argv", ["audit_crowded_keywords"])
+
+    audit.main()
+
+    out = capsys.readouterr().out
+    assert "Crowded-keyword audit (dry run)" in out
