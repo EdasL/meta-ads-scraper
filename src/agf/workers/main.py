@@ -66,6 +66,10 @@ Env:
   AGF_CORPUS_REFRESH_DAILY     re-scrape found advertisers' live Meta listings (default 1; 0 disables)
   AGF_CORPUS_REFRESH_EVERY_SEC  run corpus refresh on this interval instead of once/day (default 0)
   AGF_CORPUS_REFRESH_BUDGET    proxy-request budget for corpus refresh, its OWN (default 3000)
+  AGF_GENERIC_DEEP             run the weekly generic copy-phrase deep sweep (default 1; 0 disables)
+  AGF_GENERIC_DEEP_PAGES       per-term page ceiling for the deep pass       (default 150)
+  AGF_GENERIC_DEEP_EVERY_DAYS  generic deep cadence in days, 0 disables      (default 7)
+  AGF_GENERIC_DEEP_MINT_SLOTS  trial keywords minted per weekly pass         (default 25)
 """
 import asyncio
 import os
@@ -94,6 +98,9 @@ from agf.db.corpus_refresh_runs import (close_corpus_refresh_run,
                                         corpus_refresh_ran_today,
                                         corpus_refresh_ran_within,
                                         open_corpus_refresh_run)
+from agf.db.generic_deep_runs import (close_generic_deep_run,
+                                      generic_deep_ran_within_days,
+                                      open_generic_deep_run)
 from agf.db.funnel_candidates import (close_funnel_sweep_run, funnel_deep_ran_within_days,
                                       funnel_sweep_ran_today, funnel_sweep_ran_within,
                                       open_funnel_sweep_run)
@@ -106,6 +113,7 @@ from agf.discovery.keyword_redundancy import (admit_by_novelty,
 from agf.discovery.keyword_mining import fetch_gem_copy, mine_phrases
 from agf.discovery.funnel_sweep import deep_funnel_entries, run_funnel_sweep
 from agf.discovery.corpus_refresh import refresh_corpus
+from agf.discovery.generic_deep import run_generic_deep_stage
 from agf.discovery.keeper_history import pull_keeper_history
 from agf.discovery.sweep import run_sweep, run_parallel_sweep
 from agf.discovery.websub_bridge import run_websub_bridge
@@ -341,6 +349,16 @@ def corpus_refresh_due(conn, as_of, *, dry_run, continuous=False) -> bool:
     return not corpus_refresh_ran_today(conn, as_of)
 
 
+def generic_deep_due(conn, *, dry_run, every_days) -> bool:
+    """Whether this tick runs the weekly generic copy-phrase deep sweep. Never in a
+    dry-run (real Meta paging, no offline fake). every_days<=0 disables. Gated on a
+    FINISHED discovery.generic_deep_runs row within the window — a crashed (never
+    closed) run doesn't block the retry next tick."""
+    if dry_run or every_days <= 0:
+        return False
+    return not generic_deep_ran_within_days(conn, every_days)
+
+
 def websub_bridge_per_cycle() -> int:
     try:
         return int(os.environ.get("AGF_WEBSUB_BRIDGE_PER_CYCLE", "10"))
@@ -523,6 +541,8 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
              funnel_daily=True, funnel_pages=8, funnel_confirm_limit=50,
              funnel_deep_pages=100, funnel_deep_every_days=7,
              corpus_refresh_daily=True, corpus_refresh_budget=3000,
+             generic_deep_enabled=True, generic_deep_pages=150,
+             generic_deep_every_days=7, generic_deep_mint_slots=25,
              flywheel_daily=True, flywheel_pages=2, flywheel_max_trials=40,
              flywheel_min_advertisers=3, mine_min_score=40.0,
              release_mint_enabled=False, frame_mint_k=15, frame_mint_floor=5,
@@ -695,6 +715,37 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
                 print(f"[worker] corpus refresh stage failed: {exc!r}", file=sys.stderr,
                       flush=True)
             _touch_heartbeat()  # corpus refresh is a long, blocking Meta stage
+
+    # 1.92) generic deep sweep — weekly to-exhaustion pass over ~19 static copy
+    #       phrases (spec 2026-07-10): Ad Library search matches ad COPY, so generic
+    #       phrases ("ai headshots", "wish i knew sooner") surface advertisers the
+    #       niche-noun taxonomy never matches. Candidates land tagged
+    #       technique='generic_deep'; collected copy mints dynamic_keywords trials
+    #       (source='generic_deep') through the same redundancy gate as the flywheel.
+    #       Same isolation contract as funnel/corpus-refresh: failures land on the
+    #       run row and never abort the tick; a crashed run retries next tick.
+    if generic_deep_enabled:
+        with engine.connect() as conn:
+            gd_due = generic_deep_due(conn, dry_run=dry_run,
+                                      every_days=generic_deep_every_days)
+        if gd_due:
+            with begin(engine) as conn:
+                gd_run_id = open_generic_deep_run(conn)
+            try:
+                gd_stats = run_generic_deep_stage(
+                    engine, extractor, deep_pages=generic_deep_pages,
+                    kw_delay=kw_delay, mint_slots=generic_deep_mint_slots,
+                    max_trials=flywheel_max_trials,
+                    gate=lambda ph, lim: _gate_keywords(engine, ph, limit=lim),
+                    heartbeat=_touch_heartbeat)
+                with begin(engine) as conn:
+                    close_generic_deep_run(conn, gd_run_id, stats=gd_stats)
+            except Exception as exc:
+                with begin(engine) as conn:
+                    close_generic_deep_run(conn, gd_run_id, error=repr(exc))
+                print(f"[worker] generic deep stage failed: {exc!r}",
+                      file=sys.stderr, flush=True)
+            _touch_heartbeat()  # the deep pass is a long, blocking Meta stage
 
     # 1.93) frame-mint — daily EXTERNAL-frame keyword minting (breaks the flywheel's
     #       topical-locality trap). Mints head-term SEARCH keywords from App Store
@@ -1068,6 +1119,10 @@ def main(argv=None) -> None:
         funnel_deep_every_days=_env_int("AGF_FUNNEL_DEEP_EVERY_DAYS", 7),
         corpus_refresh_daily=_env_bool("AGF_CORPUS_REFRESH_DAILY", True),
         corpus_refresh_budget=_env_int("AGF_CORPUS_REFRESH_BUDGET", 3000),
+        generic_deep_enabled=_env_int("AGF_GENERIC_DEEP", 1) == 1,
+        generic_deep_pages=_env_int("AGF_GENERIC_DEEP_PAGES", 150),
+        generic_deep_every_days=_env_int("AGF_GENERIC_DEEP_EVERY_DAYS", 7),
+        generic_deep_mint_slots=_env_int("AGF_GENERIC_DEEP_MINT_SLOTS", 25),
         flywheel_daily=_env_bool("AGF_FLYWHEEL_DAILY", True),
         flywheel_pages=_env_int("AGF_FLYWHEEL_MAX_PAGES", 2),
         flywheel_max_trials=_env_int("AGF_FLYWHEEL_MAX_TRIALS", 40),

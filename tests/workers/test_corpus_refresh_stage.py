@@ -84,6 +84,7 @@ def _run_corpus_tick(engine, monkeypatch, *, refresh, budget):
     ext = wm.build_extractor(dry_run=True, now_epoch=NOW)      # unused by the stub
     run_once(engine, ext, now_epoch=NOW, as_of=TODAY, dry_run=False, http_client=None,
              funnel_daily=False, flywheel_daily=False, release_mint_enabled=False,
+             generic_deep_enabled=False,
              score_after=False, media_repair_per_cycle=0, funnel_repair_per_cycle=0,
              corpus_refresh_daily=True, corpus_refresh_budget=budget)
     with engine.connect() as conn:

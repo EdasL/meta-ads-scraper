@@ -99,3 +99,23 @@ def test_stage_respects_mint_slots_and_trial_room(_migrated_engine):
         assert stats["mined"] == [] and stats["trials_added"] == 0
     finally:
         _clear(eng)
+
+
+def test_generic_deep_due_gates_weekly(_migrated_engine):
+    from agf.db.generic_deep_runs import (close_generic_deep_run,
+                                          open_generic_deep_run)
+    from agf.workers.main import generic_deep_due
+    eng = _migrated_engine
+    with eng.begin() as conn:
+        conn.execute(text("DELETE FROM discovery.generic_deep_runs"))
+    with eng.connect() as conn:
+        assert generic_deep_due(conn, dry_run=True, every_days=7) is False
+        assert generic_deep_due(conn, dry_run=False, every_days=0) is False  # disabled
+        assert generic_deep_due(conn, dry_run=False, every_days=7) is True
+    with eng.begin() as conn:
+        rid = open_generic_deep_run(conn)
+        close_generic_deep_run(conn, rid, stats={})
+    with eng.connect() as conn:
+        assert generic_deep_due(conn, dry_run=False, every_days=7) is False
+    with eng.begin() as conn:
+        conn.execute(text("DELETE FROM discovery.generic_deep_runs"))
