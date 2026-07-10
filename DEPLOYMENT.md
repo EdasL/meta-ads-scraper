@@ -3,7 +3,7 @@
 Field Desk has two deploys, documented in this file:
 
 - **GKE — web + API** (this runbook, immediately below) — the hosted dashboard
-  (`app.peon.works`) and read API (`api.peon.works`) on the shared GKE Autopilot
+  (`peon.works`, alias `app.peon.works`) and read API (`api.peon.works`) on the shared GKE Autopilot
   cluster. This is the current way the dashboard ships. It **supersedes** the
   Mac-hosted API/web (sections 4 and 5 of the task-oriented guide further down,
   kept for local dev / fallback).
@@ -24,7 +24,7 @@ touches the `agf` namespace.
 | Service   | Domain           | Image                                                  | Manifests                                      |
 | --------- | ---------------- | ------------------------------------------------------ | ---------------------------------------------- |
 | `agf-api` | `api.peon.works` | `europe-west1-docker.pkg.dev/peon-489013/agf/api`      | `backend/k8s/api.yaml`, `backend/k8s/ingress.yaml` |
-| `agf-web` | `app.peon.works` | `europe-west1-docker.pkg.dev/peon-489013/agf/web`      | `web/k8s/web.yaml`                              |
+| `agf-web` | `peon.works` (+ `app.peon.works` alias) | `europe-west1-docker.pkg.dev/peon-489013/agf/web`      | `web/k8s/web.yaml`                              |
 
 ```
 Browser -> HTTPS -> GCP Load Balancer (agf-ip) -> Ingress (agf-ingress) -> agf-web:8080   (Next.js standalone)
