@@ -11,6 +11,7 @@ from agf.db.dynamic_keywords import (PROMOTE_MIN_NEW, TRIAL_SWEEPS,
                                      live_keywords, open_flywheel_run,
                                      record_keyword_sweep, tried_keywords,
                                      trial_count)
+from agf.discovery.keyword_mining import mine_phrases
 from agf.workers.main import (_run_flywheel_admission, flywheel_due,
                               run_flywheel_stage)
 
@@ -285,3 +286,35 @@ def _mk_retired_eng(conn, keyword, last_swept):
     conn.execute(text(
         "UPDATE discovery.dynamic_keywords SET status='retired', sweeps_used=4, "
         "last_swept_at=:ls WHERE keyword=:kw"), {"ls": last_swept, "kw": keyword})
+
+
+def test_mint_per_pass_caps_one_pass_minting(_migrated_engine):
+    # Opening a large trial ceiling must NOT let one pass mint the miner's whole
+    # tail (the 2026-07-10 182-junk-mint burst): mint_per_pass caps admissions
+    # per pass independently of max_trials.
+    eng = _migrated_engine
+
+    def _clean():
+        with eng.begin() as conn:
+            conn.execute(text("DELETE FROM discovery.dynamic_keywords "
+                              "WHERE keyword LIKE 'quartz yoga%' "
+                              "   OR keyword LIKE 'velvet cycling%'"))
+    _clean()
+    corpus = [(31, "the quartz yoga planner keeps you on track"),
+              (32, "the quartz yoga planner everyone recommends"),
+              (33, "try the velvet cycling tracker on your ride"),
+              (34, "the velvet cycling tracker works offline")]
+    # guard against a vacuous pass: this corpus must yield >=2 mineable phrases
+    with eng.connect() as conn:
+        tried = tried_keywords(conn)
+    from agf.discovery.taxonomy import all_entries as _all
+    baseline = mine_phrases(corpus, exclude={e.keyword for e in _all()} | tried,
+                            limit=50, min_advertisers=2)
+    assert len(baseline) >= 2
+    try:
+        stats = run_flywheel_stage(eng, _NoAdExtractor(), max_pages=1, kw_delay=0,
+                                   min_advertisers=2, mint_per_pass=1,
+                                   corpus_fn=lambda conn, min_score: corpus)
+        assert len(stats["mined"]) == 1          # capped, despite room for more
+    finally:
+        _clean()

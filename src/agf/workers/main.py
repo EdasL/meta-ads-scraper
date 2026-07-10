@@ -53,6 +53,7 @@ Env:
   AGF_FLYWHEEL_MAX_PAGES       SERP pages per dynamic keyword        (default 2)
   AGF_FLYWHEEL_MAX_TRIALS      trial keywords live at once           (default 40)
   AGF_FLYWHEEL_WORKERS          concurrent flywheel sweep workers     (default 3)
+  AGF_FLYWHEEL_MINT_PER_PASS    mint admissions per pass              (default 25)
   AGF_FLYWHEEL_RETEST_PER_PASS  shallow-retired re-admissions/pass    (default 0 = off)
   AGF_FLYWHEEL_ACTIVE_GAP_HOURS min hours between active re-sweeps    (default 12)
   AGF_FLYWHEEL_TRIAL_SWEEPS     sweeps before a trial gets a verdict  (default 4)
@@ -483,7 +484,7 @@ def _run_flywheel_admission(engine, phrases):
 
 def run_flywheel_stage(engine, extractors, *, max_pages=2, kw_delay=3.0,
                        mine_min_score=40.0, max_trials=40, min_advertisers=3,
-                       retest_per_pass=0, active_gap_hours=0,
+                       mint_per_pass=25, retest_per_pass=0, active_gap_hours=0,
                        max_consecutive_errors=0, heartbeat=None,
                        corpus_fn=fetch_gem_copy) -> dict:
     """One mine+sweep pass of the keyword flywheel: phrases recurring across the ad
@@ -514,7 +515,12 @@ def run_flywheel_stage(engine, extractors, *, max_pages=2, kw_delay=3.0,
         apply_verdicts(conn)
     with engine.connect() as conn:
         tried = tried_keywords(conn)
-        room = max_trials - trial_count(conn)
+        # mint_per_pass caps ONE pass's mint admissions independently of the trial
+        # ceiling: max_trials sizes the audition POOL (throughput + retest room),
+        # but the miner's phrase ranking degrades with depth, so an uncapped pass
+        # dumps its low-rank tail the moment the ceiling opens (182-junk-mint
+        # burst, 2026-07-10). 25 = the old ceiling's effective per-pass rate.
+        room = min(max_trials - trial_count(conn), mint_per_pass)
         corpus = corpus_fn(conn, min_score=mine_min_score) if room > 0 else []
     static = {e.keyword for e in all_entries()}
     mined = mine_phrases(corpus, exclude=static | tried, limit=room,
@@ -605,7 +611,7 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
              generic_deep_enabled=True, generic_deep_pages=150,
              generic_deep_every_days=7, generic_deep_mint_slots=25,
              flywheel_daily=True, flywheel_pages=2, flywheel_max_trials=40,
-             flywheel_min_advertisers=3,
+             flywheel_min_advertisers=3, flywheel_mint_per_pass=25,
              flywheel_workers=1, flywheel_retest_per_pass=0,
              flywheel_active_gap_hours=0, mine_min_score=40.0,
              release_mint_enabled=False, frame_mint_k=15, frame_mint_floor=5,
@@ -857,6 +863,7 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
                     mine_min_score=mine_min_score,
                     max_trials=flywheel_max_trials,
                     min_advertisers=flywheel_min_advertisers,
+                    mint_per_pass=flywheel_mint_per_pass,
                     retest_per_pass=flywheel_retest_per_pass,
                     active_gap_hours=flywheel_active_gap_hours,
                     max_consecutive_errors=sweep_max_consecutive_errors,
@@ -1133,6 +1140,7 @@ def _cfg_from_env(*, continuous: bool) -> dict:
         flywheel_max_trials=_env_int("AGF_FLYWHEEL_MAX_TRIALS", 40),
         flywheel_min_advertisers=_env_int("AGF_MINE_MIN_ADVERTISERS", 3),
         flywheel_workers=_env_int("AGF_FLYWHEEL_WORKERS", 3),
+        flywheel_mint_per_pass=_env_int("AGF_FLYWHEEL_MINT_PER_PASS", 25),
         flywheel_retest_per_pass=_env_int("AGF_FLYWHEEL_RETEST_PER_PASS", 0),
         flywheel_active_gap_hours=_env_int("AGF_FLYWHEEL_ACTIVE_GAP_HOURS", 12),
         mine_min_score=_env_float("AGF_MINE_MIN_SCORE", 40.0),

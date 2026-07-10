@@ -298,10 +298,13 @@ def test_flywheel_env_plumbing(monkeypatch):
     assert cfg["flywheel_workers"] == 3            # spec defaults
     assert cfg["flywheel_retest_per_pass"] == 0    # retest lane off unless enabled
     assert cfg["flywheel_active_gap_hours"] == 12
+    assert cfg["flywheel_mint_per_pass"] == 25
     monkeypatch.setenv("AGF_FLYWHEEL_WORKERS", "5")
     monkeypatch.setenv("AGF_FLYWHEEL_RETEST_PER_PASS", "7")
     monkeypatch.setenv("AGF_FLYWHEEL_ACTIVE_GAP_HOURS", "9")
+    monkeypatch.setenv("AGF_FLYWHEEL_MINT_PER_PASS", "11")
     cfg = m._cfg_from_env(continuous=False)
     assert cfg["flywheel_workers"] == 5
     assert cfg["flywheel_retest_per_pass"] == 7
     assert cfg["flywheel_active_gap_hours"] == 9
+    assert cfg["flywheel_mint_per_pass"] == 11
