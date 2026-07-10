@@ -52,6 +52,9 @@ Env:
   AGF_FLYWHEEL_EVERY_SEC        flywheel cadence in seconds           (default 0 = once/day)
   AGF_FLYWHEEL_MAX_PAGES       SERP pages per dynamic keyword        (default 2)
   AGF_FLYWHEEL_MAX_TRIALS      trial keywords live at once           (default 40)
+  AGF_FLYWHEEL_WORKERS          concurrent flywheel sweep workers     (default 3)
+  AGF_FLYWHEEL_RETEST_PER_PASS  shallow-retired re-admissions/pass    (default 0 = off)
+  AGF_FLYWHEEL_ACTIVE_GAP_HOURS min hours between active re-sweeps    (default 12)
   AGF_FLYWHEEL_TRIAL_SWEEPS     sweeps before a trial gets a verdict  (default 4)
   AGF_FLYWHEEL_PROMOTE_MIN_NEW  new candidates to promote a trial     (default 3)
   AGF_MINE_MIN_ADVERTISERS      distinct gems a phrase must span      (default 3)
@@ -602,7 +605,9 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
              generic_deep_enabled=True, generic_deep_pages=150,
              generic_deep_every_days=7, generic_deep_mint_slots=25,
              flywheel_daily=True, flywheel_pages=2, flywheel_max_trials=40,
-             flywheel_min_advertisers=3, mine_min_score=40.0,
+             flywheel_min_advertisers=3,
+             flywheel_workers=1, flywheel_retest_per_pass=0,
+             flywheel_active_gap_hours=0, mine_min_score=40.0,
              release_mint_enabled=False, frame_mint_k=15, frame_mint_floor=5,
              frame_mint_slots=40, frame_mint_min_advertisers=2,
              frame_mint_explore_share=0.25, mint_autocomplete=True,
@@ -844,12 +849,18 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
             with begin(engine) as conn:
                 fw_run_id = open_flywheel_run(conn)
             try:
-                flywheel = run_flywheel_stage(engine, extractor,
-                                              max_pages=flywheel_pages,
-                                              kw_delay=kw_delay,
-                                              mine_min_score=mine_min_score,
-                                              max_trials=flywheel_max_trials,
-                                              min_advertisers=flywheel_min_advertisers)
+                fw_extractors = build_extractors(dry_run, now_epoch,
+                                                 flywheel_workers)
+                flywheel = run_flywheel_stage(
+                    engine, fw_extractors,
+                    max_pages=flywheel_pages, kw_delay=kw_delay,
+                    mine_min_score=mine_min_score,
+                    max_trials=flywheel_max_trials,
+                    min_advertisers=flywheel_min_advertisers,
+                    retest_per_pass=flywheel_retest_per_pass,
+                    active_gap_hours=flywheel_active_gap_hours,
+                    max_consecutive_errors=sweep_max_consecutive_errors,
+                    heartbeat=None if dry_run else _touch_heartbeat)
                 with begin(engine) as conn:
                     close_flywheel_run(conn, fw_run_id, stats=flywheel)
             except Exception as exc:
@@ -1094,26 +1105,10 @@ def _summary_line(s: dict) -> str:
     return line
 
 
-def main(argv=None) -> None:
-    argv = sys.argv[1:] if argv is None else argv
-    if "--healthcheck" in argv:
-        sys.exit(_healthcheck())
-    dry_run = _env_bool("AGF_DRY_RUN") or "--dry-run" in argv
-    once = dry_run or "--once" in argv
-    engine = get_engine()
-    # Close any run rows orphaned by the previous process (SIGTERM on sleep, crash).
-    # No run survives a restart, so every still-open row is stale — reaping them keeps
-    # the *_ran_today gates and run-table diagnostics honest.
-    if not dry_run:
-        with begin(engine) as conn:
-            reaped = reap_open_runs(conn)
-        if reaped:
-            print(f"[worker] reaped orphaned runs: {reaped}", flush=True)
-    # Continuous discovery is the default: every loop tick runs a fresh keyword sweep
-    # (no once-per-day gate), so the brand DB keeps growing as long as this machine is
-    # awake. Set AGF_CONTINUOUS_DISCOVERY=0 to fall back to the daily-gated cadence.
-    continuous = _env_bool("AGF_CONTINUOUS_DISCOVERY", True)
-    cfg = dict(
+def _cfg_from_env(*, continuous: bool) -> dict:
+    """run_once kwargs from the AGF_* environment — one seam so tests can assert
+    env plumbing without driving main()."""
+    return dict(
         sweep_pages=_env_int("AGF_SWEEP_PAGES", 2),
         kw_delay=_env_float("AGF_KW_DELAY", 3.0),
         enrich_budget=_env_int("AGF_DISCOVERY_ENRICH_BUDGET", 600),
@@ -1137,6 +1132,9 @@ def main(argv=None) -> None:
         flywheel_pages=_env_int("AGF_FLYWHEEL_MAX_PAGES", 2),
         flywheel_max_trials=_env_int("AGF_FLYWHEEL_MAX_TRIALS", 40),
         flywheel_min_advertisers=_env_int("AGF_MINE_MIN_ADVERTISERS", 3),
+        flywheel_workers=_env_int("AGF_FLYWHEEL_WORKERS", 3),
+        flywheel_retest_per_pass=_env_int("AGF_FLYWHEEL_RETEST_PER_PASS", 0),
+        flywheel_active_gap_hours=_env_int("AGF_FLYWHEEL_ACTIVE_GAP_HOURS", 12),
         mine_min_score=_env_float("AGF_MINE_MIN_SCORE", 40.0),
         release_mint_enabled=_env_bool("AGF_RELEASE_MINT", False),
         frame_mint_k=_env_int("AGF_FRAME_MINT_K", 15),
@@ -1152,6 +1150,28 @@ def main(argv=None) -> None:
         sweep_max_consecutive_errors=_env_int("AGF_SWEEP_MAX_CONSECUTIVE_ERRORS", 5),
         websub_bridge_limit=websub_bridge_per_cycle(),
     )
+
+
+def main(argv=None) -> None:
+    argv = sys.argv[1:] if argv is None else argv
+    if "--healthcheck" in argv:
+        sys.exit(_healthcheck())
+    dry_run = _env_bool("AGF_DRY_RUN") or "--dry-run" in argv
+    once = dry_run or "--once" in argv
+    engine = get_engine()
+    # Close any run rows orphaned by the previous process (SIGTERM on sleep, crash).
+    # No run survives a restart, so every still-open row is stale — reaping them keeps
+    # the *_ran_today gates and run-table diagnostics honest.
+    if not dry_run:
+        with begin(engine) as conn:
+            reaped = reap_open_runs(conn)
+        if reaped:
+            print(f"[worker] reaped orphaned runs: {reaped}", flush=True)
+    # Continuous discovery is the default: every loop tick runs a fresh keyword sweep
+    # (no once-per-day gate), so the brand DB keeps growing as long as this machine is
+    # awake. Set AGF_CONTINUOUS_DISCOVERY=0 to fall back to the daily-gated cadence.
+    continuous = _env_bool("AGF_CONTINUOUS_DISCOVERY", True)
+    cfg = _cfg_from_env(continuous=continuous)
     # In continuous mode a full taxonomy sweep already takes many minutes (kw_delay ×
     # 305 keywords), so the inter-sweep sleep is just a short breather, not an hour.
     interval = _env_int("AGF_SWEEP_INTERVAL_SEC", 60 if continuous else 3600)

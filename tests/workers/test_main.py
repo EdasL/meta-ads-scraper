@@ -289,3 +289,19 @@ def test_dry_run_cli_runs_once_and_exits_zero(_migrated_engine):
         assert " hist=" in out.stdout
     finally:
         _clean_fake(_migrated_engine)
+
+
+def test_flywheel_env_plumbing(monkeypatch):
+    """The three new flywheel envs reach run_once's kwargs (defaults + overrides)."""
+    from agf.workers import main as m
+    cfg = m._cfg_from_env(continuous=False)
+    assert cfg["flywheel_workers"] == 3            # spec defaults
+    assert cfg["flywheel_retest_per_pass"] == 0    # retest lane off unless enabled
+    assert cfg["flywheel_active_gap_hours"] == 12
+    monkeypatch.setenv("AGF_FLYWHEEL_WORKERS", "5")
+    monkeypatch.setenv("AGF_FLYWHEEL_RETEST_PER_PASS", "7")
+    monkeypatch.setenv("AGF_FLYWHEEL_ACTIVE_GAP_HOURS", "9")
+    cfg = m._cfg_from_env(continuous=False)
+    assert cfg["flywheel_workers"] == 5
+    assert cfg["flywheel_retest_per_pass"] == 7
+    assert cfg["flywheel_active_gap_hours"] == 9
