@@ -15,9 +15,11 @@ A1 = SENTINEL + 1
 
 
 def _clean(engine):
+    # process_once claims the GLOBAL oldest queued row, so the test must control the
+    # whole queue — wipe all pipeline_jobs, not just sentinels (transient queue table,
+    # nothing live runs against the test DB).
     with engine.begin() as conn:
-        conn.execute(text("DELETE FROM public.pipeline_jobs WHERE advertiser_id >= :s"),
-                     {"s": SENTINEL})
+        conn.execute(text("DELETE FROM public.pipeline_jobs"))
 
 
 @pytest.fixture

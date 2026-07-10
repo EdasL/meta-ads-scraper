@@ -15,9 +15,12 @@ A1, A2, A3 = SENTINEL + 1, SENTINEL + 2, SENTINEL + 3
 
 
 def _clean(engine):
+    # claim_next/reap_expired operate on the GLOBAL oldest/expired row (correct
+    # production behavior), so these tests must control the WHOLE queue — wipe all
+    # pipeline_jobs rows, not just sentinels. Safe: it's a transient queue table and
+    # nothing live runs against the test DB.
     with engine.begin() as conn:
-        conn.execute(text("DELETE FROM public.pipeline_jobs WHERE advertiser_id >= :s"),
-                     {"s": SENTINEL})
+        conn.execute(text("DELETE FROM public.pipeline_jobs"))
 
 
 @pytest.fixture
