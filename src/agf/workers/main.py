@@ -80,6 +80,7 @@ import sys
 import threading
 import time
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timezone, timedelta
 from functools import partial
 
@@ -89,7 +90,8 @@ from agf.db.engine import get_engine, begin
 from agf.db.candidates import (close_sweep_run, kept_advertiser_ids,
                                open_sweep_run, reap_open_runs, sweep_ran_today,
                                taste_prioritized_kept)
-from agf.db.dynamic_keywords import (add_trial_keywords, apply_verdicts,
+from agf.db.dynamic_keywords import (add_trial_keywords, admit_retest_keywords,
+                                     apply_verdicts,
                                      close_flywheel_run, close_release_mint_run,
                                      flywheel_ran_today, flywheel_ran_within,
                                      live_keywords, open_flywheel_run,
@@ -118,7 +120,8 @@ from agf.discovery.funnel_sweep import deep_funnel_entries, run_funnel_sweep
 from agf.discovery.corpus_refresh import refresh_corpus
 from agf.discovery.generic_deep import run_generic_deep_stage
 from agf.discovery.keeper_history import pull_keeper_history
-from agf.discovery.sweep import run_sweep, run_parallel_sweep
+from agf.discovery.sweep import (SweepBreaker, _partition, run_parallel_sweep,
+                                 run_sweep)
 from agf.discovery.websub_bridge import run_websub_bridge
 from agf.discovery.taxonomy import (TaxonomyEntry, all_entries,
                                     sweep_entries)
@@ -475,8 +478,10 @@ def _run_flywheel_admission(engine, phrases):
     return _gate_keywords(engine, phrases, limit=len(phrases))
 
 
-def run_flywheel_stage(engine, extractor, *, max_pages=2, kw_delay=3.0,
+def run_flywheel_stage(engine, extractors, *, max_pages=2, kw_delay=3.0,
                        mine_min_score=40.0, max_trials=40, min_advertisers=3,
+                       retest_per_pass=0, active_gap_hours=0,
+                       max_consecutive_errors=0, heartbeat=None,
                        corpus_fn=fetch_gem_copy) -> dict:
     """One mine+sweep pass of the keyword flywheel: phrases recurring across the ad
     copy of scored gems become trial sweep keywords, every live keyword (trial|active,
@@ -485,7 +490,20 @@ def run_flywheel_stage(engine, extractor, *, max_pages=2, kw_delay=3.0,
     pages keep yielding net-new, then stopping on the patience window / safety cap — and
     each keyword's yield decides its fate (promote, or rest with a cooldown backoff instead
     of terminal retirement — policy constants in db/dynamic_keywords). A throttled keyword
-    (search error) doesn't burn trial budget. `corpus_fn` is injectable for tests."""
+    (search error) doesn't burn trial budget.
+
+    PARALLEL (2026-07-10): the sweep loop runs across len(extractors) threads on
+    round-robin-disjoint keyword shards (same shape as run_parallel_sweep); per-keyword
+    lifecycle writes touch only that keyword's row, so shards can't race. One shared
+    SweepBreaker aborts the stage on a gateway-wide outage (0 disables, the default).
+    A single bare extractor is auto-wrapped — the one-shard path is exactly the old
+    serial loop. `retest_per_pass` re-admits shallow-era retired keywords into spare
+    trial room (see admit_retest_keywords); a re-admitted keyword's FIRST sweep runs
+    with patience disabled up to AGF_SWEEP_MAX_DEPTH so a barren incumbent prefix
+    can't cut it off before the deep pages its original verdict never saw.
+    `corpus_fn` is injectable for tests."""
+    if not isinstance(extractors, (list, tuple)):
+        extractors = [extractors]
     # Apply verdicts up front so a lowered AGF_FLYWHEEL_TRIAL_SWEEPS frees the trial
     # pool on this run (trials already past the threshold promote/retire immediately)
     # rather than waiting for each to be re-swept.
@@ -506,27 +524,62 @@ def run_flywheel_stage(engine, extractor, *, max_pages=2, kw_delay=3.0,
     if mined:
         with begin(engine) as conn:
             add_trial_keywords(conn, mined)
+    retested = 0
+    if retest_per_pass > 0:
+        with engine.connect() as conn:
+            room_left = max_trials - trial_count(conn)   # mints keep priority
+        if room_left > 0:
+            with begin(engine) as conn:
+                retested = admit_retest_keywords(
+                    conn, limit=min(retest_per_pass, room_left))
     with engine.connect() as conn:
-        live = live_keywords(conn)
-    stats = {"mined": mined, "keywords_swept": 0, "errors": 0,
-             "candidates_new": 0, "candidates_seen": 0, "promoted": 0, "retired": 0}
-    for kw in live:
-        entry = TaxonomyEntry(kw.keyword, "flywheel", "KEYWORD_EXACT_PHRASE", max_pages)
-        s = asyncio.run(run_sweep(engine, extractor, entries=[entry],
-                                  max_pages=max_pages, kw_delay=kw_delay))
-        if s["keywords_swept"] != 1:                  # throttled — no verdict from this
-            stats["errors"] += 1
-            continue
-        with begin(engine) as conn:
-            status = record_keyword_sweep(conn, kw.id,
-                                          new_candidates=s["candidates_new"])
-        stats["keywords_swept"] += 1
-        stats["candidates_new"] += s["candidates_new"]
-        stats["candidates_seen"] += s["candidates_seen"]
-        if kw.status == "trial" and status == "active":
-            stats["promoted"] += 1
-        elif status == "retired":
-            stats["retired"] += 1
+        live = live_keywords(conn, active_gap_hours=active_gap_hours)
+    shards = _partition(list(live), len(extractors))
+    breaker = SweepBreaker(max_consecutive_errors, workers=len(shards) or 1)
+    depth_cap = _env_int("AGF_SWEEP_MAX_DEPTH", 15)
+
+    def _sweep_shard(extractor, shard, worker_id):
+        part = {"keywords_swept": 0, "errors": 0, "candidates_new": 0,
+                "candidates_seen": 0, "promoted": 0, "retired": 0}
+        for kw in shard:
+            if breaker.tripped():
+                break
+            deep_first = kw.retested_at is not None and kw.sweeps_used == 0
+            entry = TaxonomyEntry(kw.keyword, "flywheel",
+                                  "KEYWORD_EXACT_PHRASE", max_pages)
+            s = asyncio.run(run_sweep(
+                engine, extractor, entries=[entry], max_pages=max_pages,
+                kw_delay=kw_delay, breaker=breaker, heartbeat=heartbeat,
+                max_consecutive_errors=max_consecutive_errors,
+                patience_pages=depth_cap if deep_first else None,
+                worker_id=worker_id))
+            if s["keywords_swept"] != 1:          # throttled — no verdict from this
+                part["errors"] += 1
+                continue
+            with begin(engine) as conn:
+                status = record_keyword_sweep(conn, kw.id,
+                                              new_candidates=s["candidates_new"])
+            part["keywords_swept"] += 1
+            part["candidates_new"] += s["candidates_new"]
+            part["candidates_seen"] += s["candidates_seen"]
+            if kw.status == "trial" and status == "active":
+                part["promoted"] += 1
+            elif status == "retired":
+                part["retired"] += 1
+        return part
+
+    if len(shards) <= 1:
+        parts = [_sweep_shard(extractors[0], shards[0], 0)] if shards else []
+    else:
+        triples = list(zip(extractors, shards, range(len(shards))))
+        with ThreadPoolExecutor(max_workers=len(triples)) as pool:
+            parts = list(pool.map(lambda tr: _sweep_shard(*tr), triples))
+    stats = {"mined": mined, "retested": retested, "keywords_swept": 0,
+             "errors": 0, "candidates_new": 0, "candidates_seen": 0,
+             "promoted": 0, "retired": 0}
+    for p in parts:
+        for key, val in p.items():
+            stats[key] += val
     return stats
 
 

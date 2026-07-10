@@ -187,3 +187,101 @@ def test_flywheel_gate_drops_keyword_near_retired_basin(_migrated_engine, monkey
         assert "GATET twin" not in admitted
     finally:
         _clean()
+
+
+class _CountingExtractor(_FakeExtractor):
+    """Yields one candidate per keyword, like _FakeExtractor, but is instance-tracked
+    so a K=2 run can prove disjoint shard coverage."""
+
+
+class _BarrenPagingExtractor:
+    """Endless empty SERP pages — exercises patience/depth stopping rules.
+    pages_by_query counts how deep the sweep actually paged per keyword."""
+    def __init__(self):
+        self.pages_by_query = {}
+
+    async def search_page(self, *, query, cursor=None, **kw):
+        n = self.pages_by_query.get(query, 0) + 1
+        self.pages_by_query[query] = n
+        return [], f"c{n}", True                     # no ads, always a next page
+
+
+def test_parallel_flywheel_covers_all_keywords_disjointly(_migrated_engine):
+    eng = _migrated_engine
+    kws = [f"pfw kw {i}" for i in range(6)]
+    with eng.begin() as conn:
+        conn.execute(text("DELETE FROM discovery.dynamic_keywords "
+                          "WHERE keyword LIKE 'pfw kw %'"))
+        add_trial_keywords(conn, kws)
+    ex1, ex2 = _CountingExtractor(), _CountingExtractor()
+    try:
+        stats = run_flywheel_stage(eng, [ex1, ex2], max_pages=1, kw_delay=0,
+                                   corpus_fn=lambda conn, min_score: [])
+        swept = ex1.searched + ex2.searched
+        assert set(kws) <= set(swept)                      # every live kw swept
+        assert not (set(ex1.searched) & set(ex2.searched)) # disjoint shards
+        assert stats["keywords_swept"] >= 6
+        with eng.connect() as conn:                        # verdicts recorded
+            used = conn.execute(text(
+                "SELECT min(sweeps_used) FROM discovery.dynamic_keywords "
+                "WHERE keyword LIKE 'pfw kw %'")).scalar()
+        assert used == 1
+    finally:
+        with eng.begin() as conn:
+            conn.execute(text("DELETE FROM discovery.candidates "
+                              "WHERE page_id = 'FWPAGE1'"))
+            conn.execute(text("DELETE FROM discovery.dynamic_keywords "
+                              "WHERE keyword LIKE 'pfw kw %'"))
+
+
+def test_retested_keyword_first_sweep_is_forced_deep(_migrated_engine, monkeypatch):
+    eng = _migrated_engine
+    monkeypatch.setenv("AGF_SWEEP_PATIENCE_PAGES", "3")
+    monkeypatch.setenv("AGF_SWEEP_MAX_DEPTH", "15")
+    with eng.begin() as conn:
+        conn.execute(text("DELETE FROM discovery.dynamic_keywords "
+                          "WHERE keyword LIKE 'deep rt %'"))
+        add_trial_keywords(conn, ["deep rt retested", "deep rt normal"])
+        conn.execute(text(
+            "UPDATE discovery.dynamic_keywords SET retested_at=now(), sweeps_used=0 "
+            "WHERE keyword='deep rt retested'"))
+    ex = _BarrenPagingExtractor()
+    try:
+        run_flywheel_stage(eng, [ex], max_pages=1, kw_delay=0,
+                           corpus_fn=lambda conn, min_score: [])
+        # normal barren trial: patience window stops it early
+        assert ex.pages_by_query["deep rt normal"] <= 4
+        # retested first sweep: patience disabled up to the depth cap
+        assert ex.pages_by_query["deep rt retested"] == 15
+    finally:
+        with eng.begin() as conn:
+            conn.execute(text("DELETE FROM discovery.dynamic_keywords "
+                              "WHERE keyword LIKE 'deep rt %'"))
+
+
+def test_retest_admission_fills_room_after_mints(_migrated_engine):
+    eng = _migrated_engine
+    with eng.begin() as conn:
+        conn.execute(text("DELETE FROM discovery.dynamic_keywords "
+                          "WHERE keyword LIKE 'rtadm %'"))
+        _mk_retired_eng(conn, "rtadm shallow", "2026-06-20")
+    ex = _FakeExtractor()
+    try:
+        stats = run_flywheel_stage(eng, [ex], max_pages=1, kw_delay=0,
+                                   retest_per_pass=5,
+                                   corpus_fn=lambda conn, min_score: [])
+        assert stats["retested"] >= 1
+        assert "rtadm shallow" in ex.searched          # re-admitted AND swept this pass
+    finally:
+        with eng.begin() as conn:
+            conn.execute(text("DELETE FROM discovery.candidates "
+                              "WHERE page_id = 'FWPAGE1'"))
+            conn.execute(text("DELETE FROM discovery.dynamic_keywords "
+                              "WHERE keyword LIKE 'rtadm %'"))
+
+
+def _mk_retired_eng(conn, keyword, last_swept):
+    add_trial_keywords(conn, [keyword])
+    conn.execute(text(
+        "UPDATE discovery.dynamic_keywords SET status='retired', sweeps_used=4, "
+        "last_swept_at=:ls WHERE keyword=:kw"), {"ls": last_swept, "kw": keyword})
