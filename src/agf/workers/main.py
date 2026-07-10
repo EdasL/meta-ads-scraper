@@ -96,6 +96,7 @@ from agf.db.dynamic_keywords import (add_trial_keywords, apply_verdicts,
                                      open_release_mint_run, record_keyword_sweep,
                                      release_mint_ran_today, retire_dry_streak,
                                      tried_keywords, trial_count)
+from agf.db.pipeline_jobs import enqueue_enrich
 from agf.db.corpus_refresh_runs import (close_corpus_refresh_run,
                                         corpus_refresh_ran_today,
                                         corpus_refresh_ran_within,
@@ -129,6 +130,7 @@ from agf.enrich_full.run_enrich import make_enrich_handler, EnrichDeps
 from agf.extract.errors import ExtractError
 from agf.scoring.run_scoring import ALERT_THRESHOLD
 from agf.workers.runner import run_worker
+from agf.workers.scheduler import claim_due
 
 
 # --- env helpers -------------------------------------------------------------
@@ -806,8 +808,13 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
     # 3) enrich — keepers first (they have no ad history yet, so they can't score
     #    until enriched), then flagged gems due for their TTL refresh; both under a
     #    proxy-request budget instead of a fixed count. ~14 Meta requests per gem
-    #    (12 history pages + creative prefetch). One transaction per gem (run_worker,
-    #    source=engine); creative URLs are prefetched on a READ connection first.
+    #    (12 history pages + creative prefetch). In PRODUCTION the loop no longer
+    #    enriches inline: it selects the same due set the old batch would have, then
+    #    ENQUEUES it onto public.pipeline_jobs (FIFO = taste priority) for the
+    #    pipeline_daemon consumer to drain one advertiser at a time via enrich_one —
+    #    decoupling enrich execution from the ~40-min tick. A DRY-RUN keeps the inline
+    #    enrich (run_worker + no-network deps) so the offline `--once` e2e still
+    #    exercises the full enrich path.
     est_requests_per_gem = 14
     enrich_limit = max(1, (enrich_budget - enrich_budget // 2) // est_requests_per_gem)
     with engine.connect() as conn:
@@ -825,18 +832,30 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
             kept = kept_advertiser_ids(conn)
         cand_ids = kept if dry_run else list(dict.fromkeys(
             kept + eligible_gem_ids(conn, min_score)))
-        if dry_run:
-            deps_factory = dry_run_deps_factory(extractor)
-        else:
-            creative_urls = prefetch_creative_urls(extractor, conn, cand_ids[:enrich_limit])
-            deps_factory = production_deps_factory(extractor, http_client, creative_urls)
     due_before = datetime.now(timezone.utc) - timedelta(hours=enrich_ttl_hours)
-    enriched = run_worker("enrich", "advertiser",
-                          make_enrich_handler(deps_factory, top_n=enrich_top_n,
-                                              media_cap=enrich_media_cap),
-                          source=engine, candidate_ids=cand_ids,
-                          due_before=due_before, limit=enrich_limit)
-    _touch_heartbeat()  # enrich is long; prove liveness before media repair
+    if dry_run:
+        # Offline inline enrich: exercise the whole enrich path with no network.
+        deps_factory = dry_run_deps_factory(extractor)
+        enriched = run_worker("enrich", "advertiser",
+                              make_enrich_handler(deps_factory, top_n=enrich_top_n,
+                                                  media_cap=enrich_media_cap),
+                              source=engine, candidate_ids=cand_ids,
+                              due_before=due_before, limit=enrich_limit)
+        enqueued = 0
+        enrich_candidates = cand_ids
+    else:
+        # Production: select the due set (same selection/budget/TTL as the old batch)
+        # and enqueue it; the pipeline_daemon consumer runs the actual enrich.
+        with engine.connect() as conn:
+            due = claim_due(conn, "advertiser", cand_ids,
+                            due_before=due_before, limit=enrich_limit)
+        with begin(engine) as conn:
+            enqueued = enqueue_enrich(conn, due)
+        print(f"[worker] enqueued {enqueued} enrich job(s) (due={len(due)})",
+              file=sys.stderr, flush=True)
+        enriched = []
+        enrich_candidates = due
+    _touch_heartbeat()  # prove liveness before media repair
 
     # 3.5) media repair — drain the textless-feed backlog a few advertisers per
     #      cycle so a gem's active ads can't sit media-less forever (the enrich
@@ -894,7 +913,8 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
             "keeper_history": keeper_history, "funnel": funnel, "flywheel": flywheel,
             "release_mint": release_mint,
             "apps_refreshed": apps_refreshed,
-            "enrich_candidates": cand_ids, "enriched": enriched,
+            "enrich_candidates": enrich_candidates, "enriched": enriched,
+            "enqueued": enqueued,
             "media_repair": media_repair, "funnel_repair": funnel_repair,
             "websub": websub}
 
@@ -1002,8 +1022,13 @@ def _summary_line(s: dict) -> str:
                  f"cats={len(rm.get('minted_by_category', {}))} "
                  f"frame_seeded={rm.get('frame_seeded', 0)} "
                  f"in_scope={rm.get('in_scope', 0)})")
-    line += (f" apps_refreshed={s.get('apps_refreshed', 0)} "
-            f"enriched={len(s['enriched'])}/{len(s['enrich_candidates'])}")
+    line += f" apps_refreshed={s.get('apps_refreshed', 0)}"
+    # Dry-run enriches inline (run_worker -> dict of results); production enqueues
+    # (enriched == []). Report each with its own counter.
+    if isinstance(s.get("enriched"), dict):
+        line += f" enriched={len(s['enriched'])}/{len(s['enrich_candidates'])}"
+    else:
+        line += f" enqueued={s.get('enqueued', 0)}/{len(s.get('enrich_candidates') or [])}"
     mr = s.get("media_repair")
     if mr and mr.get("downloaded"):
         line += f" media_repair={mr.get('downloaded', 0)}"

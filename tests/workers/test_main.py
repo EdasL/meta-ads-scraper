@@ -142,6 +142,63 @@ def test_production_sweep_calls_run_parallel_sweep(monkeypatch, _migrated_engine
     assert calls["k"] == 4 and calls["n_extractors"] == 4
 
 
+def test_production_run_once_enqueues_and_skips_run_worker(monkeypatch, _migrated_engine):
+    """Production run_once no longer enriches inline: it selects the due set (same
+    selection/budget/TTL as the old batch) and ENQUEUES it onto public.pipeline_jobs
+    in FIFO/taste order — capped by enrich_limit, TTL-filtered via claim_due — and
+    never calls run_worker."""
+    import agf.workers.main as m
+    eng = _migrated_engine
+    SENT = 999_100_000
+    A1, A2, A3 = SENT + 1, SENT + 2, SENT + 3
+
+    def _clean():
+        with begin(eng) as conn:
+            conn.execute(text("DELETE FROM public.pipeline_jobs WHERE advertiser_id >= :s"),
+                         {"s": SENT})
+            conn.execute(text("DELETE FROM logging.crawl_log WHERE entity_type='advertiser' "
+                              "AND entity_id >= :s"), {"s": SENT})
+
+    _clean()
+    try:
+        # A3 was crawled just now -> its TTL is not due -> claim_due must drop it.
+        with begin(eng) as conn:
+            conn.execute(text(
+                "INSERT INTO logging.crawl_log (entity_type, entity_id, crawled_at, "
+                "crawl_result) VALUES ('advertiser', :a, now(), 'ok')"), {"a": A3})
+
+        # Isolate stage 3: skip the sweep + all optional stages, control the candidate set.
+        monkeypatch.setattr(m, "discovery_due", lambda *a, **k: False)
+        monkeypatch.setattr(m, "taste_prioritized_kept", lambda conn, **kw: [A1, A2, A3])
+        monkeypatch.setattr(m, "eligible_gem_ids", lambda conn, s: [])
+
+        def boom(*a, **k):
+            raise AssertionError("production run_once must not call run_worker")
+
+        monkeypatch.setattr(m, "run_worker", boom)
+
+        summary = run_once(
+            eng, object(), now_epoch=NOW, as_of=date(2026, 6, 4), dry_run=False,
+            http_client=None, continuous_discovery=False,
+            funnel_daily=False, corpus_refresh_daily=False,
+            generic_deep_enabled=False, flywheel_daily=False,
+            release_mint_enabled=False, media_repair_per_cycle=0,
+            funnel_repair_per_cycle=0, enrich_budget=600)
+
+        # A1, A2 never crawled -> due, in order; A3 filtered by TTL.
+        assert summary["enqueued"] == 2
+        assert summary["enriched"] == []
+        assert summary["enrich_candidates"] == [A1, A2]
+        with eng.connect() as conn:
+            rows = conn.execute(text(
+                "SELECT advertiser_id, status FROM public.pipeline_jobs "
+                "WHERE advertiser_id >= :s ORDER BY id"), {"s": SENT}).fetchall()
+        assert [r[0] for r in rows] == [A1, A2]        # FIFO / taste order preserved
+        assert all(r[1] == "queued" for r in rows)
+    finally:
+        _clean()
+
+
 def test_dry_run_sweep_triages_and_enriches(_migrated_engine):
     eng = _migrated_engine
     _clean_fake(eng)
