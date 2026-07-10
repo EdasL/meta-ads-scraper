@@ -174,3 +174,36 @@ def test_live_keywords_returns_retested_at(pg_conn):
     dk.add_trial_keywords(pg_conn, ["gap trial kw2"])
     row = [r for r in dk.live_keywords(pg_conn) if r.keyword == "gap trial kw2"][0]
     assert row.retested_at is None               # column present on the row
+
+
+def _mk_retired(conn, keyword, last_swept, retested_at=None):
+    dk.add_trial_keywords(conn, [keyword])
+    conn.execute(text(
+        "UPDATE discovery.dynamic_keywords SET status='retired', sweeps_used=4, "
+        "dry_streak=3, last_swept_at=:ls, retested_at=:ra WHERE keyword=:kw"),
+        {"ls": last_swept, "ra": retested_at, "kw": keyword})
+
+
+def test_admit_retest_keywords(pg_conn):
+    _mk_retired(pg_conn, "rt shallow old", "2026-06-20")
+    _mk_retired(pg_conn, "rt shallow older", "2026-06-10")
+    _mk_retired(pg_conn, "rt adaptive era", "2026-07-09")     # post-cutoff: stays
+    _mk_retired(pg_conn, "rt already done", "2026-06-15",
+                retested_at="2026-07-09")                      # once only
+    # limit=1 admits the OLDEST shallow verdict first
+    assert dk.admit_retest_keywords(pg_conn, limit=1) == 1
+    row = pg_conn.execute(text(
+        "SELECT status, sweeps_used, dry_streak, retested_at "
+        "FROM discovery.dynamic_keywords WHERE keyword='rt shallow older'")).one()
+    assert row.status == "trial" and row.sweeps_used == 0 and row.dry_streak == 0
+    assert row.retested_at is not None
+    # the rest of the cohort on the next call; ineligibles untouched
+    assert dk.admit_retest_keywords(pg_conn, limit=10) == 1       # only 'rt shallow old'
+    for kw in ("rt adaptive era", "rt already done"):
+        st = pg_conn.execute(text(
+            "SELECT status FROM discovery.dynamic_keywords WHERE keyword=:k"),
+            {"k": kw}).scalar()
+        assert st == "retired"
+    # drained cohort + limit<=0 are no-ops
+    assert dk.admit_retest_keywords(pg_conn, limit=10) == 0
+    assert dk.admit_retest_keywords(pg_conn, limit=0) == 0

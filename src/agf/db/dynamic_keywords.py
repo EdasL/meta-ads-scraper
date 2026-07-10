@@ -134,6 +134,27 @@ def add_trial_keywords(conn, keywords, *, source: str = "gem_copy", kind: str = 
     return added
 
 
+# Adaptive-depth paging shipped 2026-07-08; keywords whose last sweep predates it
+# were judged on flat 2-4 page sweeps only — the deep-retest cohort (955 on prod).
+RETEST_SHALLOW_CUTOFF = "2026-07-08"
+
+
+def admit_retest_keywords(conn, *, limit: int, kind: str = "app") -> int:
+    """Re-admit up to `limit` shallow-era retired keywords as trials (oldest verdict
+    first) for one deep retest. Stamps retested_at so a keyword is never re-admitted
+    twice; the forced-deep first sweep is the flywheel loop's job. Returns the count."""
+    if limit <= 0:
+        return 0
+    return conn.execute(text(
+        "UPDATE discovery.dynamic_keywords "
+        "SET status='trial', sweeps_used=0, dry_streak=0, retested_at=now() "
+        "WHERE id IN (SELECT id FROM discovery.dynamic_keywords "
+        "  WHERE kind=:k AND status='retired' AND retested_at IS NULL "
+        "    AND last_swept_at < :cutoff "
+        "  ORDER BY last_swept_at ASC LIMIT :lim)"),
+        {"k": kind, "cutoff": RETEST_SHALLOW_CUTOFF, "lim": limit}).rowcount
+
+
 def live_keywords(conn, *, kind: str = "app", active_gap_hours: int = 0):
     """The keywords a flywheel pass sweeps: trials + proven actives + woken resting
     keywords (cooldown elapsed / NULL), this kind only. A resting keyword whose
