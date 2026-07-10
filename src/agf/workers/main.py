@@ -748,14 +748,21 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
     #     already-embedded batch instead of rolling the whole cycle back.
     if score_after and os.environ.get("AGF_EMBED_APPS", "1") != "0":
         try:
+            from agf.discovery.crowding_refresh import refresh_crowding
+            crowded = None
             with engine.connect() as conn:
                 try:
                     emb_stats = embed_apps(conn, commit_every=25)
                     conn.commit()
+                    # Recompute crowding over the whole app corpus (full recompute IS
+                    # the backfill). Its own short txn after the embed commit.
+                    crowded = refresh_crowding(conn, table="frontend.app_embeddings")
+                    conn.commit()
                 except Exception as exc:
                     conn.commit()  # persist progress before the best-effort handler logs
                     raise
-            print(f"[worker] embeddings: {emb_stats}", flush=True)
+            print(f"[worker] embeddings: {emb_stats} crowding_refreshed={crowded}",
+                  flush=True)
         except Exception as exc:
             print(f"[worker] embedding stage failed: {exc!r}",
                   file=sys.stderr, flush=True)
@@ -775,11 +782,17 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
     if os.environ.get("AGF_TRIAGE_PRIOR", "1") != "0" and not dry_run:
         try:
             from agf.discovery.candidate_embed import embed_candidates
+            from agf.discovery.crowding_refresh import refresh_crowding
+            crowded = None
             with engine.connect() as conn:
                 cstats = embed_candidates(conn, itunes_client=http_client, commit_every=25,
                                           limit=int(os.environ.get("AGF_TRIAGE_EMBED_PER_CYCLE", "200")))
                 conn.commit()
-            print(f"[worker] candidate embeddings: {cstats}", flush=True)
+                # Recompute crowding over all kept-candidate embeddings, own short txn.
+                crowded = refresh_crowding(conn, table="discovery.candidate_embeddings")
+                conn.commit()
+            print(f"[worker] candidate embeddings: {cstats} crowding_refreshed={crowded}",
+                  flush=True)
         except Exception as exc:
             print(f"[worker] candidate embed stage failed: {exc!r}",
                   file=sys.stderr, flush=True)
