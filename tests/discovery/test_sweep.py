@@ -253,6 +253,40 @@ def test_breaker_disabled_at_zero():
     assert b.tripped() is False
 
 
+def test_breaker_per_worker_one_dead_slice_does_not_trip():
+    # PER-WORKER (2026-07-10 review): with 2 workers, worker 0 erroring past the
+    # threshold must NOT trip the cycle while worker 1 stays healthy — a partial
+    # outage (one dead proxy slice) is isolated, not a whole-cycle abort.
+    b = SweepBreaker(3, workers=2)
+    assert b.record_error(0) is False
+    assert b.record_error(0) is False
+    assert b.record_error(0) is False         # worker 0 hit threshold, but worker 1 hasn't
+    assert b.record_error(0) is False         # still only 1 of 2 workers down
+    assert b.tripped() is False
+
+
+def test_breaker_per_worker_trips_only_when_all_workers_fail():
+    # Both workers reach the threshold -> the whole gateway looks down -> trip.
+    b = SweepBreaker(3, workers=2)
+    b.record_error(0); b.record_error(0); b.record_error(0)   # worker 0 at threshold
+    assert b.tripped() is False
+    assert b.record_error(1) is False
+    assert b.record_error(1) is False
+    assert b.record_error(1) is True          # worker 1 hits threshold too -> trip
+    assert b.tripped() is True
+
+
+def test_breaker_per_worker_success_resets_only_that_worker():
+    # A worker's success clears only ITS streak, so a healthy worker keeps the
+    # cycle alive even as a dead worker keeps erroring.
+    b = SweepBreaker(3, workers=2)
+    b.record_error(0); b.record_error(0); b.record_error(0)   # worker 0 at threshold
+    b.record_error(1); b.record_error(1)
+    b.record_ok(1)                            # worker 1 recovers -> its streak resets
+    assert b.record_error(1) is False         # worker 1 back to 1, not at threshold
+    assert b.tripped() is False
+
+
 def test_run_sweep_uses_injected_shared_breaker():
     # A breaker already near its threshold from a sibling worker trips this
     # sweep on its first error even though max_consecutive_errors is not passed.

@@ -83,41 +83,53 @@ model honest and closest to the target architecture.
 ### Shared circuit breaker (`SweepBreaker`)
 
 A small thread-safe breaker replaces the local int so K workers share one
-"is the whole gateway down" signal:
+"is the whole gateway down" signal. It is **per-worker**: with disjoint proxy
+slices (AGF_PROXIES >= K) one dead slice must NOT trip the global breaker while
+other workers are healthy, so each worker keeps its OWN consecutive-error count
+and the cycle trips only when EVERY worker has independently reached the
+threshold:
 
 ```python
 class SweepBreaker:
-    def __init__(self, threshold: int):   # 0 disables
+    def __init__(self, threshold: int, workers: int = 1):   # 0 disables
         self._threshold = threshold
+        self._workers = max(1, workers)
         self._lock = threading.Lock()
-        self._consecutive = 0
+        self._consecutive: dict[int, int] = {}   # per-worker streaks
         self._tripped = False
-    def record_error(self) -> bool:       # True once tripped
+    def record_error(self, worker_id: int = 0) -> bool:      # True once tripped
         with self._lock:
-            self._consecutive += 1
-            if self._threshold and self._consecutive >= self._threshold:
+            self._consecutive[worker_id] = self._consecutive.get(worker_id, 0) + 1
+            if self._threshold and sum(
+                    1 for c in self._consecutive.values() if c >= self._threshold
+            ) >= self._workers:
                 self._tripped = True
             return self._tripped
-    def record_ok(self) -> None:
+    def record_ok(self, worker_id: int = 0) -> None:
         with self._lock:
-            self._consecutive = 0
+            self._consecutive[worker_id] = 0     # resets only THIS worker's streak
     def tripped(self) -> bool:
         with self._lock:
             return self._tripped
 ```
 
-`run_sweep` grows one optional param `breaker=None`; when None it builds
-`SweepBreaker(max_consecutive_errors)` internally, so **every existing
-caller and test is behaviourally identical** (single-worker: increment on
-error, reset on success, raise at threshold, 0 disables). Inside the entry
-loop: check `breaker.tripped()` first and stop early if another worker
-tripped; on error call `record_error()` and raise if it returns True; on a
-fully-paged keyword call `record_ok()`.
+`run_sweep` grows two optional params, `breaker=None` and `worker_id=0`; when
+`breaker` is None it builds `SweepBreaker(max_consecutive_errors, workers=1)`
+internally, so **every existing single-worker caller and test is behaviourally
+identical** (worker 0: increment on error, reset on its own success, raise at
+threshold, 0 disables). Inside the entry loop: check `breaker.tripped()` first
+and stop early if the cycle tripped; on error call `record_error(worker_id)`
+and raise if it returns True; on a fully-paged keyword call
+`record_ok(worker_id)`.
 
-Shared semantics: 5 consecutive errors *across all workers* trip the
-cycle; if any worker is still succeeding, its `record_ok()` resets the
-streak — i.e. we abort only when the whole gateway looks down, which is the
-correct "dead-proxy death-march" guard for the concurrent case.
+`run_parallel_sweep` builds `SweepBreaker(max_consecutive_errors,
+workers=len(shards))` and gives worker i its index as `worker_id` (worker i
+owns extractor i, shard i, and breaker slot i).
+
+Per-worker semantics: the cycle aborts only when ALL workers reach `threshold`
+consecutive errors — a genuine gateway-wide outage. A partial outage (one dead
+proxy slice) is isolated to its shard and never false-aborts the healthy
+workers; any worker's success resets only its own streak.
 
 ### Stats merge
 

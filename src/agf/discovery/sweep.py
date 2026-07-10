@@ -32,27 +32,37 @@ SOCIAL_HOSTS = {"facebook.com", "fb.me", "m.facebook.com", "l.facebook.com", "lm
 
 
 class SweepBreaker:
-    """Thread-safe dead-proxy circuit breaker shared across concurrent sweep
-    workers. `threshold` consecutive facade-exhausted errors ACROSS workers trip
-    it; any worker's success resets the streak (so we abort only when the whole
-    gateway looks down). threshold=0 disables (the default single-caller case)."""
+    """Thread-safe dead-proxy circuit breaker shared across concurrent sweep workers.
 
-    def __init__(self, threshold: int):
+    PER-WORKER semantics (2026-07-10 review): with disjoint proxy slices (AGF_PROXIES
+    >= K) one dead slice must NOT trip the global breaker while other workers are
+    healthy. Each worker keeps its OWN consecutive-error count; the cycle trips only
+    when EVERY worker has independently reached `threshold` consecutive errors — i.e.
+    the whole gateway looks down, not one bad slice. Any worker's success resets only
+    that worker's streak. threshold=0 disables (the default single-caller case).
+
+    Single-worker (workers=1) is byte-identical to the old shared int: worker 0 trips
+    at `threshold` consecutive errors, resets on its own success, 0 disables."""
+
+    def __init__(self, threshold: int, workers: int = 1):
         self._threshold = threshold
+        self._workers = max(1, workers)
         self._lock = threading.Lock()
-        self._consecutive = 0
+        self._consecutive: dict[int, int] = {}
         self._tripped = False
 
-    def record_error(self) -> bool:
+    def record_error(self, worker_id: int = 0) -> bool:
         with self._lock:
-            self._consecutive += 1
-            if self._threshold and self._consecutive >= self._threshold:
+            self._consecutive[worker_id] = self._consecutive.get(worker_id, 0) + 1
+            if self._threshold and sum(
+                    1 for c in self._consecutive.values() if c >= self._threshold
+            ) >= self._workers:
                 self._tripped = True
             return self._tripped
 
-    def record_ok(self) -> None:
+    def record_ok(self, worker_id: int = 0) -> None:
         with self._lock:
-            self._consecutive = 0
+            self._consecutive[worker_id] = 0
 
     def tripped(self) -> bool:
         with self._lock:
@@ -173,7 +183,8 @@ async def run_sweep(engine, extractor, *, entries=None, keywords=None,
                     heartbeat=None, patience_pages: int | None = None,
                     max_depth: int | None = None,
                     page_delay: float | None = None,
-                    collect=None, track_pages: bool = False) -> dict:
+                    collect=None, track_pages: bool = False,
+                    worker_id: int = 0) -> dict:
     """Sweep the taxonomy (or an explicit entry/keyword subset) and persist candidates.
     Returns counters for sweep_runs. `keywords` (list[str]) is a convenience override
     used by the worker dry-run; it implies KEYWORD_UNORDERED.
@@ -217,7 +228,7 @@ async def run_sweep(engine, extractor, *, entries=None, keywords=None,
     if page_delay is None:
         page_delay = _env_float("AGF_SWEEP_PAGE_DELAY", 2.0)
     if breaker is None:
-        breaker = SweepBreaker(max_consecutive_errors)
+        breaker = SweepBreaker(max_consecutive_errors, workers=1)
     stats = {"keywords_swept": 0, "serp_requests": 0, "raw_ads": 0,
              "candidates_new": 0, "candidates_seen": 0, "errors": 0,
              "funnel_new": 0, "funnel_seen": 0,
@@ -251,7 +262,7 @@ async def run_sweep(engine, extractor, *, entries=None, keywords=None,
                 # failed `search`: count the error, bump the breaker, move on. Pages
                 # persisted before the raise stay committed (short per-page txns).
                 stats["errors"] += 1
-                if breaker.record_error():
+                if breaker.record_error(worker_id):
                     raise ExtractError(
                         "sweep circuit-breaker: consecutive search errors across "
                         "workers — proxy/gateway likely down, aborting cycle",
@@ -283,7 +294,7 @@ async def run_sweep(engine, extractor, *, entries=None, keywords=None,
         stats["serp_requests"] += pages_fetched  # actual pages fetched this keyword
         if errored:
             continue
-        breaker.record_ok()                       # any fully-paged keyword clears the streak
+        breaker.record_ok(worker_id)              # a fully-paged keyword clears THIS worker's streak
         stats["keywords_swept"] += 1
         sleep(kw_delay)
     return stats
@@ -336,20 +347,24 @@ def run_parallel_sweep(engine, extractors, *, entries=None, keywords=None,
     if keywords is not None:
         entries = [e for e in entries if e.keyword in set(keywords)]
     shards = _partition(entries, len(extractors))
-    breaker = SweepBreaker(max_consecutive_errors)
+    # Per-worker breaker: trips only when EVERY worker (one per shard) independently
+    # reaches the threshold, so one dead proxy slice can't false-abort the whole cycle.
+    breaker = SweepBreaker(max_consecutive_errors, workers=len(shards) or 1)
 
-    def _run(extractor, shard):
+    def _run(extractor, shard, worker_id):
         return asyncio.run(run_sweep(
             engine, extractor, entries=shard, countries=countries,
             max_pages=max_pages, kw_delay=kw_delay,
             max_consecutive_errors=max_consecutive_errors, breaker=breaker,
             heartbeat=heartbeat, patience_pages=patience_pages,
-            max_depth=max_depth, page_delay=page_delay, track_pages=track_pages))
+            max_depth=max_depth, page_delay=page_delay, track_pages=track_pages,
+            worker_id=worker_id))
 
     if len(shards) <= 1:
-        parts = [_run(extractors[0], shards[0])] if shards else []
+        parts = [_run(extractors[0], shards[0], 0)] if shards else []
     else:
-        pairs = list(zip(extractors, shards))       # extractor i owns shard i
-        with ThreadPoolExecutor(max_workers=len(pairs)) as pool:
-            parts = list(pool.map(lambda pr: _run(pr[0], pr[1]), pairs))
+        # worker i owns extractor i, shard i, AND breaker worker_id i
+        triples = list(zip(extractors, shards, range(len(shards))))
+        with ThreadPoolExecutor(max_workers=len(triples)) as pool:
+            parts = list(pool.map(lambda tr: _run(tr[0], tr[1], tr[2]), triples))
     return _merge_sweep_stats(parts) if parts else _merge_sweep_stats([{}])

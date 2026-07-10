@@ -110,3 +110,23 @@ def test_parallel_sweep_shared_breaker_aborts_all(_migrated_engine):
     with pytest.raises(ExtractError):
         run_parallel_sweep(_migrated_engine, exts, entries=_entries(30),
                            kw_delay=0, page_delay=0, max_consecutive_errors=3)
+
+
+def test_parallel_sweep_one_dead_worker_does_not_abort(_migrated_engine):
+    # PER-WORKER breaker (2026-07-10 review): one worker's dead proxy slice erroring
+    # past the threshold must NOT false-abort the cycle while the other worker is
+    # healthy. The breaker trips only when ALL workers stall.
+    class _Dead(FakeExtractor):
+        async def search_page(self, *, query="", cursor=None, **kw):
+            raise ExtractError("proxy down", ErrorKind.TRANSIENT)
+
+    class _Healthy(FakeExtractor):
+        async def search_page(self, *, query="", cursor=None, **kw):
+            return [], None, False
+
+    exts = [_Dead(), _Healthy()]              # worker 0 dead, worker 1 healthy
+    # Does NOT raise; the healthy worker's shard completes.
+    stats = run_parallel_sweep(_migrated_engine, exts, entries=_entries(20),
+                               kw_delay=0, page_delay=0, max_consecutive_errors=3)
+    assert stats["keywords_swept"] == 10      # healthy worker's 10 keywords all swept
+    assert stats["errors"] == 10              # dead worker errored on each of its 10
