@@ -115,6 +115,8 @@ survivors become trials. the mining pipe only fills up to **40 trials of its own
 
 same subset-dedup and dead-basin novelty gate as pipe 1, then into the trial pool.
 
+**crowding penalty (shipped 2026-07-10).** the flywheel used to promote a trial keyword on raw candidate count — which rewards saturated niches (there's always another calorie tracker to find), the opposite of the "find interesting apps" goal. now every kept app carries a **crowding** score (mean similarity to its 10 nearest neighbours in the corpus; ≥0.80 = sitting in a clone cluster, measured to like-rate 2.8% vs 8-12% elsewhere). a trial only promotes on its **uncrowded** yield, the enrich queue and the review deck both demote crowded apps, and a one-off audit rests existing crowded trawling-net keywords. (known gap: a rested keyword can still wake and re-activate on raw yield — durable lifecycle gating is a follow-up.)
+
 **then the lifecycle takes over.** every cycle the flywheel sweeps all live dynamic keywords:
 
 - a **trial** that yields keepers → promoted to **active**, now swept like any other keyword
