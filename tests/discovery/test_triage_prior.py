@@ -67,11 +67,23 @@ def test_missing_or_below_tail_id_gets_no_penalty():
 
 
 def test_explore_lane_blind_to_crowding():
-    # The explore reserve surfaces the oldest FIFO id regardless of its crowding.
+    # The explore reserve is oldest-first and taste-blind — crowding must not touch it.
+    # Make the OLDEST candidate a HIGH-taste match that is ALSO crowded: the penalty
+    # sinks it to the BOTTOM of the exploit priority list, yet the explore lane still
+    # surfaces it early because it is the oldest. (A weaker fixture used the oldest AND
+    # lowest-taste id, which explore surfaces even with no penalty — proving nothing.)
     fifo = [10, 11, 12, 13, 14, 15, 16, 17]      # oldest-first
     d = np.array([1.0, 0.0])
-    emb = {a: [(a - 9) / 10.0, 0.5] for a in fifo}
+    emb = {10: [1.0, 0.0]}                        # oldest = strongest raw taste match
+    emb.update({a: [0.95 - (a - 11) * 0.05, 0.0] for a in fifo[1:]})  # 0.95..0.65
+
+    # id 10's taste (1.0) is penalized to 0.5 — the WEAKEST exploit score — so with no
+    # explore reserve it lands dead last, confirming crowding actually demoted it.
+    exploit_only = prioritize(fifo, emb, d, explore_frac=0.0,
+                              crowding_by_id={10: 0.99}, tail=0.80, penalty=0.5)
+    assert exploit_only[-1] == 10
+
     out = prioritize(fifo, emb, d, explore_frac=0.25,
                      crowding_by_id={10: 0.99}, tail=0.80, penalty=0.5)
     assert set(out) == set(fifo)
-    assert 10 in out[:4]                          # explore still surfaces the crowded oldest
+    assert 10 in out[:4]                          # explore rescues it early, crowding-blind
