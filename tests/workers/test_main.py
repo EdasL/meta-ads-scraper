@@ -11,7 +11,8 @@ from datetime import date, timedelta
 from sqlalchemy import text
 
 from agf.db.engine import begin
-from agf.workers.main import run_once, build_extractor, discovery_due, _env_bool
+from agf.workers.main import (run_once, build_extractor, build_extractors,
+                              discovery_due, _env_bool)
 
 NOW = 1_749_000_000          # ~2026-06-04, matches tests/discovery/conftest
 FAKE_PAGES = ("FAKE1", "FAKE2")
@@ -44,6 +45,91 @@ def _clean_fake(engine):
             conn.execute(text("DELETE FROM public.advertisers WHERE id = ANY(:i)"), {"i": ids})
         conn.execute(text("DELETE FROM public.apps WHERE store_id = ANY(:s)"),
                      {"s": list(FAKE_STORE_IDS)})
+
+
+def test_build_extractors_dry_run_is_single_fake():
+    exts = build_extractors(dry_run=True, now_epoch=NOW, k=3)
+    assert len(exts) == 1                       # dry-run collapses to one zero-network fake
+
+
+def _spy_extractor_pools(monkeypatch):
+    """Replace Extractor with a recorder that captures each worker's ProxyPool list.
+    build_extractors does `from agf.extract.facade import Extractor`, which reads the
+    module attribute at call time, so patching it here takes effect."""
+    import agf.extract.facade as facade
+    pools = []
+
+    class _RecordingExtractor:
+        def __init__(self, *, proxies=None, **kw):
+            pools.append(list(proxies._proxies) if proxies is not None else None)
+
+    monkeypatch.setattr(facade, "Extractor", _RecordingExtractor)
+    return pools
+
+
+def test_build_extractors_k_disjoint_proxy_slices(monkeypatch):
+    # AGF_PROXIES has >= k entries -> one Extractor per disjoint round-robin slice.
+    monkeypatch.setenv("AGF_PROXIES", ",".join(f"p{i}" for i in range(6)))
+    pools = _spy_extractor_pools(monkeypatch)
+    exts = build_extractors(dry_run=False, now_epoch=NOW, k=3)
+    assert len(exts) == 3                        # K independent extractors
+    assert pools == [["p0", "p3"], ["p1", "p4"], ["p2", "p5"]]   # disjoint, complete
+    flat = sorted(p for s in pools for p in s)
+    assert flat == [f"p{i}" for i in range(6)]
+
+
+def test_build_extractors_fewer_proxies_than_workers_share_full_pool(monkeypatch):
+    # Fewer proxies than workers: each worker gets its own pool over the FULL list.
+    monkeypatch.setenv("AGF_PROXIES", "p0,p1")
+    pools = _spy_extractor_pools(monkeypatch)
+    exts = build_extractors(dry_run=False, now_epoch=NOW, k=3)
+    assert len(exts) == 3
+    assert pools == [["p0", "p1"], ["p0", "p1"], ["p0", "p1"]]
+
+
+class _Stop(Exception):
+    pass
+
+
+def test_production_sweep_calls_run_parallel_sweep(monkeypatch, _migrated_engine):
+    # The non-dry-run sweep branch must route through run_parallel_sweep with K
+    # extractors from build_extractors — not the single-extractor run_sweep.
+    import agf.workers.main as m
+
+    calls = {}
+
+    def fake_build_extractors(dry_run, now_epoch, k):
+        calls["k"] = k
+        assert dry_run is False
+        return [object() for _ in range(k)]
+
+    def fake_run_parallel_sweep(engine, extractors, **kw):
+        calls["n_extractors"] = len(extractors)
+        return {"keywords_swept": 0, "candidates_new": 0, "candidates_seen": 0,
+                "errors": 0, "drops": {}}
+
+    def boom(*a, **k):
+        raise AssertionError("production sweep must not call run_sweep")
+
+    monkeypatch.setattr(m, "build_extractors", fake_build_extractors)
+    monkeypatch.setattr(m, "run_parallel_sweep", fake_run_parallel_sweep)
+    monkeypatch.setattr(m, "run_sweep", boom)
+    monkeypatch.setenv("AGF_SWEEP_WORKERS", "4")
+    # Stop right after the sweep branch (in triage) so we don't exercise later stages.
+    def _stop_triage(*a, **k):
+        raise _Stop()
+    monkeypatch.setattr(m, "run_triage", _stop_triage)
+
+    try:
+        run_once(_migrated_engine, object(),
+                 now_epoch=NOW, as_of=date(2026, 6, 4), dry_run=False,
+                 http_client=object(), continuous_discovery=True,
+                 funnel_daily=False, corpus_refresh_daily=False,
+                 generic_deep_enabled=False, flywheel_daily=False,
+                 release_mint_enabled=False)
+    except _Stop:
+        pass
+    assert calls["k"] == 4 and calls["n_extractors"] == 4
 
 
 def test_dry_run_sweep_triages_and_enriches(_migrated_engine):

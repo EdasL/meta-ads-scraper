@@ -107,7 +107,7 @@ from agf.discovery.keyword_mining import fetch_gem_copy, mine_phrases
 from agf.discovery.funnel_sweep import deep_funnel_entries, run_funnel_sweep
 from agf.discovery.corpus_refresh import refresh_corpus
 from agf.discovery.keeper_history import pull_keeper_history
-from agf.discovery.sweep import run_sweep
+from agf.discovery.sweep import run_sweep, run_parallel_sweep
 from agf.discovery.websub_bridge import run_websub_bridge
 from agf.discovery.taxonomy import (TaxonomyEntry, all_entries,
                                     sweep_entries)
@@ -155,6 +155,25 @@ def build_extractor(dry_run, now_epoch):
         return FakeExtractor.demo(now_epoch)
     from agf.extract.facade import Extractor
     return Extractor()
+
+
+def build_extractors(dry_run, now_epoch, k):
+    """K independent extractors (own SessionPool + proxy each) for the concurrent
+    sweep. Distinct proxy slices when AGF_PROXIES has >=k entries; otherwise each
+    shares the full pool (DataImpulse rotates residential IPs per connection).
+    Dry-run collapses to a single zero-network fake."""
+    if dry_run:
+        from agf.extract.fake import FakeExtractor
+        return [FakeExtractor.demo(now_epoch)]
+    from agf.extract.facade import Extractor
+    from agf.extract.proxy import ProxyPool
+    proxies = ProxyPool.list_from_env()
+    k = max(1, k)
+    if len(proxies) >= k and proxies:
+        slices = [proxies[i::k] for i in range(k)]          # disjoint round-robin slices
+        return [Extractor(proxies=ProxyPool(sl)) for sl in slices]
+    # fewer proxies than workers (or none): each worker its own pool over the full list
+    return [Extractor(proxies=ProxyPool(proxies)) for _ in range(k)]
 
 
 def dry_run_deps_factory(extractor):
@@ -538,11 +557,13 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
                     kw_delay=0, sleep=lambda s: None))
                 lookup_ios = lookup_android = _demo_lookup
             else:
-                sweep_stats = asyncio.run(run_sweep(
-                    engine, extractor, max_pages=sweep_pages, kw_delay=kw_delay,
+                extractors = build_extractors(dry_run, now_epoch,
+                                              _env_int("AGF_SWEEP_WORKERS", 3))
+                sweep_stats = run_parallel_sweep(
+                    engine, extractors, max_pages=sweep_pages, kw_delay=kw_delay,
                     max_consecutive_errors=sweep_max_consecutive_errors,
-                    heartbeat=_touch_heartbeat))   # long stage — beat per keyword so the
-                                                   # watchdog can't kill a progressing sweep
+                    heartbeat=_touch_heartbeat)   # long stage — beat per keyword so the
+                                                  # watchdog can't kill a progressing sweep
                 lookup_ios = partial(lookup_itunes_batch, http_client, pause=3.0)
                 lookup_android = lookup_google_play
             if dry_run or http_client is not None:
