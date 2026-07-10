@@ -88,6 +88,12 @@ def test_sweep_run_gate(pg_conn):
     # against the DB's date, not the host's — host date.today() vs DB now()::date can
     # differ by a day at the UTC/local midnight boundary (TZ skew → flaky failure).
     today = pg_conn.execute(text("SELECT now()::date")).scalar()
+    # Hermetic: the session-scoped agf_it DB accumulates finished sweep_runs from
+    # worker-stage tests that commit outside a rollback, so clear today's rows inside
+    # this rolled-back txn before asserting the gate (rollback restores them at
+    # teardown). Mirrors the shared-DB tolerance of the reap test just below.
+    pg_conn.execute(text("DELETE FROM discovery.sweep_runs WHERE started_at::date = :d"),
+                    {"d": today})
     assert cand.sweep_ran_today(pg_conn, today) is False
     run_id = cand.open_sweep_run(pg_conn)
     assert cand.sweep_ran_today(pg_conn, today) is False   # unfinished run doesn't gate
