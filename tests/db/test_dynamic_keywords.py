@@ -139,3 +139,38 @@ def test_apply_verdicts_frees_budget_reached_trials(pg_conn, monkeypatch):
     assert _status(pg_conn, "FWTEST winner") == "active"
     assert _status(pg_conn, "FWTEST dud") == "retired"
     assert _status(pg_conn, "FWTEST young") == "trial"   # still earning its verdict
+
+
+def test_retested_at_column_exists(pg_conn):
+    # migration 153
+    row = pg_conn.execute(text(
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_schema='discovery' AND table_name='dynamic_keywords' "
+        "AND column_name='retested_at'")).one_or_none()
+    assert row is not None
+
+
+def test_live_keywords_active_gap_spacing(pg_conn):
+    dk.add_trial_keywords(pg_conn, ["gap fresh active", "gap stale active",
+                                    "gap trial kw"])
+    pg_conn.execute(text(
+        "UPDATE discovery.dynamic_keywords SET status='active', "
+        "last_swept_at = now() - make_interval(hours => 1) "
+        "WHERE keyword='gap fresh active'"))
+    pg_conn.execute(text(
+        "UPDATE discovery.dynamic_keywords SET status='active', "
+        "last_swept_at = now() - make_interval(hours => 13) "
+        "WHERE keyword='gap stale active'"))
+    names = lambda rows: {r.keyword for r in rows}
+    spaced = names(dk.live_keywords(pg_conn, active_gap_hours=12))
+    assert "gap stale active" in spaced          # older than the gap -> swept
+    assert "gap fresh active" not in spaced      # swept 1h ago -> spaced out
+    assert "gap trial kw" in spaced              # trials always in rotation
+    everyone = names(dk.live_keywords(pg_conn))  # gap 0 = no spacing (default)
+    assert {"gap fresh active", "gap stale active", "gap trial kw"} <= everyone
+
+
+def test_live_keywords_returns_retested_at(pg_conn):
+    dk.add_trial_keywords(pg_conn, ["gap trial kw2"])
+    row = [r for r in dk.live_keywords(pg_conn) if r.keyword == "gap trial kw2"][0]
+    assert row.retested_at is None               # column present on the row

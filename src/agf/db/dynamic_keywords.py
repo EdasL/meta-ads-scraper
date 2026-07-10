@@ -134,17 +134,24 @@ def add_trial_keywords(conn, keywords, *, source: str = "gem_copy", kind: str = 
     return added
 
 
-def live_keywords(conn, *, kind: str = "app"):
-    """The keywords the daily flywheel sweep runs: trials + proven actives + woken resting
+def live_keywords(conn, *, kind: str = "app", active_gap_hours: int = 0):
+    """The keywords a flywheel pass sweeps: trials + proven actives + woken resting
     keywords (cooldown elapsed / NULL), this kind only. A resting keyword whose
-    next_eligible_at is still in the future stays out of the rotation."""
+    next_eligible_at is still in the future stays out of the rotation.
+
+    active_gap_hours (0 = off): an ACTIVE keyword only re-enters the rotation when
+    its last sweep is at least this old — at a fast tick cadence, re-sweeping a
+    proven keyword every pass is pure proxy cost (new ads appear over days).
+    Trials and woken resting keywords are always returned; they need verdicts."""
     return conn.execute(text(
-        "SELECT id, keyword, status, sweeps_used, new_candidates_total "
+        "SELECT id, keyword, status, sweeps_used, new_candidates_total, retested_at "
         "FROM discovery.dynamic_keywords "
-        "WHERE kind=:k AND (status IN ('trial','active') "
+        "WHERE kind=:k AND (status='trial' "
+        "  OR (status='active' AND (:gap = 0 OR last_swept_at IS NULL "
+        "      OR last_swept_at <= now() - make_interval(hours => :gap))) "
         "  OR (status='resting' AND (next_eligible_at IS NULL OR next_eligible_at <= now()))) "
         "ORDER BY CASE status WHEN 'trial' THEN 0 WHEN 'active' THEN 1 ELSE 2 END, id"),
-        {"k": kind}).all()  # trials first, then active, then woken resting
+        {"k": kind, "gap": active_gap_hours}).all()  # trials first
 
 
 def record_keyword_sweep(conn, keyword_id: int, *, new_candidates: int) -> str:
