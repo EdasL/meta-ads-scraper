@@ -87,19 +87,26 @@ def close_sweep_run(conn, run_id: int, *, sweep: dict | None = None,
 
 
 def kept_with_embeddings(conn):
-    """kept_advertiser_id -> candidate embedding (for kept candidates that were embedded)."""
+    """Returns (emb_by_id, crowding_by_id) for kept candidates that were embedded.
+    emb_by_id: kept_advertiser_id -> candidate embedding. crowding_by_id:
+    kept_advertiser_id -> crowding score, populated rows only (NULL crowding is
+    omitted so callers degrade open — an unscored candidate is not treated as crowded)."""
     rows = conn.execute(text(
-        "SELECT c.kept_advertiser_id, e.embedding "
+        "SELECT c.kept_advertiser_id, e.embedding, e.crowding "
         "FROM discovery.candidates c "
         "JOIN discovery.candidate_embeddings e ON e.candidate_id = c.id "
         "WHERE c.status='kept' AND c.kept_advertiser_id IS NOT NULL "
         "AND e.dim > 0")).all()
-    return {a: [float(x) for x in v] for a, v in rows}
+    emb = {a: [float(x) for x in v] for a, v, _ in rows}
+    crowding = {a: float(cr) for a, _, cr in rows if cr is not None}
+    return emb, crowding
 
 
-def taste_prioritized_kept(conn, *, user, explore_frac=0.25):
+def taste_prioritized_kept(conn, *, user, explore_frac=0.25, penalty=0.5):
     """kept_advertiser_ids reordered by cosine to `user`'s liked direction, with an
-    explore reserve. Advisory: any cold-start / missing-data path returns plain FIFO."""
+    explore reserve and a `penalty` demotion for crowded (clone-cluster) candidates.
+    Advisory: any cold-start / missing-data path returns plain FIFO."""
+    from agf.db.dynamic_keywords import crowding_tail
     from agf.discovery.triage_prior import liked_direction, prioritize
     fifo = kept_advertiser_ids(conn)
     if not fifo:
@@ -116,10 +123,11 @@ def taste_prioritized_kept(conn, *, user, explore_frac=0.25):
     direction = liked_direction(liked, disliked)
     if direction is None:
         return fifo
-    cand_emb = kept_with_embeddings(conn)
+    cand_emb, cand_crowding = kept_with_embeddings(conn)
     if not cand_emb:
         return fifo
-    return prioritize(fifo, cand_emb, direction, explore_frac=explore_frac)
+    return prioritize(fifo, cand_emb, direction, explore_frac=explore_frac,
+                      crowding_by_id=cand_crowding, tail=crowding_tail(), penalty=penalty)
 
 
 def reap_open_runs(conn) -> dict[str, int]:

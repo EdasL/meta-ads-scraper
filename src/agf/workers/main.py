@@ -809,7 +809,8 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
             try:
                 kept = taste_prioritized_kept(
                     conn, user=os.environ.get("AGF_TRIAGE_USER", "founder@fielddesk.local"),
-                    explore_frac=float(os.environ.get("AGF_TRIAGE_EXPLORE_FRAC", "0.25")))
+                    explore_frac=float(os.environ.get("AGF_TRIAGE_EXPLORE_FRAC", "0.25")),
+                    penalty=float(os.environ.get("AGF_CROWDING_PENALTY", "0.5")))
             except Exception as exc:
                 print(f"[worker] triage-prior fell back to FIFO: {exc!r}",
                       file=sys.stderr, flush=True)

@@ -13,17 +13,28 @@ def liked_direction(liked, disliked):
     return ContentPreferenceModel.fit(liked, disliked).direction
 
 
-def prioritize(fifo_order, emb_by_id, direction, explore_frac=0.25):
+def prioritize(fifo_order, emb_by_id, direction, explore_frac=0.25,
+               crowding_by_id=None, tail=0.80, penalty=0.5):
     """fifo_order = advertiser ids oldest-first. Returns a reordering: priority slots
     by cosine(emb, direction) desc, with ~explore_frac of slots filled oldest-first.
-    direction None / no embeddings -> fifo_order unchanged. Nothing is dropped."""
+    direction None / no embeddings -> fifo_order unchanged. Nothing is dropped.
+
+    When crowding_by_id is supplied, a candidate whose crowding >= tail (a clone
+    cluster) has `penalty` subtracted from its taste score, sinking it behind the
+    positive-signal field without dropping it. crowding_by_id=None reproduces the
+    pre-crowding ordering exactly. The explore lane stays crowding-blind by design."""
     if direction is None or not emb_by_id:
         return list(fifo_order)
     d = np.asarray(direction, float)
 
     def score(a):
         v = emb_by_id.get(a)
-        return float(np.dot(np.asarray(v, float), d)) if v is not None else float("-inf")
+        if v is None:
+            return float("-inf")
+        s = float(np.dot(np.asarray(v, float), d))
+        if crowding_by_id is not None and (crowding_by_id.get(a) or 0) >= tail:
+            s -= penalty
+        return s
 
     priority = sorted(fifo_order, key=score, reverse=True)
     explore_every = max(2, round(1 / explore_frac)) if explore_frac > 0 else 0
