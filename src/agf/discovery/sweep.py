@@ -129,6 +129,13 @@ def _process_page(engine, records, *, entry, depth: int, stats: dict) -> int:
                         funnel_rows.append(frow)
                     continue
         stats["drops"][disposition] += 1
+    # Deterministic upsert order: two concurrent workers on disjoint keywords can find
+    # the SAME apps in opposite order and deadlock in Postgres (an OperationalError that
+    # is NOT an ExtractError, so it bypasses the breaker and kills the cycle). Sorting
+    # both lists on a stable key makes every worker acquire row locks in one global
+    # order. Order-independent: dedup, first_seen_depth and the stats counts are unchanged.
+    rows.sort(key=lambda r: (r["page_id"], r["store"], r["store_id"]))
+    funnel_rows.sort(key=lambda fr: (fr["page_id"], fr["landing_domain"]))
     page_new = 0
     if rows:                                       # one short txn for this page's apps
         with begin(engine) as conn:
