@@ -33,15 +33,16 @@ Two payoffs per pass:
 openers are EXCLUDED (already in `FUNNEL_PHRASES`). Four groups:
 
 - **Ultra-generic firehose** (KEYWORD_UNORDERED): `app`, `ai`
-- **App-install CTAs** (KEYWORD_EXACT_PHRASE): `download the app`, `get the app`,
-  `on the App Store`, `start your free trial`, `3-day free trial`
+- **App-install CTAs** (KEYWORD_EXACT_PHRASE): `get the app`, `on the App Store`,
+  `start your free trial`, `3-day free trial` (`download the app` dropped at plan
+  time — it is already a daily-swept STORE_FRAGMENT)
 - **AI copy phrases** (KEYWORD_EXACT_PHRASE): `AI headshots`, `AI photo generator`,
   `AI companion`, `talk to AI`, `your personal AI`, `AI powered`
 - **Intent/emotion hooks** (KEYWORD_EXACT_PHRASE): `does this actually work`,
   `wish I knew sooner`, `my biggest regret`, `what no one tells you about`,
   `stopped using`, `thousands switched`, `customers are obsessed`
 
-20 terms × ≤150 pages ≈ ≤3k SERP requests per weekly pass — the same order
+19 terms × ≤150 pages ≈ ≤3k SERP requests per weekly pass — the same order
 as the funnel deep pass (28 × 100), and the proxy pool sits ~90% idle.
 
 ## Mechanism
