@@ -2,7 +2,7 @@ from types import SimpleNamespace
 from agf.scoring.vetoes import (
     apply_vetoes, persistence_gate,
     relaunch, game_app, no_app, unverified_app, incumbent_ad_volume,
-    incumbent_audience, established_traction,
+    established_traction,
 )
 
 
@@ -45,9 +45,11 @@ def test_relaunch_fires_on_emerging_with_huge_rating_base():
 def test_removed_vetoes_no_longer_fire():
     # GemScore v2 (spec 2026-06-11): ownership is irrelevant to copy-worthiness,
     # and the seasonal STL check is gone — a parent company or a seasonal-looking
-    # series must not kill an otherwise-clean gem.
+    # series must not kill an otherwise-clean gem. The incumbent_audience veto
+    # (10k page likes) was removed 2026-07-10: audience size alone never vetoes.
     assert apply_vetoes(_fv(parent_company_id=7)).vetoed is False
     assert apply_vetoes(_fv(velocity_series=(2, 1, 2, 6) * 3)).vetoed is False
+    assert apply_vetoes(_fv(page_like_count=5_000_000)).vetoed is False
 
 
 def test_game_app_fires_only_on_true():
@@ -80,13 +82,6 @@ def test_incumbent_ad_volume_fires_above_200_active_ads():
     assert incumbent_ad_volume(_fv(meta_active_ads=None, active_ad_count=190)) is False
     # a measured-small library wins over a stale larger stored count
     assert incumbent_ad_volume(_fv(meta_active_ads=30, active_ad_count=210)) is False
-
-
-def test_incumbent_audience_fires_above_10k_likes():
-    assert incumbent_audience(_fv(page_like_count=10_001)) is True
-    assert apply_vetoes(_fv(page_like_count=10_001)).reason == "incumbent_audience"
-    assert incumbent_audience(_fv(page_like_count=10_000)) is False  # at threshold passes
-    assert incumbent_audience(_fv(page_like_count=None)) is False     # unknown passes
 
 
 def test_established_traction_sees_all_linked_rating_bases():

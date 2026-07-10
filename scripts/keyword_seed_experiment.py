@@ -36,11 +36,12 @@ from agf.classify import classify_url
 from agf.enrich_full.appstore import lookup_google_play, lookup_itunes_batch
 from agf.extract.errors import ExtractError
 from agf.extract.facade import Extractor
-from agf.scoring.vetoes import INCUMBENT_PAGE_LIKES_MAX
 
 PAGES = int(os.environ.get("AGF_EXP_PAGES", "2"))
 DELAY = float(os.environ.get("AGF_KW_DELAY", "3.0"))
-VETO_LIKES = int(os.environ.get("AGF_VETO_LIKES", str(INCUMBENT_PAGE_LIKES_MAX)))
+# Experiment-only knob. The production pipeline no longer has a page-likes
+# ceiling for apps (removed 2026-07-10); 10k kept here as the historical default.
+VETO_LIKES = int(os.environ.get("AGF_VETO_LIKES", "10000"))
 COUNTRIES = ["US"]
 
 

@@ -41,7 +41,6 @@ def test_drops():
     cases = [
         (ad("https://example.com/landing"), "non_app"),          # web/funnel -> v2
         (ad("https://www.instagram.com/someone"), "social"),
-        (ad("https://apps.apple.com/us/app/x/id12345", likes=10_001), "incumbent_likes"),
         (ad("https://apps.apple.com/us/app/broken"), "no_store_id"),
         (ad(None), "no_link"),
     ]
@@ -50,16 +49,13 @@ def test_drops():
         assert (disposition, row) == (expected, None)
 
 
-def test_threshold_boundary_is_inclusive():
-    d, _ = classify_candidate(ad("https://apps.apple.com/us/app/x/id1", likes=10_000),
-                              keyword="k", technique="t")
-    assert d == "candidate"                       # exactly 10k passes (veto is >, not >=)
-
-
-def test_null_likes_pass():                       # NULL/unknown never vetoes (repo rule)
-    d, _ = classify_candidate(ad("https://apps.apple.com/us/app/x/id1", likes=None),
-                              keyword="k", technique="t")
-    assert d == "candidate"
+def test_page_likes_never_drop_an_app_candidate():
+    # The 10k incumbent-likes ceiling was removed (user 2026-07-10): a big FB page
+    # advertising a store app is a candidate; NULL/unknown likes also pass.
+    for likes in (10_001, 5_000_000, None):
+        d, _ = classify_candidate(ad("https://apps.apple.com/us/app/x/id1", likes=likes),
+                                  keyword="k", technique="t")
+        assert d == "candidate"
 
 
 # --- persistence -------------------------------------------------------------
@@ -133,8 +129,8 @@ def test_sweep_captures_web_funnel(_migrated_engine):
 
 
 def test_sweep_funnel_capture_tolerates_big_pages(_migrated_engine):
-    # 200k likes: app pipeline vetoes (>10k) but the funnel ceiling is 5M -> captured.
-    # 6M likes: over the funnel ceiling too -> stays an incumbent_likes drop.
+    # 200k likes on a web ad: under the 5M funnel ceiling -> captured.
+    # 6M likes: over the funnel ceiling -> dropped as a plain non_app.
     _clear_funnel_sentinels(_migrated_engine)
     try:
         ext = FakeExtractor(keyword_ads={"meal plan app": [
@@ -145,7 +141,7 @@ def test_sweep_funnel_capture_tolerates_big_pages(_migrated_engine):
         stats = asyncio.run(run_sweep(_migrated_engine, ext, entries=[entry], kw_delay=0))
         assert stats["funnel_new"] == 1
         assert stats["drops"]["funnel_captured"] == 1
-        assert stats["drops"]["incumbent_likes"] == 1
+        assert stats["drops"]["non_app"] == 1
         with _migrated_engine.connect() as conn:
             got = conn.execute(text(
                 "SELECT page_id FROM discovery.funnel_candidates "

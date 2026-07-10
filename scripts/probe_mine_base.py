@@ -74,17 +74,15 @@ def main():
         except Exception as exc:
             print(f"[{term!r}] ERROR {exc!r}")
             continue
-        cand = newp = inc = 0
+        cand = newp = 0
         for ad in ads:
             d, row = classify_candidate(ad, keyword=term, technique="mine_base")
-            if d == "incumbent_likes":
-                inc += 1
             if d == "candidate" and row is not None:
                 cand += 1
                 if str(row["page_id"]) not in known_pids:
                     newp += 1
         total_new += newp
-        print(f"   {term!r:<34} ads={len(ads):>3} candidates={cand:>2} NEW={newp:>2} incumbent={inc:>2}")
+        print(f"   {term!r:<34} ads={len(ads):>3} candidates={cand:>2} NEW={newp:>2}")
     print(f"\nTOTAL NEW advertisers from {len(sample)} mined terms: {total_new}")
 
 

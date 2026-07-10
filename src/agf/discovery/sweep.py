@@ -2,10 +2,10 @@
 keyword sweep that persists app-linked candidates using ONLY fields already present
 on the SERP result — zero requests beyond the search pages themselves.
 
-Inline drops (cheapest-first): no link -> social host -> incumbent page likes
-(INCUMBENT_PAGE_LIKES_MAX, the user-set 10k constant — single source of truth in
-scoring.vetoes) -> non-app destination (web funnels fold into discovery.funnel_candidates
-via fold_web_funnel since 2026-07-07) -> store link without an id.
+Inline drops (cheapest-first): no link -> social host -> non-app destination (web
+funnels fold into discovery.funnel_candidates via fold_web_funnel since 2026-07-07)
+-> store link without an id. Page likes never drop an app candidate (the 10k
+incumbent ceiling was removed 2026-07-10, user-requested).
 
 Commits per keyword (short transactions), so a mid-run throttle-kill keeps progress."""
 import os
@@ -20,7 +20,7 @@ from agf.db.funnel_candidates import upsert_funnel_candidate
 from agf.discovery.funnel_classify import fold_web_funnel
 from agf.discovery.taxonomy import sweep_entries
 from agf.extract.errors import ErrorKind, ExtractError
-from agf.scoring.vetoes import FUNNEL_INCUMBENT_PAGE_LIKES_MAX, INCUMBENT_PAGE_LIKES_MAX
+from agf.scoring.vetoes import FUNNEL_INCUMBENT_PAGE_LIKES_MAX
 
 # Destinations that are neither an app nor a funnel — a social page or ad redirect.
 SOCIAL_HOSTS = {"facebook.com", "fb.me", "m.facebook.com", "l.facebook.com", "lm.facebook.com",
@@ -43,21 +43,19 @@ def _start_date(epoch) -> object | None:
 
 def classify_candidate(ad, *, keyword: str, technique: str) -> tuple[str, dict | None]:
     """Fold one AdRecord into (disposition, candidate-row). Dispositions:
-    'candidate' | 'no_link' | 'social' | 'incumbent_likes' | 'non_app' | 'no_store_id'."""
+    'candidate' | 'no_link' | 'social' | 'non_app' | 'no_store_id'."""
     if not ad.page_id or not ad.link_url:
         return "no_link", None
     if _host(ad.link_url) in SOCIAL_HOSTS:
         return "social", None
-    likes = ad.page_like_count
-    if likes is not None and likes > INCUMBENT_PAGE_LIKES_MAX:
-        return "incumbent_likes", None
     intent = classify_url(ad.link_url)
     if intent.kind not in ("ios", "android"):
         return "non_app", None
     if not intent.store_id:
         return "no_store_id", None
     return "candidate", {
-        "page_id": ad.page_id, "page_name": ad.page_name, "page_like_count": likes,
+        "page_id": ad.page_id, "page_name": ad.page_name,
+        "page_like_count": ad.page_like_count,
         "store": intent.kind, "store_id": str(intent.store_id), "link_url": ad.link_url,
         "cta_type": ad.cta_type, "ad_start_date": _start_date(ad.start_date),
         "source_keyword": keyword, "technique": technique,
@@ -85,10 +83,9 @@ def _process_page(engine, records, *, entry, depth: int, stats: dict) -> int:
             row["first_seen_depth"] = depth       # 1-based page index this ad was found on
             rows.append(row)
             continue
-        if disposition in ("non_app", "incumbent_likes"):
+        if disposition == "non_app":
             # The app pipeline rejected this ad, but its destination may be a web
-            # funnel. Funnels tolerate much bigger pages than apps (a huge page can
-            # run a small new funnel), so only the funnel ceiling applies here.
+            # funnel. Only the funnel ceiling gates on page size here.
             likes = ad.page_like_count
             if likes is None or likes <= FUNNEL_INCUMBENT_PAGE_LIKES_MAX:
                 fdisp, frow = fold_web_funnel(ad, keyword=entry.keyword,
@@ -176,7 +173,7 @@ async def run_sweep(engine, extractor, *, entries=None, keywords=None,
     stats = {"keywords_swept": 0, "serp_requests": 0, "raw_ads": 0,
              "candidates_new": 0, "candidates_seen": 0, "errors": 0,
              "funnel_new": 0, "funnel_seen": 0,
-             "drops": {"no_link": 0, "social": 0, "incumbent_likes": 0,
+             "drops": {"no_link": 0, "social": 0,
                        "non_app": 0, "no_store_id": 0, "funnel_captured": 0}}
     consecutive_errors = 0
     for entry in entries:

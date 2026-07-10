@@ -2,7 +2,8 @@
 
 Probed insight (2026-06-10): a NARROW keyword returns small emerging advertisers even when
 impression-sorted — the keyword does the filtering, not the sort. So discovery is a sweep of
-well-chosen niche/intent keywords, each pulled shallow, then page_like_count-vetoed.
+well-chosen niche/intent keywords, each pulled shallow. (The page_like_count sweep veto
+was removed 2026-07-10; incumbents are filtered at triage/scoring instead.)
 
 Three layers:
 - FUNNEL_PHRASES   — quiz/funnel-intent exact phrases; the near-unique fingerprint of the

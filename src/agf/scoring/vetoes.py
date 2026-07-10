@@ -5,11 +5,11 @@ from dataclasses import dataclass
 MIN_WEEKS = 2            # persistence: a 1-week blip is not a trend
 RELAUNCH_RATING_MAX = 100_000  # "emerging" + this many ratings == a relaunch, not new
 # quality vetoes (real-gems feed 2026-06-10); NULL/unknown always passes
-INCUMBENT_PAGE_LIKES_MAX = 10_000    # FB audience above this == incumbent (user-set 2026-06-10)
-# Funnels scale a large FB audience precisely BECAUSE they work — a proven web2app/quiz
-# funnel operator (The Farmer's Dog, Spoiled Child) has 100k–1M+ likes, so the emerging-app
-# 10k ceiling would discard the best funnels. Only veto true mega-brands here; size/quality
-# filtering is deferred to the funnel confirm stage + scoring.
+# Funnel-only page-likes ceiling: a proven web2app/quiz funnel operator (The Farmer's
+# Dog, Spoiled Child) has 100k–1M+ likes, so only true mega-brands are vetoed; size/quality
+# filtering is deferred to the funnel confirm stage + scoring. Apps have NO page-likes
+# ceiling (10k limit removed 2026-07-10, user-requested) — incumbents are caught by the
+# ad-volume, rating-base and relaunch vetoes instead.
 FUNNEL_INCUMBENT_PAGE_LIKES_MAX = 5_000_000
 MAX_ACTIVE_ADS_FOR_GEM = 200         # an ad library bigger than this == funded growth team, not emerging (user-set 2026-06-13, was 80)
 ESTABLISHED_INSTALLS_MAX = 100_000     # DEPRECATED 2026-06-27: no longer gates keep/drop — Play's
@@ -66,18 +66,13 @@ def incumbent_ad_volume(fv) -> bool:
     return (observed or 0) > MAX_ACTIVE_ADS_FOR_GEM
 
 
-def incumbent_audience(fv) -> bool:
-    # huge FB page audience -> incumbent. NULL passes.
-    return (fv.page_like_count or 0) > INCUMBENT_PAGE_LIKES_MAX
-
-
 def established_traction(fv) -> bool:
     # already-huge store traction -> established, not emerging. NULLs pass.
     # Rating base only: Play's cumulative maxInstalls was dropping ~83% of Android
     # candidates on a signal iOS apps never expose, skewing the feed ~90/10 to iOS
     # (user 2026-06-27). Both stores are judged on rating_count, the comparable axis;
     # mega-install giants still carry huge rating bases, and funded incumbents are
-    # caught by the page-likes / ad-volume / relaunch vetoes. Checks the max across
+    # caught by the ad-volume / relaunch vetoes. Checks the max across
     # ALL linked listings so a high-rating Android sibling can't hide behind a small iOS one.
     ratings = max(fv.rating_count or 0, getattr(fv, "max_rating_count", None) or 0)
     return ratings > ESTABLISHED_RATINGS_MAX
@@ -90,7 +85,6 @@ _VETOES = [
     (no_app, "no_app"),
     (unverified_app, "unverified_app"),
     (incumbent_ad_volume, "incumbent_ad_volume"),
-    (incumbent_audience, "incumbent_audience"),
     (established_traction, "established_traction"),
 ]
 
