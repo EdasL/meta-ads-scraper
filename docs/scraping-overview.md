@@ -56,12 +56,10 @@ The impressions-first ordering matters: the top of page 1 is dominated by the Ca
 
 Each ad in a result carries: the **Meta page** running it (name, page ID, **page like count**), the creative (text, images/video), the **link the ad points to**, start date, and whether it's still active. That's enough for a first classification of every advertiser found:
 
-| What we see | Verdict |
-|---|---|
-| Page has **>10,000 likes** | Incumbent — skip entirely. A big audience means they're past "emerging". |
-| Ad links to the **App Store or Google Play** | **App candidate** → recorded with the keyword that found it and how deep in the results it sat. |
-| Ad links to a **web landing page** (not a store redirect, not social, not an ad-tracker bounce) | **Funnel candidate** → the funnel lane (section 9). A web quiz/landing funnel is a product signal of its own. |
-| Anything else (physical products, services, junk) | Discarded. |
+- If the page has **more than 10,000 likes**, we skip it entirely — a big audience means they're past "emerging".
+- If the ad links to the **App Store or Google Play**, it becomes an **app candidate**, recorded together with the keyword that found it and how deep in the results it sat.
+- If the ad links to a **web landing page** (a real one — not a store redirect, not social, not an ad-tracker bounce), it becomes a **funnel candidate** and goes to the funnel lane (section 9). A web quiz/landing funnel is a product signal of its own.
+- Everything else — physical products, services, junk — is discarded.
 
 Seeing the same advertiser again on a later sweep isn't wasted — we bump its "times seen" counter, which is itself weak evidence of sustained spend.
 
@@ -106,15 +104,13 @@ Nightly, every advertiser in the corpus gets a **GemScore** (0–100). In plain 
 
 plus small weights for user-rating quality, having a funnel, and web presence. Then **vetoes** hard-kill anything that isn't the target profile, whatever its score:
 
-| Veto | Threshold | Why |
-|---|---|---|
-| Not persistent | ads running < 2 weeks | too early to tell, could be a one-off test |
-| Incumbent ad volume | > 200 active ads | that's a funded growth team, not emerging |
-| Incumbent audience | > 10,000 page likes | already has distribution |
-| Established traction | > 5,000 store ratings | already made it |
-| Game | is a game | out of scope |
-| No app / unverified app | store listing missing or unresolvable | nothing to track |
-| Relaunch | old app re-appearing | not genuinely new |
+- ads running for **less than 2 weeks** — too early to tell, could be a one-off test
+- **more than 200 active ads** — that's a funded growth team, not emerging
+- **more than 10,000 page likes** — already has distribution
+- **more than 5,000 store ratings** — already made it
+- it's a **game** — out of scope
+- **no app**, or the store listing can't be resolved — nothing to track
+- a **relaunch** of an old app — not genuinely new
 
 What survives is the product's definition of a gem: **a small, verified, non-game app whose ad library shows sustained, growing spend with proven winner ads, backed by real store demand.**
 
@@ -142,18 +138,16 @@ We search Meta's Ad Library with a self-improving pool of niche keywords, keep e
 
 ## Appendix: where things live
 
-| Piece | Code |
-|---|---|
-| Worker loop + stage order + budgets | `src/agf/workers/main.py` (`run_once`) |
-| Keyword taxonomy / lifecycle / mining | `src/agf/discovery/taxonomy.py`, `db/dynamic_keywords.py`, `keyword_mining.py` |
-| Sweep + adaptive depth | `src/agf/discovery/sweep.py` |
-| Meta GraphQL client / proxies | `src/agf/extract/search.py`, `session_pool.py`, `proxy.py`, `tls_client.py` |
-| Triage + store lookups | `src/agf/discovery/triage.py`, `enrich_full/appstore.py`, `enrich_full/sidecar/gp_lookup.js` |
-| Enrich | `src/agf/enrich_full/run_enrich.py`, `funnel_capture.py` |
-| Corpus refresh | `src/agf/discovery/corpus_refresh.py` |
-| Funnel sweep/confirm | `src/agf/discovery/funnel_sweep.py`, `funnel_confirm.py` |
-| GemScore + vetoes | `src/agf/scoring/gemscore.py`, `vetoes.py`, `run_scoring.py` |
-| Feed matview | `db/schema/141_emerging_matview_websub.sql` → `frontend.emerging_scaling_apps` |
-| Runtime | `ops/docker-compose.yml` (worker + cron on the VM), Go API on GKE |
+- Worker loop, stage order, budgets — `src/agf/workers/main.py` (`run_once`)
+- Keyword taxonomy, lifecycle, mining — `src/agf/discovery/taxonomy.py`, `db/dynamic_keywords.py`, `keyword_mining.py`
+- Sweep + adaptive depth — `src/agf/discovery/sweep.py`
+- Meta GraphQL client + proxies — `src/agf/extract/search.py`, `session_pool.py`, `proxy.py`, `tls_client.py`
+- Triage + store lookups — `src/agf/discovery/triage.py`, `enrich_full/appstore.py`, `enrich_full/sidecar/gp_lookup.js`
+- Enrich — `src/agf/enrich_full/run_enrich.py`, `funnel_capture.py`
+- Corpus refresh — `src/agf/discovery/corpus_refresh.py`
+- Funnel sweep/confirm — `src/agf/discovery/funnel_sweep.py`, `funnel_confirm.py`
+- GemScore + vetoes — `src/agf/scoring/gemscore.py`, `vetoes.py`, `run_scoring.py`
+- Feed matview — `db/schema/141_emerging_matview_websub.sql` → `frontend.emerging_scaling_apps`
+- Runtime — `ops/docker-compose.yml` (worker + cron on the VM), Go API on GKE
 
 Key knobs: `AGF_SWEEP_PATIENCE_PAGES=3` (dry pages before a keyword stops), `AGF_DISCOVERY_ENRICH_BUDGET=600` (per-cycle Meta requests, split keeper-history/enrich), `AGF_CORPUS_REFRESH_BUDGET=3000` (daily re-scrape budget), `AGF_FUNNEL_DEEP_PAGES=100` (weekly deep funnel sweep), `AGF_PREFETCH_TIMEOUT_SEC=180` (per-advertiser hang ceiling), `AGF_PROXIES` (DataImpulse list). Frame-mint (`AGF_RELEASE_MINT`) is currently off by default.
