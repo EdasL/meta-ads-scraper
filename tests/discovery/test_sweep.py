@@ -374,3 +374,42 @@ def test_sweep_first_seen_depth_is_shallowest_across_resweeps(_migrated_engine):
                 "WHERE page_id='SWEEPAD500'")).scalar_one() == 2
     finally:
         _clear_adaptive(eng)
+
+
+# --- collect callback + page tracking (generic-deep lane, spec 2026-07-10) ---------
+def test_sweep_collect_receives_every_raw_ad():
+    # Two pages, two ads each — collect sees all 4 AdRecords even though every ad
+    # is a drop (social host), BEFORE any fold. No DB needed (engine=None is safe
+    # because no candidate/funnel rows are produced).
+    pages = [[ad("https://www.instagram.com/a", page_id="SWEEPCOL1"),
+              ad("https://www.instagram.com/b", page_id="SWEEPCOL2")],
+             [ad("https://www.instagram.com/c", page_id="SWEEPCOL3"),
+              ad("https://www.instagram.com/d", page_id="SWEEPCOL4")]]
+    ext = FakeExtractor().script_pages("collect kw", pages)
+    got = []
+    asyncio.run(run_sweep(None, ext, entries=[_entry("collect kw")],
+                          sleep=lambda s: None, patience_pages=10, max_depth=10,
+                          collect=got.append))
+    assert [a.page_id for a in got] == ["SWEEPCOL1", "SWEEPCOL2",
+                                        "SWEEPCOL3", "SWEEPCOL4"]
+
+
+def test_sweep_track_pages_logs_depth_and_ceiling(_migrated_engine):
+    # Keyword A: 6 all-new pages but max_depth=3 -> stopped AT the cap with more
+    # pages left => ceiling_hit True, pages=3. Keyword B: 1 page, has_next False
+    # => exhausted, ceiling_hit False.
+    eng = _migrated_engine
+    _clear_adaptive(eng)
+    try:
+        ext = (FakeExtractor()
+               .script_pages("ceil kw", [[_cand(600 + i)] for i in range(6)])
+               .script_pages("done kw", [[_cand(650)]]))
+        stats = asyncio.run(run_sweep(
+            eng, ext, entries=[_entry("ceil kw"), _entry("done kw")],
+            sleep=lambda s: None, patience_pages=10, max_depth=3, track_pages=True))
+        log = {r["keyword"]: r for r in stats["page_log"]}
+        assert log["ceil kw"]["pages"] == 3 and log["ceil kw"]["ceiling_hit"] is True
+        assert log["ceil kw"]["ads"] == 3
+        assert log["done kw"]["pages"] == 1 and log["done kw"]["ceiling_hit"] is False
+    finally:
+        _clear_adaptive(eng)

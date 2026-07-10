@@ -133,7 +133,8 @@ async def run_sweep(engine, extractor, *, entries=None, keywords=None,
                     max_consecutive_errors: int = 0, sleep=time.sleep,
                     heartbeat=None, patience_pages: int | None = None,
                     max_depth: int | None = None,
-                    page_delay: float | None = None) -> dict:
+                    page_delay: float | None = None,
+                    collect=None, track_pages: bool = False) -> dict:
     """Sweep the taxonomy (or an explicit entry/keyword subset) and persist candidates.
     Returns counters for sweep_runs. `keywords` (list[str]) is a convenience override
     used by the worker dry-run; it implies KEYWORD_UNORDERED.
@@ -159,7 +160,13 @@ async def run_sweep(engine, extractor, *, entries=None, keywords=None,
         AGF_SWEEP_PAGE_DELAY (2.0s); the per-KEYWORD `kw_delay` still spaces entries.
     PRECEDENCE: `max_depth` supersedes the legacy `max_pages` (AGF_SWEEP_PAGES) but
     never caps BELOW it — effective depth is max(max_depth, max_pages), so an old
-    caller passing a bigger max_pages still gets at least that many pages."""
+    caller passing a bigger max_pages still gets at least that many pages.
+
+    `collect` (generic-deep lane): called once per raw AdRecord as pages arrive,
+    BEFORE any fold/drop — the copy-harvest hook. `track_pages` appends one
+    {"keyword", "pages", "ads", "ceiling_hit"} row per entry to stats["page_log"];
+    ceiling_hit means the loop stopped while Meta still had pages (cap/patience),
+    so a to-exhaustion caller can log it instead of silently capping."""
     if entries is None:
         entries = sweep_entries()
     if keywords is not None:
@@ -175,6 +182,8 @@ async def run_sweep(engine, extractor, *, entries=None, keywords=None,
              "funnel_new": 0, "funnel_seen": 0,
              "drops": {"no_link": 0, "social": 0,
                        "non_app": 0, "no_store_id": 0, "funnel_captured": 0}}
+    if track_pages:
+        stats["page_log"] = []
     consecutive_errors = 0
     for entry in entries:
         # entry.max_pages is the per-keyword ceiling; max_depth supersedes the legacy
@@ -182,8 +191,10 @@ async def run_sweep(engine, extractor, *, entries=None, keywords=None,
         # deeper via max_pages still gets it).
         entry_max_depth = max(max_depth, entry.max_pages, max_pages)
         cursor = None
+        has_next = False
         depth = 0
         pages_fetched = 0
+        kw_ads = 0
         consec_dry = 0
         errored = False
         while True:
@@ -208,6 +219,10 @@ async def run_sweep(engine, extractor, *, entries=None, keywords=None,
                 errored = True
                 break
             pages_fetched += 1
+            kw_ads += len(records)
+            if collect is not None:
+                for ad in records:
+                    collect(ad)
             page_new = _process_page(engine, records, entry=entry, depth=depth, stats=stats)
             if heartbeat is not None:
                 heartbeat()        # prove liveness each PAGE so the watchdog (stale-
@@ -220,6 +235,10 @@ async def run_sweep(engine, extractor, *, entries=None, keywords=None,
             if depth >= entry_max_depth:        # safety cap
                 break
             sleep(page_delay)                   # inter-page pacing (one page per call now)
+        if track_pages:
+            stats["page_log"].append({"keyword": entry.keyword, "pages": pages_fetched,
+                                      "ads": kw_ads,
+                                      "ceiling_hit": bool(has_next and cursor)})
         stats["serp_requests"] += pages_fetched  # actual pages fetched this keyword
         if errored:
             continue
