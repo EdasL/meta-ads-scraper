@@ -53,7 +53,7 @@ budget for this: half of the 600-requests-per-cycle discovery budget.
 - weekly active-ad counts snapshotted for everyone
 - app store metadata resolved / refreshed (each app once a day: ratings, reviews)
 - **corpus refresh** (once a day, own budget of **3,000 requests**): re-pull the *stalest* known advertisers' listings so their history keeps moving — new ads appear, dead ads get flipped inactive. without this, every advertiser stays frozen at its discovery snapshot and the feed plateaus (this exact thing happened; it was bad).
-- **flywheel**: sweep the dynamic keywords (mined from ad copy of gems grug already keeps) and mint/rest/wake them. a keyword that keeps finding nothing rests with an exponentially growing cooldown, then wakes and gets retried. nothing dies forever.
+- **flywheel**: sweep the dynamic keywords and mint new ones — full mechanics in "how the keyword pool grows" below.
 - funnel lane sweep (28 quiz-y phrases, 8 pages; once a week a 100-page deep dig)
 
 ### step 5 — enrich (~21 gems per cycle)
@@ -96,6 +96,33 @@ fake app "SleepySheep" (sleep-sounds subscription app). all times tuesday, UTC.
 the one slow path: if ALL of SleepySheep's ads had started only 4 days ago, the reconstructed series would show 1 week → vetoed as "insufficient persistence" → invisible. grug keeps refreshing it daily anyway, and the night its history crosses 2 weeks it scores and appears by itself. this veto is why the feed doesn't fill with day-old ad tests.
 
 and the loop closes: if the user LIKES SleepySheep, its ad copy gets mined for phrases ("fall asleep faster", "sleep sounds") → new keywords → tomorrow's sweeps search for its cousins. what user likes literally steers what grug hunts next.
+
+## how the keyword pool grows
+
+the 301 static keywords never change. growth happens in a second table, `discovery.dynamic_keywords`, fed by two pipes. both pipes end the same way: new row, status **trial**.
+
+**pipe 1 — flywheel mining (every cycle).** grug takes the ad copy of scored gems (gem score ≥ 40) and looks for phrases that repeat across **3 or more different advertisers**. one app saying "fall asleep faster" = slogan. five apps saying it = a real marketing angle worth searching. then grug throws away:
+
+- phrases already in the static list or already tried before
+- "token supersets" — an existing keyword plus a noise word ("best sleep tracker app 2026" when "sleep tracker app" already exists). those just re-find the same ads.
+- anything too similar to a **dead basin**: every retired/dried-up keyword has an embedding, and a new candidate that lands ≥ 0.90 cosine to one gets rejected — that ground is already hunted out. (this gate fails OPEN: if embeddings break, candidates pass. gate must never starve discovery.)
+
+survivors become trials — but only up to a pool cap of **40 trials at a time**. mining fills the room left, no more. pool grows as fast as trials graduate, not explosively.
+
+**pipe 2 — frame mint (once a day, taste-blind on purpose).** the flywheel only finds cousins of what grug already keeps — left alone it converges into a bubble. frame mint pushes outward from an external frame: the app-store category taxonomy. **15 slots a day**, split across categories by yield — **75% to categories that recently produced keepers, 25% to under-covered ones** — so fertile ground gets most of the budget but deserts still get a probe (not more than a probe: a category can be "under-covered" because emerging apps there simply don't advertise on meta). two lanes fill the slots:
+
+- **autocomplete**: take a category's seed terms, run them through the stores' own search-autocomplete, then have Gemini generalize the raw app/brand names that come back into generic niche queries ("capcut: photo & video editor" → "quick video editor app")
+- **brainstorm**: Gemini asked directly for head phrases in the category's niches
+
+same subset-dedup and dead-basin novelty gate as pipe 1, then into the trial pool.
+
+**then the lifecycle takes over.** every cycle the flywheel sweeps all live dynamic keywords:
+
+- a **trial** that yields keepers → promoted to **active**, now swept like any other keyword
+- a trial that stays dry through its allowance → **retired** (and its embedding becomes a dead basin the novelty gate checks against — retirement teaches the minter what not to mint)
+- an **active** that goes dry → **rests** with an exponentially growing cooldown, then wakes and gets retried. nothing is deleted; dry keywords sleep, they don't die.
+
+so the pool only ever gains rows. what the user likes → mined into keywords (pipe 1). what categories yield → more mint slots (pipe 2). what dries up → becomes a lesson the gate enforces. that is the whole self-improvement loop.
 
 ## side lane: funnels
 
