@@ -4,6 +4,7 @@ The Go API (GKE pod) inserts 'queued' rows; the daemon (worker VM) claims them
 and runs the one-shot enrichment. These tests drive the state machine with an
 injected runner — no subprocess, no Meta traffic.
 """
+import pytest
 from sqlalchemy import text
 
 from agf.db.engine import begin, get_engine
@@ -11,6 +12,18 @@ from agf.enrich_full import queue_daemon
 
 
 ADV = 999002  # sentinel advertiser for this file (999001 = test_enrich_one)
+
+
+@pytest.fixture(autouse=True)
+def _no_foreign_queued_rows():
+    """claim_next takes the oldest queued row GLOBALLY, so leftover committed
+    'queued' rows from other suites sharing this DB (the Go integration tests
+    enqueue and never consume) would be claimed instead of ours. Hermetic
+    clean-state: clear them before each test."""
+    engine = get_engine()
+    with begin(engine) as conn:
+        conn.execute(text("DELETE FROM public.enrich_jobs WHERE status='queued'"))
+    yield
 
 
 def _insert_job(conn, *, status="queued", advertiser_id=ADV, age_sec=0):
