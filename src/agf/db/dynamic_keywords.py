@@ -36,10 +36,14 @@ def crowded_candidate_count(conn, keyword: str, *, tail: float) -> int:
     (crowding >= tail). Degrade OPEN: a candidate with no embedding row or NULL
     crowding is NOT counted (NULL >= tail is NULL), so a keyword whose crowding has
     not been populated yet reports 0 and behaves as it does today."""
+    # c.status='kept' is explicit here even though candidate_embeddings only ever holds
+    # kept candidates (candidate_embed's pending query embeds status='kept' rows only) —
+    # the filter keeps the crowded count aligned to new_candidates_total, which counts
+    # kept candidates, if that invariant ever loosens.
     return conn.execute(text(
         "SELECT count(*) FROM discovery.candidates c "
         "JOIN discovery.candidate_embeddings e ON e.candidate_id = c.id "
-        "WHERE c.source_keyword = :kw AND e.crowding >= :tail"),
+        "WHERE c.source_keyword = :kw AND c.status = 'kept' AND e.crowding >= :tail"),
         {"kw": keyword, "tail": tail}).scalar_one()
 
 
@@ -208,7 +212,8 @@ def apply_verdicts(conn, *, kind: str | None = None) -> dict:
         "  WHEN k.new_candidates_total - ("
         "    SELECT count(*) FROM discovery.candidates c "
         "    JOIN discovery.candidate_embeddings e ON e.candidate_id = c.id "
-        "    WHERE c.source_keyword = k.keyword AND e.crowding >= :tail"
+        "    WHERE c.source_keyword = k.keyword AND c.status = 'kept' "
+        "      AND e.crowding >= :tail"
         "  ) >= :promote THEN 'active' ELSE 'retired' END "
         "WHERE k.status = 'trial' AND k.sweeps_used >= :budget "
         "  AND (CAST(:kind AS TEXT) IS NULL OR k.kind = :kind) "

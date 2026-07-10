@@ -42,19 +42,24 @@ def crowding_k() -> int:
         return 10
 
 
-def refresh_crowding(conn, *, table: str, k: int | None = None) -> int:
+def refresh_crowding(engine, *, table: str, k: int | None = None) -> int:
     """Recompute leave-one-out crowding for every row of `table`'s corpus and write
-    it back. Returns the number of rows updated. Best-effort caller owns the commit."""
+    it back. Returns the number of rows updated.
+
+    Takes the ENGINE (not a connection): the whole corpus is read on a short-lived
+    connection that is CLOSED before the ~2 s numpy compute, so no transaction is held
+    over the bulk work (repo lesson: never pin a DB connection across heavy compute).
+    The batched UPDATE runs in its own `engine.begin()` txn afterward."""
     cfg = _TABLES.get(table)
     if cfg is None:
         raise ValueError(f"refresh_crowding: unknown table {table!r}")
     if k is None:
         k = crowding_k()
 
-    # Read the whole corpus, then compute in numpy before any write. A plain SELECT
-    # takes no row locks (MVCC), so no write transaction is held over the bulk
-    # compute — the only write is the batched UPDATE below.
-    rows = conn.execute(text(cfg["select"])).all()
+    # Read the whole corpus on a short-lived connection, then let it close before any
+    # compute — no connection or txn is held over the numpy work below.
+    with engine.connect() as conn:
+        rows = conn.execute(text(cfg["select"])).all()
     if not rows:
         return 0
 
@@ -65,6 +70,10 @@ def refresh_crowding(conn, *, table: str, k: int | None = None) -> int:
     # whole recompute): keep only the dominant embedding length.
     dim = Counter(len(v) for v in vecs).most_common(1)[0][0]
     kept = [(key, v) for key, v in zip(keys, vecs) if len(v) == dim]
+    dropped = len(keys) - len(kept)
+    if dropped:
+        print(f"[crowding] {table}: dropped {dropped} ragged-dim row(s) "
+              f"(!= dominant dim {dim})", flush=True)
     keys = [key for key, _ in kept]
     matrix = np.asarray([v for _, v in kept], dtype=np.float32)
 
@@ -73,6 +82,8 @@ def refresh_crowding(conn, *, table: str, k: int | None = None) -> int:
     key_col = cfg["key"]
     params = [{"k": key, "c": (None if not np.isfinite(s) else float(s))}
               for key, s in zip(keys, scores)]
-    conn.execute(
-        text(f"UPDATE {table} SET crowding = :c WHERE {key_col} = :k"), params)
+    # The only write: one batched UPDATE in its own short transaction.
+    with engine.begin() as conn:
+        conn.execute(
+            text(f"UPDATE {table} SET crowding = :c WHERE {key_col} = :k"), params)
     return len(params)
