@@ -9,29 +9,18 @@ import (
 	"github.com/edaslakavicius/emerging-app-finder/backend/models"
 )
 
-// InsertEnrichJob creates a 'running' job row and returns its id.
+// InsertEnrichJob creates a 'queued' job row and returns its id. The
+// enrich-queue daemon on the worker VM claims queued rows and runs them.
 func InsertEnrichJob(ctx context.Context, g *gorm.DB, advertiserID int) (int, error) {
 	var id int
 	err := db.WithWriteTx(ctx, g, func(tx *gorm.DB) error {
 		return tx.Raw(
-			`INSERT INTO public.enrich_jobs (advertiser_id)
-			 VALUES (?) RETURNING id`,
+			`INSERT INTO public.enrich_jobs (advertiser_id, status)
+			 VALUES (?, 'queued') RETURNING id`,
 			advertiserID,
 		).Scan(&id).Error
 	})
 	return id, err
-}
-
-// MarkEnrichJobError flips a job row to 'error' with a message + finished_at.
-func MarkEnrichJobError(ctx context.Context, g *gorm.DB, jobID int, msg string) error {
-	return db.WithWriteTx(ctx, g, func(tx *gorm.DB) error {
-		return tx.Exec(
-			`UPDATE public.enrich_jobs
-			 SET status='error', error_text=?, finished_at=now()
-			 WHERE id=?`,
-			msg, jobID,
-		).Error
-	})
 }
 
 // LatestEnrichJob returns the most recent job row for an advertiser, or nil.

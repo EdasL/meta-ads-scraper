@@ -9,7 +9,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/edaslakavicius/emerging-app-finder/backend/controllers"
+	"github.com/edaslakavicius/emerging-app-finder/backend/db"
 	"github.com/edaslakavicius/emerging-app-finder/backend/middlewares"
 )
 
@@ -27,44 +27,44 @@ func postEnrich(t *testing.T, r http.Handler, id int) *httptest.ResponseRecorder
 	return w
 }
 
-func TestEnrichTriggerInsertsAndSpawns(t *testing.T) {
-	var spawned [][2]int
-	controllers.SetSpawnEnrichForTest(func(advertiserID, jobID int) error {
-		spawned = append(spawned, [2]int{advertiserID, jobID})
-		return nil
-	})
-	defer controllers.ResetSpawnEnrichForTest()
+// jobRow reads the latest enrich_jobs row for an advertiser straight from the
+// DB — the wire shape maps 'queued' to "running", so DB state is asserted here.
+func jobRow(t *testing.T, advertiserID int) (status string, count int) {
+	t.Helper()
+	require.NoError(t, db.DB().Raw(
+		`SELECT status FROM public.enrich_jobs WHERE advertiser_id = ?
+		 ORDER BY started_at DESC LIMIT 1`, advertiserID).Scan(&status).Error)
+	require.NoError(t, db.DB().Raw(
+		`SELECT count(*) FROM public.enrich_jobs WHERE advertiser_id = ?`,
+		advertiserID).Scan(&count).Error)
+	return status, count
+}
 
+func TestEnrichTriggerEnqueuesJob(t *testing.T) {
 	t.Setenv(middlewares.APITokenEnv, writeToken)
 	r := router()
 	w := postEnrich(t, r, advID)
 	require.Equal(t, http.StatusAccepted, w.Code)
+	// The wire status is "running" (UI contract); the DB row is 'queued' for
+	// the worker-VM daemon to claim.
 	require.Contains(t, w.Body.String(), `"status":"running"`)
-	require.Len(t, spawned, 1, "spawn called exactly once")
-	require.Equal(t, advID, spawned[0][0])
+	status, count := jobRow(t, advID)
+	require.Equal(t, "queued", status)
+	require.Equal(t, 1, count)
 }
 
-func TestEnrichTriggerDedupesRunningJob(t *testing.T) {
-	count := 0
-	controllers.SetSpawnEnrichForTest(func(advertiserID, jobID int) error {
-		count++
-		return nil
-	})
-	defer controllers.ResetSpawnEnrichForTest()
-
+func TestEnrichTriggerDedupesQueuedJob(t *testing.T) {
 	t.Setenv(middlewares.APITokenEnv, writeToken)
 	r := router()
 	w1 := postEnrich(t, r, adv2ID)
 	require.Equal(t, http.StatusAccepted, w1.Code)
 	w2 := postEnrich(t, r, adv2ID)
 	require.Equal(t, http.StatusAccepted, w2.Code)
-	require.Equal(t, 1, count, "second call must not spawn a new subprocess (dedupe)")
+	_, count := jobRow(t, adv2ID)
+	require.Equal(t, 1, count, "second call must not enqueue a new job (dedupe)")
 }
 
 func TestEnrichStatusReturnsLatest(t *testing.T) {
-	controllers.SetSpawnEnrichForTest(func(int, int) error { return nil })
-	defer controllers.ResetSpawnEnrichForTest()
-
 	t.Setenv(middlewares.APITokenEnv, writeToken)
 	r := router()
 	_ = postEnrich(t, r, adv3ID)
