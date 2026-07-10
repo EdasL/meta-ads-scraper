@@ -24,18 +24,19 @@ const (
 	exploitSampleWindow = 40
 )
 
-// weightedSampleByPLike returns in reordered by weighted random sampling without
-// replacement (Efraimidis–Spirakis), weight = p_like. Higher p_like tends toward
-// the front but the order varies per rng. The returned slice is a permutation of
-// in (same elements), never drops or duplicates.
-func weightedSampleByPLike(in []prefCandidate, rng *rand.Rand) []prefCandidate {
+// weightedSampleByRank returns in reordered by weighted random sampling without
+// replacement (Efraimidis–Spirakis), weight = RankScore (p_like after crowding
+// demotion). Higher rank tends toward the front but the order varies per rng.
+// The returned slice is a permutation of in (same elements), never drops or
+// duplicates.
+func weightedSampleByRank(in []prefCandidate, rng *rand.Rand) []prefCandidate {
 	type keyed struct {
 		c prefCandidate
 		k float64
 	}
 	ks := make([]keyed, len(in))
 	for i, c := range in {
-		w := c.PLike
+		w := c.RankScore
 		if w < 1e-6 {
 			w = 1e-6 // floor so a 0 p_like still gets a (tiny) chance, no div-by-zero
 		}
@@ -54,10 +55,13 @@ func weightedSampleByPLike(in []prefCandidate, rng *rand.Rand) []prefCandidate {
 }
 
 // prefCandidate is one app considered for the review queue: a renderable card
-// plus the selection inputs (uncertainty, source). Source is "scored" (has a
-// content embedding, scored at serve time) or "fresh" (no embedding yet).
+// plus the selection inputs (rank score, uncertainty, source). RankScore is the
+// exploit-bucket ordering key: p_like after crowding demotion (equal to PLike
+// unless the app sits in a clone cluster). Source is "scored" (has a content
+// embedding, scored at serve time) or "fresh" (no embedding yet).
 type prefCandidate struct {
 	models.PreferenceCardRow
+	RankScore   float64
 	Uncertainty float64
 	Source      string
 }
@@ -109,16 +113,16 @@ func assembleQueue(cands []prefCandidate, opts queueOpts) []prefCandidate {
 	}
 
 	exploit := append([]prefCandidate(nil), scored...)
-	sort.SliceStable(exploit, func(i, j int) bool { return exploit[i].PLike > exploit[j].PLike })
+	sort.SliceStable(exploit, func(i, j int) bool { return exploit[i].RankScore > exploit[j].RankScore })
 	// Weighted-sample the top window so the taste cards vary per request instead
-	// of recurring deterministically; the tail beyond the window stays in p_like
+	// of recurring deterministically; the tail beyond the window stays in rank
 	// order (it only matters when the deck is short on candidates).
 	if len(exploit) > 1 {
 		w := exploitSampleWindow
 		if w > len(exploit) {
 			w = len(exploit)
 		}
-		exploit = append(weightedSampleByPLike(exploit[:w], opts.Rng), exploit[w:]...)
+		exploit = append(weightedSampleByRank(exploit[:w], opts.Rng), exploit[w:]...)
 	}
 
 	uncertain := append([]prefCandidate(nil), scored...)

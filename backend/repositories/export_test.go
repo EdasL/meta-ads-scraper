@@ -24,6 +24,6 @@ func AgePrefEmbCacheForTest() {
 }
 
 // PrefEmbeddingsForTest exposes the unexported accessor to the _test package.
-func PrefEmbeddingsForTest(g *gorm.DB) (map[int64][]float64, error) {
+func PrefEmbeddingsForTest(g *gorm.DB) (map[int64][]float64, map[int64]*float64, error) {
 	return prefEmbeddings(g)
 }

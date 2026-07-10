@@ -9,7 +9,7 @@ import (
 
 func cand(id int, niche string, pLike, unc float64, source string) prefCandidate {
 	n := niche
-	c := prefCandidate{Uncertainty: unc, Source: source}
+	c := prefCandidate{RankScore: pLike, Uncertainty: unc, Source: source}
 	c.AdvertiserID = id
 	c.NicheKeyword = &n
 	c.PLike = pLike
@@ -136,7 +136,7 @@ func TestAssembleQueue_UnderfillRedistributes(t *testing.T) {
 func TestAssembleQueueDedupsByAppID(t *testing.T) {
 	appA, appB := 100, 200
 	mk := func(adv int, app *int, plike float64) prefCandidate {
-		c := prefCandidate{Source: "scored"}
+		c := prefCandidate{RankScore: plike, Source: "scored"}
 		c.AdvertiserID = adv
 		c.AppID = app
 		c.PLike = plike
@@ -185,13 +185,13 @@ func TestNicheKey_FallbackAndExempt(t *testing.T) {
 	}
 }
 
-func TestWeightedSampleByPLike_PermutationAndWeighting(t *testing.T) {
+func TestWeightedSampleByRank_PermutationAndWeighting(t *testing.T) {
 	// Permutation: output is the same set, same length.
 	var in []prefCandidate
 	for i := 0; i < 50; i++ {
 		in = append(in, cand(i+1, "n", 0.2+float64(i)*0.01, 0.5, "scored"))
 	}
-	out := weightedSampleByPLike(in, rand.New(rand.NewSource(1)))
+	out := weightedSampleByRank(in, rand.New(rand.NewSource(1)))
 	require.Len(t, out, len(in))
 	inSet, outSet := map[int]bool{}, map[int]bool{}
 	for _, c := range in {
@@ -203,8 +203,8 @@ func TestWeightedSampleByPLike_PermutationAndWeighting(t *testing.T) {
 	require.Equal(t, inSet, outSet, "sample must be a permutation (no drops/dupes)")
 
 	// Variety: two seeds give different orderings.
-	a := ids(weightedSampleByPLike(in, rand.New(rand.NewSource(1))))
-	b := ids(weightedSampleByPLike(in, rand.New(rand.NewSource(2))))
+	a := ids(weightedSampleByRank(in, rand.New(rand.NewSource(1))))
+	b := ids(weightedSampleByRank(in, rand.New(rand.NewSource(2))))
 	require.NotEqual(t, a, b)
 
 	// Weighting: averaged over many requests, the first card's p_like exceeds the
@@ -217,11 +217,79 @@ func TestWeightedSampleByPLike_PermutationAndWeighting(t *testing.T) {
 	var sumFirst float64
 	const trials = 200
 	for s := int64(0); s < trials; s++ {
-		got := weightedSampleByPLike(in, rand.New(rand.NewSource(s)))
+		got := weightedSampleByRank(in, rand.New(rand.NewSource(s)))
 		sumFirst += got[0].PLike
 	}
 	require.Greater(t, sumFirst/trials, poolMean,
 		"first card should average above the pool mean (weighting), mean=%.3f", poolMean)
+}
+
+func TestCrowdingRankScore(t *testing.T) {
+	f := func(x float64) *float64 { return &x }
+	const tail, penalty = 0.80, 0.5
+	cases := []struct {
+		name     string
+		pLike    float64
+		crowding *float64
+		penalty  float64
+		want     float64
+	}{
+		{"nil crowding unaffected", 0.9, nil, penalty, 0.9},
+		{"below tail unaffected", 0.9, f(0.79), penalty, 0.9},
+		{"at tail demoted", 0.9, f(0.80), penalty, 0.45},
+		{"above tail demoted", 0.8, f(0.95), penalty, 0.4},
+		{"penalty 0 disables", 0.9, f(0.95), 0.0, 0.9},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := crowdingRankScore(tc.pLike, tc.crowding, tail, tc.penalty)
+			require.InDelta(t, tc.want, got, 1e-9)
+		})
+	}
+}
+
+func TestAssembleQueue_CrowdedRanksLast(t *testing.T) {
+	// Three equally-liked apps (p_like 0.9). App 2 is crowded, so its RankScore
+	// is demoted to 0.45 while 1 and 3 keep 0.9. The exploit bucket samples
+	// weighted by RankScore, so across many requests the crowded app should land
+	// last far more often than either distinctive app — and never ranks first.
+	const tail, penalty = 0.80, 0.5
+	crowded := 0.95
+	build := func() []prefCandidate {
+		c1 := cand(1, "a", 0.9, 0.1, "scored")
+		c1.RankScore = crowdingRankScore(0.9, nil, tail, penalty)
+		c2 := cand(2, "b", 0.9, 0.1, "scored")
+		c2.RankScore = crowdingRankScore(0.9, &crowded, tail, penalty)
+		c3 := cand(3, "c", 0.9, 0.1, "scored")
+		c3.RankScore = crowdingRankScore(0.9, nil, tail, penalty)
+		return []prefCandidate{c1, c2, c3}
+	}
+	require.InDelta(t, 0.45, build()[1].RankScore, 1e-9, "crowded app must be demoted")
+
+	last := map[int]int{}
+	first := map[int]int{}
+	const trials = 400
+	for s := int64(0); s < trials; s++ {
+		out := assembleQueue(build(), queueOpts{
+			Limit: 3, PerNicheCap: 10, ExploitFrac: 1.0, UncertainFrac: 0.0,
+			Rng: rand.New(rand.NewSource(s)),
+		})
+		require.Len(t, out, 3)
+		last[out[2].AdvertiserID]++
+		first[out[0].AdvertiserID]++
+	}
+	require.Greater(t, last[2], last[1], "crowded app should land last more than app 1")
+	require.Greater(t, last[2], last[3], "crowded app should land last more than app 3")
+	require.Less(t, first[2], first[1], "crowded app should lead the deck less than app 1")
+
+	// penalty=0 disables demotion: the crowded app is no longer special.
+	buildNoPenalty := func() []prefCandidate {
+		cs := build()
+		cs[1].RankScore = crowdingRankScore(0.9, &crowded, tail, 0.0)
+		return cs
+	}
+	require.InDelta(t, 0.9, buildNoPenalty()[1].RankScore, 1e-9,
+		"penalty=0 leaves the crowded app's ordering score untouched")
 }
 
 func TestAssembleQueue_ExploitSamplesTopWindowAndVaries(t *testing.T) {

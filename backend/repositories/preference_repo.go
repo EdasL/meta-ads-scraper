@@ -4,6 +4,8 @@ import (
 	"context"
 	"math"
 	"math/rand"
+	"os"
+	"strconv"
 	"time"
 
 	"github.com/edaslakavicius/emerging-app-finder/backend/db"
@@ -11,6 +13,38 @@ import (
 	"github.com/edaslakavicius/emerging-app-finder/backend/models"
 	"gorm.io/gorm"
 )
+
+// Crowding demotion knobs, read once at package load (mirrors the env-read
+// pattern in config/config.go and monitoring/sentry.go). An app whose
+// embedding-space crowding is >= crowdingTail sits in a clone cluster; its
+// exploit-ordering score is multiplied by (1 - crowdingPenalty) so the review
+// deck ranks it below equally-liked but distinctive apps. The displayed p_like
+// is never touched. NULL crowding or crowdingPenalty=0 leaves ordering unchanged,
+// so the penalty can never starve or empty the deck.
+var (
+	crowdingTail    = envFloat("AGF_CROWDING_TAIL", 0.80)
+	crowdingPenalty = envFloat("AGF_CROWDING_PENALTY_GO", 0.5)
+)
+
+func envFloat(key string, def float64) float64 {
+	if v := os.Getenv(key); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			return f
+		}
+	}
+	return def
+}
+
+// crowdingRankScore demotes an app's exploit-ordering score when it sits in a
+// dense embedding cluster (crowding >= tail). It only affects the value the
+// taste bucket sorts/samples by — never the displayed p_like. NULL crowding, an
+// app below the tail, or penalty 0 all return pLike unchanged.
+func crowdingRankScore(pLike float64, crowding *float64, tail, penalty float64) float64 {
+	if crowding != nil && *crowding >= tail {
+		return pLike * (1 - penalty)
+	}
+	return pLike
+}
 
 // PreferenceQueue returns the user's review queue, scored at serve time so the
 // ranking adapts to ratings immediately (no offline preference_scores job in
@@ -24,7 +58,7 @@ import (
 func PreferenceQueue(ctx context.Context, g *gorm.DB, userEmail string, limit int, exclude []int64) ([]models.PreferenceCardRow, error) {
 	var outRows []models.PreferenceCardRow
 	err := db.WithReadTx(ctx, g, func(tx *gorm.DB) error {
-		embs, err := prefEmbeddings(tx)
+		embs, crowd, err := prefEmbeddings(tx)
 		if err != nil {
 			return err
 		}
@@ -97,12 +131,16 @@ func PreferenceQueue(ctx context.Context, g *gorm.DB, userEmail string, limit in
 				p, why, source = model.PLike(model.Score(vec)), model.Why(vec), "scored"
 			}
 			unc := 1.0 - math.Abs(2.0*p-1.0)
+			// Demote clone-cluster apps in the taste ordering only; the p_like
+			// shown to the client stays the honest calibrated probability.
+			rank := crowdingRankScore(p, crowd[int64(row.AdvertiserID)], crowdingTail, crowdingPenalty)
 			cands[i] = prefCandidate{
 				PreferenceCardRow: models.PreferenceCardRow{
 					ShortlistRow: row,
 					PLike:        p,
 					Why:          why,
 				},
+				RankScore:   rank,
 				Uncertainty: unc,
 				Source:      source,
 			}
