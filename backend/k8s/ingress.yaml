@@ -26,6 +26,15 @@ spec:
   domains:
     - app.peon.works
 ---
+apiVersion: networking.gke.io/v1
+kind: ManagedCertificate
+metadata:
+  name: agf-apex-cert
+  namespace: agf
+spec:
+  domains:
+    - peon.works
+---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -33,10 +42,20 @@ metadata:
   namespace: agf
   annotations:
     kubernetes.io/ingress.global-static-ip-name: agf-ip
-    networking.gke.io/managed-certificates: agf-api-cert,agf-app-cert
+    networking.gke.io/managed-certificates: agf-api-cert,agf-app-cert,agf-apex-cert
     kubernetes.io/ingress.class: "gce"
 spec:
   rules:
+    - host: peon.works
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: agf-web
+                port:
+                  number: 8080
     - host: api.peon.works
       http:
         paths:

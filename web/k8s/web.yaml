@@ -29,9 +29,9 @@ spec:
             - name: HOSTNAME
               value: "0.0.0.0"
             - name: AUTH_URL
-              value: "https://app.peon.works"
+              value: "https://peon.works"
             - name: NEXTAUTH_URL
-              value: "https://app.peon.works"
+              value: "https://peon.works"
             - name: AUTH_TRUST_HOST
               value: "true"
             # Server-only: the web app's SSR/proxy/server-actions reach the Go API

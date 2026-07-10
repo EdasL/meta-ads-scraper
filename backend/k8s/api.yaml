@@ -49,7 +49,7 @@ spec:
             - name: PORT
               value: "8000"
             - name: AGF_CORS_ORIGINS
-              value: "https://app.peon.works"
+              value: "https://peon.works,https://app.peon.works"
             - name: S3_ENDPOINT
               value: "https://storage.googleapis.com"
             - name: S3_BUCKET
