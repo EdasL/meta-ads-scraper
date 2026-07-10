@@ -234,8 +234,40 @@ STORE_FRAGMENTS = [
 ]
 
 
+# Layer 4 — generic copy-phrase deep lane (spec docs/superpowers/specs/
+# 2026-07-10-generic-deep-keyword-lane-design.md). Ad Library keyword search matches
+# COPY TEXT + page name, so these are phrases that literally appear inside app-install
+# ad copy. Swept WEEKLY to Meta's pagination ceiling by the generic-deep worker stage —
+# deliberately NOT part of the daily sweep_entries(). Quiz openers live in
+# FUNNEL_PHRASES; daily install fragments live in STORE_FRAGMENTS (no duplicates,
+# asserted by tests/discovery/test_taxonomy_generic_deep.py). Founder-approved list
+# 2026-07-10 — extend only with his sign-off.
+GENERIC_DEEP_UNORDERED = ["app", "ai"]
+GENERIC_DEEP_PHRASES = [
+    # app-install CTAs
+    "get the app", "on the app store", "start your free trial", "3-day free trial",
+    # AI-tool copy phrases (how AI wrappers describe themselves)
+    "ai headshots", "ai photo generator", "ai companion", "talk to ai",
+    "your personal ai", "ai powered",
+    # intent/emotion hooks (direct-response copy that's working)
+    "does this actually work", "wish i knew sooner", "my biggest regret",
+    "what no one tells you about", "stopped using", "thousands switched",
+    "customers are obsessed",
+]
+GENERIC_DEEP_TERMS = GENERIC_DEEP_UNORDERED + GENERIC_DEEP_PHRASES
+
+
 def _entries(words, layer, search_type, max_pages):
     return [TaxonomyEntry(w, layer, search_type, max_pages) for w in words]
+
+
+def generic_deep_entries(deep_pages: int) -> list[TaxonomyEntry]:
+    """The generic copy-phrase lane with every per-entry page ceiling raised to
+    `deep_pages`. Broad single tokens page as UNORDERED; copy phrases as EXACT."""
+    return (_entries(GENERIC_DEEP_UNORDERED, "generic_deep",
+                     "KEYWORD_UNORDERED", deep_pages)
+            + _entries(GENERIC_DEEP_PHRASES, "generic_deep",
+                       "KEYWORD_EXACT_PHRASE", deep_pages))
 
 
 def all_entries(layer: str | None = None) -> list[TaxonomyEntry]:
