@@ -22,15 +22,18 @@ _TABLES = {
     "frontend.app_embeddings": {
         "key": "advertiser_id",
         "select": ("SELECT advertiser_id, embedding FROM frontend.app_embeddings "
-                   "WHERE dim > 0 ORDER BY advertiser_id"),
+                   "WHERE dim > 0"),
+        "id_filter": " AND advertiser_id = ANY(:ids)",
+        "order": " ORDER BY advertiser_id",
     },
     "discovery.candidate_embeddings": {
         "key": "candidate_id",
         "select": ("SELECT e.candidate_id, e.embedding "
                    "FROM discovery.candidate_embeddings e "
                    "JOIN discovery.candidates c ON c.id = e.candidate_id "
-                   "WHERE c.status = 'kept' AND e.dim > 0 "
-                   "ORDER BY e.candidate_id"),
+                   "WHERE c.status = 'kept' AND e.dim > 0"),
+        "id_filter": " AND e.candidate_id = ANY(:ids)",
+        "order": " ORDER BY e.candidate_id",
     },
 }
 
@@ -42,24 +45,31 @@ def crowding_k() -> int:
         return 10
 
 
-def refresh_crowding(engine, *, table: str, k: int | None = None) -> int:
+def refresh_crowding(engine, *, table: str, k: int | None = None,
+                     only_ids=None) -> int:
     """Recompute leave-one-out crowding for every row of `table`'s corpus and write
     it back. Returns the number of rows updated.
 
     Takes the ENGINE (not a connection): the whole corpus is read on a short-lived
     connection that is CLOSED before the ~2 s numpy compute, so no transaction is held
     over the bulk work (repo lesson: never pin a DB connection across heavy compute).
-    The batched UPDATE runs in its own `engine.begin()` txn afterward."""
+    The batched UPDATE runs in its own `engine.begin()` txn afterward.
+
+    `only_ids` is the repo's test-isolation allowlist convention (prod default None =
+    whole corpus): with a shared test DB, a concurrent suite's rows would otherwise
+    join the corpus mid-test and shift scores / flip the ragged-dim guard."""
     cfg = _TABLES.get(table)
     if cfg is None:
         raise ValueError(f"refresh_crowding: unknown table {table!r}")
     if k is None:
         k = crowding_k()
 
-    # Read the whole corpus on a short-lived connection, then let it close before any
+    sql = cfg["select"] + (cfg["id_filter"] if only_ids is not None else "") + cfg["order"]
+    params = {"ids": list(only_ids)} if only_ids is not None else {}
+    # Read the corpus on a short-lived connection, then let it close before any
     # compute — no connection or txn is held over the numpy work below.
     with engine.connect() as conn:
-        rows = conn.execute(text(cfg["select"])).all()
+        rows = conn.execute(text(sql), params).all()
     if not rows:
         return 0
 

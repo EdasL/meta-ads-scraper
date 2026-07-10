@@ -87,11 +87,35 @@ def _crowding(engine, table, key_col, ids):
     return {k: c for k, c in rows}
 
 
+def test_only_ids_shields_from_foreign_rows(engine):
+    """A concurrent suite seeding wrong-dim rows mid-test must not flip the dominant-dim
+    guard or shift sentinel scores: only_ids restricts the corpus to our sentinels.
+    (Observed live: 14 foreign dim-2 rows outnumbered the sentinels and got them all
+    dropped as 'ragged'.)"""
+    clone_ids, loner_id = _seed_app_embeddings(engine)
+    ids = clone_ids + [loner_id]
+    # simulate the polluter: more wrong-dim rows than sentinel rows, in sentinel range
+    ins = text("INSERT INTO frontend.app_embeddings "
+               "(advertiser_id, embedding, content_hash, dim, model) "
+               "VALUES (:a, :e, 'sentinel', 2, 'test')")
+    with engine.begin() as conn:
+        for j in range(N_CLONES + 5):
+            conn.execute(ins, {"a": ADV_BASE + 2000 + j, "e": [1.0, 0.0]})
+
+    n = refresh_crowding(engine, table="frontend.app_embeddings", only_ids=ids)
+    assert n == len(ids)
+
+    got = _crowding(engine, "frontend.app_embeddings", "advertiser_id", ids)
+    assert min(got[i] for i in clone_ids) >= 0.95
+    assert got[loner_id] < 0.80
+
+
 def test_app_embeddings_recompute(engine):
     clone_ids, loner_id = _seed_app_embeddings(engine)
 
-    n = refresh_crowding(engine, table="frontend.app_embeddings")
-    assert n >= N_CLONES + 1
+    n = refresh_crowding(engine, table="frontend.app_embeddings",
+                         only_ids=clone_ids + [loner_id])
+    assert n == N_CLONES + 1
 
     got = _crowding(engine, "frontend.app_embeddings", "advertiser_id",
                     clone_ids + [loner_id])
@@ -107,9 +131,9 @@ def test_app_embeddings_idempotent(engine):
     clone_ids, loner_id = _seed_app_embeddings(engine)
     ids = clone_ids + [loner_id]
 
-    refresh_crowding(engine, table="frontend.app_embeddings")
+    refresh_crowding(engine, table="frontend.app_embeddings", only_ids=ids)
     first = _crowding(engine, "frontend.app_embeddings", "advertiser_id", ids)
-    refresh_crowding(engine, table="frontend.app_embeddings")
+    refresh_crowding(engine, table="frontend.app_embeddings", only_ids=ids)
     second = _crowding(engine, "frontend.app_embeddings", "advertiser_id", ids)
 
     for i in ids:
@@ -124,7 +148,8 @@ def test_refresh_commits_from_fresh_connection(engine):
     on the caller committing)."""
     clone_ids, loner_id = _seed_app_embeddings(engine)
 
-    refresh_crowding(engine, table="frontend.app_embeddings")
+    refresh_crowding(engine, table="frontend.app_embeddings",
+                     only_ids=clone_ids + [loner_id])
 
     # Fully independent connection: sees the write only if refresh_crowding committed.
     with engine.connect() as conn:
@@ -165,7 +190,9 @@ def _seed_candidates(engine):
 def test_candidate_embeddings_recompute(engine):
     clone_ids, loner_id, dropped_id = _seed_candidates(engine)
 
-    refresh_crowding(engine, table="discovery.candidate_embeddings")
+    # dropped_id is in the allowlist on purpose: the kept-only join must still exclude it.
+    refresh_crowding(engine, table="discovery.candidate_embeddings",
+                     only_ids=clone_ids + [loner_id, dropped_id])
 
     got = _crowding(engine, "discovery.candidate_embeddings", "candidate_id",
                     clone_ids + [loner_id, dropped_id])
