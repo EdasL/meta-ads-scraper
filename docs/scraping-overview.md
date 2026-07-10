@@ -1,169 +1,159 @@
-# Scraping pipeline — how it works today
+# How the scraping works — the full journey
 
-_As of 2026-07-10. Every claim below is from current code (paths cited). Render the diagrams with any Mermaid viewer (VS Code preview, GitHub)._
+_As of 2026-07-10. This walks the data end to end: what we ask Meta, what comes back, and what decision happens at each step. Code locations are in the appendix._
 
-**One paragraph:** the worker sweeps Meta's Ad Library (internal GraphQL, through residential proxies) with a pool of keywords, writes every advertiser it finds into `discovery.candidates`, triages them against the app stores (keep = small app with real ads), enriches keepers (full ad pull, media, funnel probe), and periodically re-scrapes known advertisers so their ad history stays fresh. A cron re-scores everything nightly into GemScore + vetoes and refreshes the matview the dashboard reads. Keywords themselves are a managed population: mined from what we already like, rested when dry, woken later.
+## The core problem the whole design answers
 
-## Big picture
+Meta's Ad Library has **no "list all ads" door**. You can't ask "show me every app ad running in the US." The only ways in are: search by keyword, or pull one specific page's ads if you already know the page. That single constraint shapes everything below — we discover new advertisers **by searching**, and we deepen what we know about found advertisers **by pulling their page directly**.
 
 ```mermaid
 flowchart TD
-    subgraph KW["Keyword supply"]
-        TAX["Static taxonomy<br/>~305 niche + store terms<br/>discovery/taxonomy.py"]
-        FLY["Flywheel mining<br/>phrases from kept-gem ad copy<br/>discovery/keyword_mining.py"]
-        MINT["Frame mint (OFF by default)<br/>new-release / autocomplete / brainstorm lanes<br/>discovery/frame_mint.py"]
-        DK[("discovery.dynamic_keywords<br/>trial / active / resting / retired")]
-        FLY --> DK
-        MINT --> DK
-    end
+    KW["1 Keyword pool<br/>~300 niche search terms,<br/>constantly refreshed"]
+    SWEEP["2 Sweep<br/>search Meta's Ad Library<br/>for each keyword, page by page"]
+    SORT{"3 First sort<br/>each advertiser found"}
+    SKIP["skip: big page<br/>(>10k likes = incumbent)"]
+    APP["app candidate<br/>(ad links to App Store / Play)"]
+    FUN["funnel candidate<br/>(ad links to a quiz/landing site)"]
+    TRIAGE{"4 Triage<br/>look the app up in its store"}
+    DROP["drop: >5,000 ratings<br/>= already established"]
+    KEEP["keep: small app<br/>spending real money on ads"]
+    ENRICH["5 Enrich<br/>pull the advertiser's ENTIRE<br/>ad library + media + store data"]
+    WATCH["6 Watch over time<br/>re-scrape known advertisers daily<br/>→ ad history = growth signal"]
+    SCORE["7 Score nightly<br/>GemScore + vetoes"]
+    FEED["8 Dashboard feed<br/>+ your reviews"]
 
-    subgraph SWEEP["Sweep (per cycle)"]
-        SW["run_sweep — keyword search,<br/>adaptive page depth<br/>discovery/sweep.py"]
-    end
-    TAX --> SW
-    DK --> SW
-
-    META["Meta Ad Library GraphQL<br/>curl_cffi + DataImpulse proxies<br/>extract/search.py, session_pool.py, proxy.py"]
-    SW <--> META
-
-    CAND[("discovery.candidates")]
-    FCAND[("discovery.funnel_candidates")]
-    SW -->|"app-store ads"| CAND
-    SW -->|"web-funnel rejects"| FCAND
-
-    TRI["run_triage — iTunes batch +<br/>Play sidecar lookups; keep if<br/>rating_count ≤ 5000<br/>discovery/triage.py"]
-    CAND --> TRI
-
-    ADV[("public.advertisers / ads / apps")]
-    TRI -->|"kept → promoted"| ADV
-
-    ENR["enrich — full per-page ad pull<br/>(view_all_page_id), media to GCS,<br/>funnel capture<br/>enrich_full/run_enrich.py"]
-    ADV --> ENR
-    ENR --> META
-
-    CR["refresh_corpus — re-scrape stalest<br/>advertisers, deactivate vanished ads<br/>discovery/corpus_refresh.py"]
-    ADV --> CR
-    CR --> META
-
-    FSW["funnel sweep + confirm<br/>(daily; 100-page deep weekly)<br/>discovery/funnel_sweep.py, funnel_confirm.py"]
-    FCAND --> FSW
-    FSW --> META
-
-    SCORE["nightly cron: score_all →<br/>GemScore + 8 vetoes →<br/>refresh matview<br/>scoring/run_scoring.py"]
-    ADV --> SCORE
-    MV[("frontend.emerging_scaling_apps<br/>(matview) → Go API → dashboard")]
-    SCORE --> MV
-
-    ADV -->|"kept-gem ad copy"| FLY
+    KW --> SWEEP --> SORT
+    SORT --> SKIP
+    SORT --> APP --> TRIAGE
+    SORT --> FUN
+    TRIAGE --> DROP
+    TRIAGE --> KEEP --> ENRICH --> WATCH --> SCORE --> FEED
+    FEED -->|"ad copy of gems you like<br/>is mined into new keywords"| KW
 ```
 
-## 1. The worker cycle
+## 1. Keywords — what we search with
 
-One process, one loop: `src/agf/workers/main.py` (`main()` at `main.py:1002`). Runs continuously (`AGF_CONTINUOUS_DISCOVERY=1` default), sleeps `AGF_SWEEP_INTERVAL_SEC` (60s) between cycles. Each cycle `run_once` (`main.py:500-879`) runs these stages in order — most are daily-gated, so a typical cycle only does the ones that are due:
+We maintain a pool of search terms that emerging app ads would contain:
 
-| # | Stage | What it does | Cadence / budget |
-|---|-------|--------------|------------------|
-| 1 | `run_sweep` | keyword search sweep of the Ad Library | per `discovery_due` gate |
-| 2 | `run_triage` | keep/drop new candidates via store lookups | per cycle |
-| 3 | `snapshot_advertiser_week` | roll weekly active-ad counts | per cycle |
-| 4 | `resolve_pending_app_metadata` | fill iTunes/Play metadata | per cycle |
-| 5 | `refresh_apps` | daily store snapshot + reviews for known apps | daily |
-| 6 | `pull_keeper_history` | backfill ad history for keepers | half of `AGF_DISCOVERY_ENRICH_BUDGET` (600) |
-| 7 | `run_funnel_stage` | funnel sweep + confirm | daily (`funnel_due`) |
-| 8 | `refresh_corpus` | re-scrape stalest advertiser listings | daily, own budget `AGF_CORPUS_REFRESH_BUDGET` (3000) |
-| 9 | `mint_keywords_from_releases` | frame-mint new keywords | **off by default** (`AGF_RELEASE_MINT=0`) |
-| 10 | `run_flywheel_stage` | mine + trial + retire dynamic keywords | `flywheel_due` gate |
-| 11 | embeddings | `embed_apps`, `score_all_users`, `embed_candidates` (triage prior) | per cycle |
-| 12 | enrich | full enrichment of top advertisers | remaining budget ÷ ~14 Meta requests per gem |
-| 13 | repairs | `media_repair`, `funnel_repair`, `run_websub_bridge` | per-cycle caps (`AGF_*_REPAIR_PER_CYCLE`) |
+- **~305 hand-curated static terms** — niche phrases ("sleep tracker", "couples app") and store-link fragments — swept every day, taste-blind. This is the breadth backbone.
+- **Mined terms (the flywheel)** — we take the ad copy of gems we already kept, extract phrases that repeat across multiple advertisers (repetition = a real shared marketing angle, not one app's slogan), and trial them as new keywords.
+- **28 funnel phrases** ("take the quiz", etc.) that feed the separate funnel lane.
 
-Scoring is **not** in the worker by default — the nightly cron owns it (`AGF_SCORE_AFTER_SWEEP` can opt the worker in).
+Keywords are a managed population, not a fixed list. Each one carries a track record: if it stops producing new advertisers it **rests** (with an exponentially growing cooldown), then wakes and gets retried later. Nothing is thrown away permanently — a keyword that's dry today can be fertile in three months when a new niche appears.
 
-Safety rails: heartbeat file + in-process watchdog that SIGKILLs on stale heartbeat (`main.py:882-957`); every Meta call that could hang through a stalled proxy tunnel runs under a daemon-thread wall-clock ceiling, `_call_with_ceiling` (`main.py:177-206`, `AGF_PREFETCH_TIMEOUT_SEC=180`).
+## 2. The sweep — how one search actually happens
 
-## 2. Keyword supply and lifecycle
+For each live keyword, we call the **same internal GraphQL endpoint the Ad Library website itself uses** (the official API is useless for commercial ads — it's effectively political-ads-only). To not get blocked we:
 
-Three sources feed the sweep:
+- impersonate a real Chrome browser at the TLS level (curl_cffi), and
+- route every request through rotating **residential proxies** (DataImpulse), with dead proxies benched on a cooldown.
 
-- **Static taxonomy** (`discovery/taxonomy.py`) — ~305 hand-curated `niche_term` + `store_fragment` entries, swept daily, plus 28 `funnel_phrase` entries used only by the funnel sweep.
-- **Flywheel mining** (`discovery/keyword_mining.py`) — n-gram phrases mined from the ad copy of gems we already kept (`frontend.emerging_scaling_apps`), trialed as dynamic keywords.
-- **Frame mint** (`discovery/frame_mint.py`) — mints search keywords from app-store new releases + store autocomplete (generalized by Gemini) + brainstorm lane. Currently **disabled by default**.
+Meta answers with a page of ads (**sorted by impressions, biggest spenders first** — important below) plus a cursor for the next page. Per keyword we keep paging **adaptively**: as long as new advertisers keep appearing, go deeper; after **3 consecutive pages with nothing new**, stop. Broad fertile keywords go deep, narrow ones stop at page 1, so the request budget flows to where the yield is.
 
-Dynamic keywords live in `discovery.dynamic_keywords` and move through a state machine (`db/dynamic_keywords.py`):
+The impressions-first ordering matters: the top of page 1 is dominated by the Calms and Duolingos. The gems — small brand, real spend — sit **below** them, which is exactly why the pagination is adaptive instead of "first 2 pages only" (an earlier design that cut gems off).
 
-```mermaid
-stateDiagram-v2
-    [*] --> trial: minted / mined
-    trial --> active: yields keepers
-    trial --> retired: dry through trial
-    active --> resting: dry_streak hits rest threshold
-    resting --> active: cooldown elapses (wake)
-    resting --> resting: still dry → exponential cooldown
-```
+## 3. What comes back, and the first sort
 
-Nothing is permanently dropped anymore — the old terminal "retire on dry streak" was replaced by rest/wake with exponential cooldown (`record_keyword_sweep`, `dynamic_keywords.py:117`).
+Each ad in a result carries: the **Meta page** running it (name, page ID, **page like count**), the creative (text, images/video), the **link the ad points to**, start date, and whether it's still active. That's enough for a first classification of every advertiser found:
 
-## 3. Sweep mechanics
+| What we see | Verdict |
+|---|---|
+| Page has **>10,000 likes** | Incumbent — skip entirely. A big audience means they're past "emerging". |
+| Ad links to the **App Store or Google Play** | **App candidate** → recorded with the keyword that found it and how deep in the results it sat. |
+| Ad links to a **web landing page** (not a store redirect, not social, not an ad-tracker bounce) | **Funnel candidate** → the funnel lane (section 9). A web quiz/landing funnel is a product signal of its own. |
+| Anything else (physical products, services, junk) | Discarded. |
 
-`run_sweep` (`discovery/sweep.py:134`) iterates live keywords. Per keyword it pages the Ad Library search with **adaptive depth** — keep paging while all of these hold:
+Seeing the same advertiser again on a later sweep isn't wasted — we bump its "times seen" counter, which is itself weak evidence of sustained spend.
 
-1. Meta says `has_next` and returns a cursor (`sweep.py:219`)
-2. fewer than `AGF_SWEEP_PATIENCE_PAGES=3` consecutive pages with nothing new (`sweep.py:221`)
-3. under the per-keyword depth cap (`sweep.py:223`)
+## 4. Triage — "is this app small enough to be interesting?"
 
-The Meta call chain: `extract/facade.py` → `extract/search.py` (`search_page`, GraphQL doc + variables) → `curl_cffi` TLS-impersonated session (`extract/tls_client.py`, `session_pool.py`) → DataImpulse residential proxies with round-robin + dead-proxy cooldown (`extract/proxy.py`, `AGF_PROXIES`).
+A candidate is just "someone running app ads." Triage answers: **is it emerging, or already big?** We look the app up in its store — iOS through Apple's lookup API (batched 200 at a time), Android through a Google Play scraper (batched 50). One gate decides:
 
-Each result is classified (`classify_candidate`, `sweep.py:44`): app-store ads upsert into `discovery.candidates` (`db/candidates.py:13`, tracks `first_seen_depth`, `times_seen`); web-funnel-shaped rejects fold into `discovery.funnel_candidates` instead of being dropped. One veto applies at sweep time: pages with more than `INCUMBENT_PAGE_LIKES_MAX=10,000` likes are skipped as incumbents (`sweep.py:51`).
+> **rating count > 5,000 → drop (established). Otherwise → keep.**
 
-## 4. Triage
+That's deliberately the only gate. Installs, revenue estimates, longevity floors — all tried and removed; rating count proved the cleanest "already made it" signal that works identically on both stores. A kept candidate is promoted into the corpus: it gets an advertiser record, an app record, and enters the tracking loop.
 
-`run_triage` (`discovery/triage.py:56`) looks each new candidate up in its store — iOS via `lookup_itunes_batch` (chunks of 200), Android via the Node sidecar subprocess `sidecar/gp_lookup.js` (chunks of 50). The keep/drop rule is a single gate: drop if `rating_count > ESTABLISHED_RATINGS_MAX` (5,000) — i.e. keep small apps (`triage.py:31`). An empty iTunes result means genuinely delisted; a sidecar crash means "lookup failed, retry" and never writes a verdict (`triage.py:9-13`). Kept candidates are promoted into `public.advertisers`/`public.apps` (`triage.py:48`). A taste embedding (`triage_prior.py`, `candidate_embed.py`) reorders the enrich budget toward candidates similar to liked gems — advisory only, breadth stays taste-blind.
+The keep decision is taste-blind, but *the order* in which keepers get enriched isn't: each candidate's store listing is embedded and compared to the profile of gems you've liked, so the enrich budget reaches for likely-likable apps first (75% taste, 25% random exploration).
 
-## 5. Enrich
+## 5. Enrich — the deep look at a keeper
 
-`enrich_gem` (`enrich_full/run_enrich.py:190`) does the deep pull per advertiser: page-scoped `view_all_page_id` search (`active_status=ALL`) for the full ad listing, prefetched **outside** the DB transaction (`main.py:209-248`), off-store/funnel ads sorted first, top 5 ads captured with media (cap 120) uploaded to GCS, and any web landing probed + screenshot via `funnel_capture.py`. Costs ~14 Meta requests per gem, which is what divides the remaining enrich budget into a per-cycle gem count (`main.py:792`).
+Discovery only saw whatever ads happened to surface for one keyword. Enrichment pulls the advertiser's **entire ad library** by page ID — every ad, active and inactive, no keyword involved. Per keeper we:
 
-## 6. Corpus refresh (maturation)
+- pull the full ad listing (~14 Meta requests' worth of budget per gem),
+- store every ad with its start date / end date / active status — this becomes the ad-history timeline,
+- download creatives (images, video) for the top ads into cloud storage so the dashboard can show the actual ads,
+- snapshot the store listing (ratings, reviews, screenshots, description),
+- and if any ad points at a web page, render it headlessly, screenshot it, and classify what it is (quiz funnel? subscription checkout?).
 
-`refresh_corpus` (`discovery/corpus_refresh.py:29`) re-scrapes the *stalest* known advertisers' full listings (12 history pages each) under its own budget of 3,000 requests/day. This is what lets found advertisers **mature**: new ads accrue, vanished ads flip `is_active=false`, so `winner_age` and growth axes downstream reflect reality instead of freezing at discovery time. (This stage being dead for a month was the July gem-plateau root cause.)
+Now we're no longer looking at "an ad we found" — we're looking at **a company's whole advertising operation**.
 
-## 7. Funnel pipeline
+## 6. Watching over time — where the growth signal actually comes from
 
-Daily (`funnel_due`): `run_funnel_sweep` (`discovery/funnel_sweep.py:49`) sweeps the 28 static `funnel_phrase` keywords up to 8 pages, writing `discovery.funnel_candidates`; app-backed funnels bridge back into the app pipeline. Weekly, the same phrases get a **100-page deep sweep** (`AGF_FUNNEL_DEEP_PAGES=100`, every 7 days). Then `run_funnel_confirm` (`funnel_confirm.py:101`) renders each landing page and confirms it as a funnel if it shows payoff evidence, a quiz of ≥2 steps, or pixel + funnel-host fingerprints — verdict stored as `payoff_kind` (install/subscribe/unknown), never used to hide the row.
+A single snapshot can't tell a scaling app from a dying one. The signal is in the **ad library's movement**:
 
-## 8. Scoring and the feed
+- new ads appearing week over week = active testing/scaling,
+- the same ad running for weeks = a **proven winner** (nobody pays Meta for a month for an ad that doesn't convert),
+- ads vanishing = tests killed, or the whole operation winding down.
 
-Nightly cron (`ops/cron/snapshot.sh`, 02:15) runs `run_scoring` (`scoring/run_scoring.py:168`):
+So every day, a dedicated budget (3,000 requests) re-scrapes the **stalest** known advertisers' full listings: new ads get added, vanished ads get flipped inactive, weekly active-ad counts get snapshotted. This maturation loop is load-bearing — when it silently died for a month, every newly found advertiser stayed frozen at its discovery snapshot and the gem feed plateaued.
 
-- **GemScore** (`scoring/gemscore.py:3`): `100 · SV^.42 · UR^.12 · FI^.03 · D^.38 · W^.05` — scaling velocity (winner age capped 35d, depth, count growth), user ratings, funnel intensity, demand, web presence.
-- **8 vetoes** (`scoring/vetoes.py:86`): persistence (<2 weeks), relaunch, game app, no app, unverified app, incumbent ad volume (>200 active ads), incumbent audience (>10k page likes), established traction (>5,000 ratings).
-- Writes `adtech.advertiser_scores`, then `REFRESH MATERIALIZED VIEW CONCURRENTLY frontend.emerging_scaling_apps` — the matview the Go API (`backend/`) serves to the dashboard. A separate hourly cron re-refreshes the matview.
+## 7. Scoring — what we're actually looking for
 
-## 9. Data model at a glance
+Nightly, every advertiser in the corpus gets a **GemScore** (0–100). In plain words, the two axes that dominate:
 
-| Schema | Tables | Role |
-|--------|--------|------|
-| `discovery.*` | `candidates`, `funnel_candidates`, `dynamic_keywords`, `sweep_runs`, `flywheel_runs`, `funnel_sweep_runs`, `corpus_refresh_runs` | pipeline working state |
-| `public.*` | `advertisers`, `ads`, `apps`, `funnels` | the corpus (kept entities) |
-| `adtech.*` | `advertiser_scores`, `app_metrics`, `app_advertiser_metrics` | scores + metrics |
-| `logging.*` | `crawl_log` | DB-as-queue for the enrich scheduler |
-| `frontend.*` | `emerging_scaling_apps` (matview), review/ratings tables | what the product reads |
+- **Scaling velocity (~42% of the weight):** how long their winning ads have been running (capped at 35 days — a month of continuous spend already proves a winner; beyond that just measures age, and rewarding raw age would rank incumbents first), how deep the ad set goes, how fast the ad count is growing, whether they iterate creatives.
+- **Demand (~38%):** is the store side confirming it — ratings accumulating, reviews coming in.
 
-Schema DDL: `db/schema/NNN_*.sql`, applied by `src/agf/db/migrate.py`.
+plus small weights for user-rating quality, having a funnel, and web presence. Then **vetoes** hard-kill anything that isn't the target profile, whatever its score:
 
-## 10. Where it runs
+| Veto | Threshold | Why |
+|---|---|---|
+| Not persistent | ads running < 2 weeks | too early to tell, could be a one-off test |
+| Incumbent ad volume | > 200 active ads | that's a funded growth team, not emerging |
+| Incumbent audience | > 10,000 page likes | already has distribution |
+| Established traction | > 5,000 store ratings | already made it |
+| Game | is a game | out of scope |
+| No app / unverified app | store listing missing or unresolvable | nothing to track |
+| Relaunch | old app re-appearing | not genuinely new |
 
-`ops/docker-compose.yml` on the `agf-worker` GCP VM: `postgres` isn't used in prod (Cloud SQL is), the live services are **`worker`** (`python -m agf.workers.main`, healthcheck every 60s, `init: true` so the watchdog kill actually works), **`cron`** (matview hourly, score+snapshot 02:15, prune 03:30, backup 04:00), plus the Go `api` on GKE. The Google Play "sidecar" is a Node subprocess inside the worker container, not a separate service. Proxies are in-process via `AGF_PROXIES` — no gateway container.
+What survives is the product's definition of a gem: **a small, verified, non-game app whose ad library shows sustained, growing spend with proven winner ads, backed by real store demand.**
 
-## Knobs cheat-sheet
+## 8. The feed, and how your reviews feed back in
 
-| Env var | Default | Controls |
-|---------|---------|----------|
-| `AGF_SWEEP_INTERVAL_SEC` | 60 | pause between worker cycles |
-| `AGF_SWEEP_PATIENCE_PAGES` | 3 | dry pages before a keyword's sweep stops |
-| `AGF_DISCOVERY_ENRICH_BUDGET` | 600 | Meta requests/cycle split between keeper history + enrich |
-| `AGF_CORPUS_REFRESH_BUDGET` | 3000 | daily corpus-refresh request budget |
-| `AGF_FUNNEL_MAX_PAGES` / `_DEEP_PAGES` | 8 / 100 | funnel sweep depth, daily vs weekly deep |
-| `AGF_PREFETCH_TIMEOUT_SEC` | 180 | wall-clock ceiling per advertiser Meta pull |
-| `AGF_RELEASE_MINT` | 0 (off) | frame-mint keyword lane |
-| `AGF_PROXIES` | — | DataImpulse residential proxy list |
+Scored survivors land in the dashboard (one row per product, iOS+Android merged), ranked by GemScore. Your reviews close two loops:
+
+- **Ranking loop:** likes/dislikes train a preference model that reorders the review queue and steers the enrich-priority embedding from section 4.
+- **Discovery loop (the flywheel):** the ad copy of gems you keep is mined for recurring phrases, which become new search keywords — what you like literally changes what we search for next.
+
+## 9. The funnel lane (runs alongside)
+
+Some of the best signals aren't app ads at all — they're **web quiz funnels** (localized quiz → subscription checkout) that often precede or accompany an app. This lane:
+
+- sweeps the 28 funnel phrases daily (8 pages deep) and picks up funnel-shaped rejects from the app sweep,
+- once a week runs a **100-page deep sweep** of the same phrases (funnels hide deep in impressions-ranked results),
+- then **confirms** each candidate by actually rendering the landing page: counting quiz steps, fingerprinting payment/pixel vendors, classifying the payoff (app install / web subscription / physical — only digital is kept),
+- app-backed funnels bridge back into the app pipeline; pure web funnels surface in the feed with a "Web only" badge.
+
+## The whole thing in one sentence
+
+We search Meta's Ad Library with a self-improving pool of niche keywords, keep every small app we catch spending real ad money, pull and then keep re-pulling their entire ad operation to watch it move, and nightly score that movement — sustained winners plus growing spend plus confirming store demand — into a ranked feed of apps that are scaling before they look big anywhere else.
+
+---
+
+## Appendix: where things live
+
+| Piece | Code |
+|---|---|
+| Worker loop + stage order + budgets | `src/agf/workers/main.py` (`run_once`) |
+| Keyword taxonomy / lifecycle / mining | `src/agf/discovery/taxonomy.py`, `db/dynamic_keywords.py`, `keyword_mining.py` |
+| Sweep + adaptive depth | `src/agf/discovery/sweep.py` |
+| Meta GraphQL client / proxies | `src/agf/extract/search.py`, `session_pool.py`, `proxy.py`, `tls_client.py` |
+| Triage + store lookups | `src/agf/discovery/triage.py`, `enrich_full/appstore.py`, `enrich_full/sidecar/gp_lookup.js` |
+| Enrich | `src/agf/enrich_full/run_enrich.py`, `funnel_capture.py` |
+| Corpus refresh | `src/agf/discovery/corpus_refresh.py` |
+| Funnel sweep/confirm | `src/agf/discovery/funnel_sweep.py`, `funnel_confirm.py` |
+| GemScore + vetoes | `src/agf/scoring/gemscore.py`, `vetoes.py`, `run_scoring.py` |
+| Feed matview | `db/schema/141_emerging_matview_websub.sql` → `frontend.emerging_scaling_apps` |
+| Runtime | `ops/docker-compose.yml` (worker + cron on the VM), Go API on GKE |
+
+Key knobs: `AGF_SWEEP_PATIENCE_PAGES=3` (dry pages before a keyword stops), `AGF_DISCOVERY_ENRICH_BUDGET=600` (per-cycle Meta requests, split keeper-history/enrich), `AGF_CORPUS_REFRESH_BUDGET=3000` (daily re-scrape budget), `AGF_FUNNEL_DEEP_PAGES=100` (weekly deep funnel sweep), `AGF_PREFETCH_TIMEOUT_SEC=180` (per-advertiser hang ceiling), `AGF_PROXIES` (DataImpulse list). Frame-mint (`AGF_RELEASE_MINT`) is currently off by default.
