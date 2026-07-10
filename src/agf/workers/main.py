@@ -652,8 +652,8 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
             sleep=(lambda s: None) if dry_run else time.sleep,
             kw_delay=0.0 if dry_run else 2.0))
 
-    # 1.9) funnel pipeline — daily web2app-funnel accrual, sibling to the app sweep
-    #      (HANDOFF-funnel-pipeline roadmap §2). Gated to one finished
+    # 1.9) funnel pipeline — daily web2app-funnel accrual, sibling to the app sweep.
+    #      Gated to one finished
     #      discovery.funnel_sweep_runs row per day, so the continuous loop still hits
     #      the funnel_phrase keywords once daily. Failures are recorded on the run row
     #      and must NOT cost the app pipeline the rest of this tick.

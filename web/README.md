@@ -48,10 +48,10 @@ NEXT_PUBLIC_DATA_MODE=live         # call the Plan 7 read-only FastAPI
 NEXT_PUBLIC_API_URL=http://localhost:8000/api
 ```
 
-The contract (`src/types/contracts.ts`) is frozen against the master plan
-(`../docs/plans/00-master-plan.md`): §3.6 matview `frontend.emerging_scaling_apps`
-and §3.7 review keyed on `advertiser_id`. When the pipeline (Plans 2–7) is
-running, the client maps 1:1 to Plan 7 endpoints — no UI changes needed:
+The contract (`src/types/contracts.ts`) is frozen against the
+`frontend.emerging_scaling_apps` matview and the review shape keyed on
+`advertiser_id`. The client maps 1:1 to the read-only API endpoints — no UI
+changes needed:
 
 | Client fn | LIVE endpoint (Plan 7) |
 |---|---|

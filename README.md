@@ -220,4 +220,4 @@ Verified against the real Meta Ad Library + iTunes:
 
 ### Scope
 PoC only: no DB, no proxies, no browser, no funnel/creative download.
-Design rationale: `docs/design-spec.md`. Full build order: `docs/plans/00-master-plan.md`.
+How the live system works end-to-end: `docs/scraping-overview.md`.

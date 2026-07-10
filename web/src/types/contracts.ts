@@ -1,6 +1,6 @@
 /**
- * Frozen API contract — mirrors docs/plans/00-master-plan.md §3.6 (matview
- * `frontend.emerging_scaling_apps`) and §3.7 (review keyed on advertiser_id).
+ * Frozen API contract — mirrors the `frontend.emerging_scaling_apps` matview
+ * and the review shape keyed on advertiser_id.
  * The UI consumes these shapes whether data comes from mocks or the Plan 7
  * read-only FastAPI. Keep field names exactly aligned with the matview.
  */

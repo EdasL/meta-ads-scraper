@@ -10,8 +10,7 @@ are hidden-web-crawling / ad-library-specific (not the ecology/bandit transplant
 allocation doc).
 **Relationship to prior docs:** complements
 [2026-07-02 novel-discovery-algorithm](2026-07-02-novel-discovery-algorithm.md) (deep-web
-theory, RAW-UCB, Chao2) and [2026-07-06 category-budget-allocation](2026-07-06-category-budget-allocation.md)
-(allocation math). This one is the *scraping technique* layer — how to pick and shape the
+theory, RAW-UCB, Chao2). This one is the *scraping technique* layer — how to pick and shape the
 actual queries. Do not re-derive the scheduler/Chao2 from those docs.
 
 ---
