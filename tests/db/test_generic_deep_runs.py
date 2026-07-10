@@ -15,12 +15,13 @@ def test_open_close_and_weekly_gate(pg_conn):
 
 
 def test_failed_run_does_not_block_the_week(pg_conn):
+    # A run closed WITH an error must not satisfy the weekly gate — the pass retries
+    # next tick (funnel-deep semantics). The original contract counted any finished
+    # row; the first live pass (2026-07-10) died mid-pass on a Meta anomaly and would
+    # have silently skipped a whole week.
     run_id = open_generic_deep_run(pg_conn)
     close_generic_deep_run(pg_conn, run_id, error="ExtractError('boom')")
-    # finished WITH error still counts as finished — mirror corpus_refresh semantics?
-    # NO: the funnel deep gate retries after a failure. Assert the row exists but
-    # carries the error; the due decision in the worker keys on finished_at, so a
-    # failed-but-closed run DOES satisfy ran_within_days — the retry semantics come
-    # from the worker closing with error=... ONLY when the stage raised after doing
-    # partial work. Assert the observable contract:
+    assert generic_deep_ran_within_days(pg_conn, 7) is False
+    ok_id = open_generic_deep_run(pg_conn)
+    close_generic_deep_run(pg_conn, ok_id, stats={"trials_added": 0})
     assert generic_deep_ran_within_days(pg_conn, 7) is True
