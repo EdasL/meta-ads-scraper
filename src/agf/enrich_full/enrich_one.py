@@ -112,8 +112,13 @@ def run_job(engine, *, advertiser_id, job_id, enrich_call, score_call,
     score_call are injected so the state machine is testable in isolation.
 
     status_table selects the vetted job table set_status writes to.
-    mark_crawled_on_success appends a crawl_log row for the advertiser AFTER a
-    successful enrich (queue consumer path) — never on the error path.
+    mark_crawled_on_success, when set (queue-consumer path), appends a crawl_log
+    row for the advertiser on BOTH outcomes: result="ok" on success and
+    result="error:<type>" on failure. Marking the failure too is load-bearing —
+    without it a failing advertiser (dead landing, delisted app, SIGALRM) has no
+    crawl_log row, so claim_due (never-crawled first) re-enqueues it every worker
+    tick and starves healthy keepers. The on-demand default (False) NEVER marks
+    crawl_log, keeping "Refresh data" byte-identical.
     """
     as_of = as_of or date.today()
     try:
@@ -121,10 +126,19 @@ def run_job(engine, *, advertiser_id, job_id, enrich_call, score_call,
         score_call(engine, advertiser_id, as_of)
         if mark_crawled_on_success:
             with begin(engine) as conn:
-                mark_crawled(conn, "advertiser", advertiser_id)
+                mark_crawled(conn, "advertiser", advertiser_id, "ok")
         set_status(engine, job_id, "done", finished=True,
                    status_table=status_table)
     except BaseException as e:  # record ANY failure (incl. timeout) on the row
+        if mark_crawled_on_success:
+            # Same TTL discipline as the old in-loop batch (runner.py): a failing
+            # advertiser records a crawl_log row so it isn't re-claimed next tick.
+            try:
+                with begin(engine) as conn:
+                    mark_crawled(conn, "advertiser", advertiser_id,
+                                 f"error:{type(e).__name__}")
+            except Exception:
+                pass  # best-effort; never mask the original failure
         try:
             set_status(engine, job_id, "error", error_text=str(e)[:500],
                        finished=True, status_table=status_table)

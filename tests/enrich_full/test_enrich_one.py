@@ -100,7 +100,7 @@ def test_default_targets_enrich_jobs_and_no_mark_crawled(monkeypatch):
     engine = get_engine()
     marks = []
     monkeypatch.setattr(enrich_one, "mark_crawled",
-                        lambda conn, etype, eid: marks.append((etype, eid)))
+                        lambda conn, etype, eid, result="ok": marks.append((etype, eid, result)))
     with begin(engine) as conn:
         job_id = _new_job(conn)
 
@@ -146,7 +146,7 @@ def test_mark_crawled_called_on_success(monkeypatch):
     engine = get_engine()
     marks = []
     monkeypatch.setattr(enrich_one, "mark_crawled",
-                        lambda conn, etype, eid: marks.append((etype, eid)))
+                        lambda conn, etype, eid, result="ok": marks.append((etype, eid, result)))
     with begin(engine) as conn:
         job_id = _new_job(conn)
 
@@ -155,14 +155,16 @@ def test_mark_crawled_called_on_success(monkeypatch):
                        score_call=lambda *a, **k: None,
                        mark_crawled_on_success=True)
 
-    assert marks == [("advertiser", 999001)]
+    assert marks == [("advertiser", 999001, "ok")]
 
 
-def test_mark_crawled_not_called_on_error(monkeypatch):
+def test_mark_crawled_called_on_error(monkeypatch):
+    """A failing enrich MUST still record a crawl_log row (result="error:...") so
+    the advertiser's TTL applies and claim_due does not re-enqueue it every tick."""
     engine = get_engine()
     marks = []
     monkeypatch.setattr(enrich_one, "mark_crawled",
-                        lambda conn, etype, eid: marks.append((etype, eid)))
+                        lambda conn, etype, eid, result="ok": marks.append((etype, eid, result)))
     with begin(engine) as conn:
         job_id = _new_job(conn)
 
@@ -176,7 +178,10 @@ def test_mark_crawled_not_called_on_error(monkeypatch):
     except RuntimeError:
         pass
 
-    assert marks == []  # error path never marks crawled
+    assert len(marks) == 1
+    etype, eid, result = marks[0]
+    assert (etype, eid) == ("advertiser", 999001)
+    assert result.startswith("error")  # failure recorded, not "ok"
     with begin(engine) as conn:
         status, _, _ = _status(conn, job_id)
     assert status == "error"
