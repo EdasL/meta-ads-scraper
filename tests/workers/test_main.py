@@ -6,7 +6,7 @@ sentinels."""
 import os
 import subprocess
 import sys
-from datetime import date, timedelta
+from datetime import date
 
 from sqlalchemy import text
 
@@ -147,8 +147,7 @@ def test_dry_run_sweep_triages_and_enriches(_migrated_engine):
     _clean_fake(eng)
     try:
         ex = build_extractor(dry_run=True, now_epoch=NOW)   # in-src fake, no network
-        summary = run_once(eng, ex, now_epoch=NOW, as_of=date(2026, 6, 4), dry_run=True,
-                           score_after=False)
+        summary = run_once(eng, ex, now_epoch=NOW, as_of=date(2026, 6, 4), dry_run=True)
         # sweep: both demo keyword ads fold into NEW candidates (small pages, store links)
         assert summary["sweep"]["candidates_new"] == 2
         assert summary["sweep"]["drops"]["social"] == 0
@@ -187,19 +186,6 @@ def test_dry_run_sweep_triages_and_enriches(_migrated_engine):
                 {"p": list(FAKE_PAGES)}).all()
         assert {r.page_id: (r.ads, r.wks) for r in hist} == \
             {"FAKE1": (1, 16), "FAKE2": (1, 16)}
-        # velocity tracker: the GLOBAL weekly rollup ran (only_ids=None). Keepers have
-        # no ads yet, so a clean DB legitimately rolls up 0 rows — assert instead that
-        # no advertiser with active ads is missing this week's metrics row.
-        assert summary["snapshot_weeks"] >= 0
-        wk = date(2026, 6, 4) - timedelta(days=date(2026, 6, 4).weekday())
-        with eng.connect() as conn:
-            missing = conn.execute(text(
-                "SELECT count(DISTINCT a.advertiser_id) FROM public.ads a "
-                "WHERE a.is_active AND a.advertiser_id IS NOT NULL AND NOT EXISTS "
-                "(SELECT 1 FROM adtech.app_advertiser_metrics m "
-                " WHERE m.advertiser_id = a.advertiser_id AND m.week_start = :wk)"),
-                {"wk": wk}).scalar()
-        assert missing == 0
     finally:
         _clean_fake(eng)
 

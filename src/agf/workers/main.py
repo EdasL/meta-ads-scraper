@@ -30,7 +30,6 @@ Env:
   AGF_ENRICH_TOP_N             ads enriched per gem                  (default 5)
   AGF_MEDIA_CAP                media downloads per gem beyond top-N  (default 120)
   AGF_ENRICH_TTL_HOURS         re-enrich a gem at most this often    (default 168 = 7d)
-  AGF_SCORE_AFTER_SWEEP=1      run run_scoring after discovery       (default off; cron owns it)
   AGF_MIN_GEM_SCORE            enrich gems at/above this score       (default 70)
   AGF_SWEEP_INTERVAL_SEC       sleep between sweeps                  (default 3600; ignored if once)
   AGF_SWEEP_MAX_CONSECUTIVE_ERRORS  dead-proxy circuit-breaker: abort the
@@ -125,10 +124,7 @@ from agf.enrich_full.media_repair import (repair_advertiser,
                                           textless_feed_advertisers)
 from agf.enrich_full.run_enrich import make_enrich_handler, EnrichDeps
 from agf.extract.errors import ExtractError
-from agf.scoring.run_scoring import run_scoring, ALERT_THRESHOLD
-from scripts.embed_apps import embed_apps                       # content embeddings
-from scripts.score_content_preferences import score_all_users   # content preference scoring
-from agf.tracker.snapshots import snapshot_advertiser_week
+from agf.scoring.run_scoring import ALERT_THRESHOLD
 from agf.workers.runner import run_worker
 
 
@@ -540,7 +536,7 @@ def eligible_gem_ids(conn, min_score):
 # --- one sweep ---------------------------------------------------------------
 def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
              sweep_pages=2, kw_delay=3.0, enrich_budget=600, enrich_top_n=5,
-             enrich_media_cap=120, enrich_ttl_hours=168, score_after=False,
+             enrich_media_cap=120, enrich_ttl_hours=168,
              min_score=ALERT_THRESHOLD, continuous_discovery=False,
              funnel_daily=True, funnel_pages=8, funnel_confirm_limit=50,
              funnel_deep_pages=100, funnel_deep_every_days=7,
@@ -604,17 +600,6 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
                                     triage=triage_stats, error=repr(exc))
             raise
     _touch_heartbeat()  # sweep is the long stage; prove liveness before the rest
-
-    # 1.5) velocity tracker — roll THIS week's active-ad counts into the weekly
-    #      app_advertiser_metrics series that build_features/GemScore read. Nothing else
-    #      calls this in production, so without it the week-over-week signal never builds,
-    #      scaling_velocity stays flat, and no advertiser can EVER cross the alert
-    #      threshold no matter how long the system runs. Pure DB (counts public.ads), so
-    #      it adds no Meta traffic. Global rollup: every tracked advertiser must accrue
-    #      the weekly series (the EU confirm-set that used to scope it no longer exists).
-    week_start = as_of - timedelta(days=as_of.weekday())
-    with begin(engine) as conn:
-        snapshot_weeks = snapshot_advertiser_week(conn, week_start, only_ids=None)
 
     # 1.6) resolve metadata for newly-linked apps (name/genre/release/ratings). Cheap
     #      iTunes/gplay lookups (no Meta traffic), so every sweep makes discovered apps
@@ -815,62 +800,6 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
                 print(f"[worker] flywheel stage failed: {exc!r}", file=sys.stderr,
                       flush=True)
 
-    # 2) scoring — optional; its own committed txn + CONCURRENT matview refresh
-    scored = run_scoring(engine, as_of) if score_after else None
-
-    # 2a) content embeddings — embed new/changed apps so the preference scorer
-    #     ranks on current content. Best-effort: a failure must not stall the cycle.
-    #     Uses engine.connect() + commit_every=25 so a 429 mid-cycle persists the
-    #     already-embedded batch instead of rolling the whole cycle back.
-    if score_after and os.environ.get("AGF_EMBED_APPS", "1") != "0":
-        try:
-            from agf.discovery.crowding_refresh import refresh_crowding
-            with engine.connect() as conn:
-                try:
-                    emb_stats = embed_apps(conn, commit_every=25)
-                    conn.commit()
-                except Exception as exc:
-                    conn.commit()  # persist progress before the best-effort handler logs
-                    raise
-            # Recompute crowding over the whole app corpus (full recompute IS the
-            # backfill). Takes the engine: reads on a short-lived conn, computes with
-            # no txn open, UPDATEs in its own short txn.
-            crowded = refresh_crowding(engine, table="frontend.app_embeddings")
-            print(f"[worker] embeddings: {emb_stats} crowding_refreshed={crowded}",
-                  flush=True)
-        except Exception as exc:
-            print(f"[worker] embedding stage failed: {exc!r}",
-                  file=sys.stderr, flush=True)
-
-    # 2b) preference re-scoring — per-user similarity-to-likes over embeddings.
-    if score_after and os.environ.get("AGF_SCORE_PREFERENCES", "1") != "0":
-        try:
-            with begin(engine) as conn:
-                pref_counts = score_all_users(conn)
-            print(f"[worker] preference scoring: {pref_counts}", flush=True)
-        except Exception as exc:
-            print(f"[worker] preference scoring failed: {exc!r}",
-                  file=sys.stderr, flush=True)
-
-    # 2c) candidate embeddings — fetch each kept candidate's store listing + embed it
-    #     so the enrich budget can be taste-prioritized. Best-effort; never stalls.
-    if os.environ.get("AGF_TRIAGE_PRIOR", "1") != "0" and not dry_run:
-        try:
-            from agf.discovery.candidate_embed import embed_candidates
-            from agf.discovery.crowding_refresh import refresh_crowding
-            with engine.connect() as conn:
-                cstats = embed_candidates(conn, itunes_client=http_client, commit_every=25,
-                                          limit=int(os.environ.get("AGF_TRIAGE_EMBED_PER_CYCLE", "200")))
-                conn.commit()
-            # Recompute crowding over all kept-candidate embeddings. Takes the engine:
-            # reads on a short-lived conn, computes with no txn open, own short UPDATE txn.
-            crowded = refresh_crowding(engine, table="discovery.candidate_embeddings")
-            print(f"[worker] candidate embeddings: {cstats} crowding_refreshed={crowded}",
-                  flush=True)
-        except Exception as exc:
-            print(f"[worker] candidate embed stage failed: {exc!r}",
-                  file=sys.stderr, flush=True)
-
     # 3) enrich — keepers first (they have no ad history yet, so they can't score
     #    until enriched), then flagged gems due for their TTL refresh; both under a
     #    proxy-request budget instead of a fixed count. ~14 Meta requests per gem
@@ -961,8 +890,8 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
     return {"sweep": sweep_stats, "triage": triage_stats,
             "keeper_history": keeper_history, "funnel": funnel, "flywheel": flywheel,
             "release_mint": release_mint,
-            "snapshot_weeks": snapshot_weeks, "apps_refreshed": apps_refreshed,
-            "scored": scored, "enrich_candidates": cand_ids, "enriched": enriched,
+            "apps_refreshed": apps_refreshed,
+            "enrich_candidates": cand_ids, "enriched": enriched,
             "media_repair": media_repair, "funnel_repair": funnel_repair,
             "websub": websub}
 
@@ -1070,8 +999,7 @@ def _summary_line(s: dict) -> str:
                  f"cats={len(rm.get('minted_by_category', {}))} "
                  f"frame_seeded={rm.get('frame_seeded', 0)} "
                  f"in_scope={rm.get('in_scope', 0)})")
-    line += (f" weekly_snapshots={s['snapshot_weeks']} "
-            f"apps_refreshed={s.get('apps_refreshed', 0)} "
+    line += (f" apps_refreshed={s.get('apps_refreshed', 0)} "
             f"enriched={len(s['enriched'])}/{len(s['enrich_candidates'])}")
     mr = s.get("media_repair")
     if mr and mr.get("downloaded"):
@@ -1082,8 +1010,6 @@ def _summary_line(s: dict) -> str:
     if s.get("websub") is not None:
         ws = s["websub"]
         line += f" websub(examined={ws['examined']} bridged={ws['bridged']})"
-    if s["scored"] is not None:
-        line += f" scored={s['scored']}"
     return line
 
 
@@ -1113,7 +1039,6 @@ def main(argv=None) -> None:
         enrich_top_n=_env_int("AGF_ENRICH_TOP_N", 5),
         enrich_media_cap=_env_int("AGF_MEDIA_CAP", 120),
         enrich_ttl_hours=_env_int("AGF_ENRICH_TTL_HOURS", 168),
-        score_after=_env_bool("AGF_SCORE_AFTER_SWEEP"),
         min_score=_env_float("AGF_MIN_GEM_SCORE", ALERT_THRESHOLD),
         continuous_discovery=continuous,
         funnel_daily=_env_bool("AGF_FUNNEL_DAILY", True),
