@@ -134,7 +134,7 @@ def main() -> None:
     ap.add_argument("--share", type=float, default=0.6,
                     help="crowded-share threshold for an offender (default 0.6)")
     ap.add_argument("--tail", type=float, default=dk.crowding_tail(),
-                    help="crowding >= tail is 'crowded' (default AGF_CROWDING_TAIL / 0.80)")
+                    help="crowding >= tail is 'crowded' (default AGF_CROWDING_TAIL_CANDIDATE / 0.90)")
     args = ap.parse_args()
 
     # get_engine() already resolves AGF_DATABASE_URL → AGF_TEST_DB_URL on its own.

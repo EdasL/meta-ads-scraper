@@ -63,13 +63,13 @@ def _find(conn, **kw):
 
 
 def test_find_offenders_flags_only_the_crowded_active(pg_conn, monkeypatch):
-    monkeypatch.delenv("AGF_CROWDING_TAIL", raising=False)
+    monkeypatch.delenv("AGF_CROWDING_TAIL_CANDIDATE", raising=False)
     off = "AUDITCROWD offender"          # 4/5 crowded -> share 0.8
     clean = "AUDITCROWD clean"           # 0/5 crowded
     small = "AUDITCROWD small"           # 2/2 crowded but kept_n < 3
-    _seed_active(pg_conn, off, offset=0, crowdings=[0.95, 0.9, 0.9, 0.85, 0.1])
+    _seed_active(pg_conn, off, offset=0, crowdings=[0.95, 0.95, 0.95, 0.95, 0.1])
     _seed_active(pg_conn, clean, offset=100, crowdings=[0.1] * 5)
-    _seed_active(pg_conn, small, offset=200, crowdings=[0.9, 0.9])
+    _seed_active(pg_conn, small, offset=200, crowdings=[0.95, 0.95])
 
     offenders = _find(pg_conn)
     got = {o.keyword: o for o in offenders if o.keyword.startswith("AUDITCROWD")}
@@ -86,16 +86,16 @@ def test_find_offenders_flags_only_the_crowded_active(pg_conn, monkeypatch):
 def test_null_crowding_excluded_from_kept_n(pg_conn, monkeypatch):
     # kept_n counts only crowding-NOT-NULL rows. 2 crowded + 3 NULL => kept_n 2 (< 3),
     # NOT an offender. If NULLs were counted, kept_n would be 5 and it would flag.
-    monkeypatch.delenv("AGF_CROWDING_TAIL", raising=False)
+    monkeypatch.delenv("AGF_CROWDING_TAIL_CANDIDATE", raising=False)
     kw = "AUDITCROWD nulls"
-    _seed_active(pg_conn, kw, offset=300, crowdings=[0.9, 0.9, None, None, None])
+    _seed_active(pg_conn, kw, offset=300, crowdings=[0.95, 0.95, None, None, None])
     assert [o.keyword for o in _find(pg_conn)] == []
 
 
 def test_dry_run_find_mutates_nothing(pg_conn, monkeypatch):
-    monkeypatch.delenv("AGF_CROWDING_TAIL", raising=False)
+    monkeypatch.delenv("AGF_CROWDING_TAIL_CANDIDATE", raising=False)
     kw = "AUDITCROWD dryrun"
-    _seed_active(pg_conn, kw, offset=400, crowdings=[0.9] * 5)
+    _seed_active(pg_conn, kw, offset=400, crowdings=[0.95] * 5)
 
     _find(pg_conn)  # dry run: read only
 
@@ -103,10 +103,10 @@ def test_dry_run_find_mutates_nothing(pg_conn, monkeypatch):
 
 
 def test_apply_rests_only_the_offender(pg_conn, monkeypatch):
-    monkeypatch.delenv("AGF_CROWDING_TAIL", raising=False)
+    monkeypatch.delenv("AGF_CROWDING_TAIL_CANDIDATE", raising=False)
     off = "AUDITCROWD apply-off"
     clean = "AUDITCROWD apply-clean"
-    _seed_active(pg_conn, off, offset=500, crowdings=[0.9] * 5, rest_count=0)
+    _seed_active(pg_conn, off, offset=500, crowdings=[0.95] * 5, rest_count=0)
     _seed_active(pg_conn, clean, offset=600, crowdings=[0.1] * 5)
 
     offenders = _find(pg_conn)
@@ -127,9 +127,9 @@ def test_apply_rests_only_the_offender(pg_conn, monkeypatch):
 
 
 def test_thresholds_are_overridable(pg_conn, monkeypatch):
-    monkeypatch.delenv("AGF_CROWDING_TAIL", raising=False)
+    monkeypatch.delenv("AGF_CROWDING_TAIL_CANDIDATE", raising=False)
     kw = "AUDITCROWD halfshare"       # 3/6 crowded -> share 0.5
-    _seed_active(pg_conn, kw, offset=700, crowdings=[0.9, 0.9, 0.9, 0.1, 0.1, 0.1])
+    _seed_active(pg_conn, kw, offset=700, crowdings=[0.95, 0.95, 0.95, 0.1, 0.1, 0.1])
 
     # Default share 0.6 -> not an offender.
     assert kw not in [o.keyword for o in _find(pg_conn)]
@@ -141,13 +141,13 @@ def test_find_offenders_scope_locked_to_active_app(pg_conn, monkeypatch):
     # A funnel keyword and a trial keyword, both with a fully crowded profile that would
     # flag if scope were ignored, must be excluded: find_offenders is WHERE status='active'
     # AND kind='app'. Only the plain active-app control is flagged.
-    monkeypatch.delenv("AGF_CROWDING_TAIL", raising=False)
+    monkeypatch.delenv("AGF_CROWDING_TAIL_CANDIDATE", raising=False)
     ctrl = "AUDITCROWD scope-app"
     funnel = "AUDITCROWD scope-funnel"
     trial = "AUDITCROWD scope-trial"
-    _seed_active(pg_conn, ctrl, offset=800, crowdings=[0.9] * 5)
-    _seed_active(pg_conn, funnel, offset=900, crowdings=[0.9] * 5, kind="funnel")
-    _seed_active(pg_conn, trial, offset=1000, crowdings=[0.9] * 5, status="trial")
+    _seed_active(pg_conn, ctrl, offset=800, crowdings=[0.95] * 5)
+    _seed_active(pg_conn, funnel, offset=900, crowdings=[0.95] * 5, kind="funnel")
+    _seed_active(pg_conn, trial, offset=1000, crowdings=[0.95] * 5, status="trial")
 
     flagged = {o.keyword for o in _find(pg_conn) if o.keyword.startswith("AUDITCROWD")}
     assert flagged == {ctrl}
@@ -157,9 +157,9 @@ def test_apply_rests_skips_concurrently_rested(pg_conn, monkeypatch):
     # Race guard: find_offenders reads the keyword while ACTIVE, then a concurrent worker
     # rests it before apply_rests writes. The status='active' guard must leave that row
     # untouched (no stale-rest_count clobber) and count it as 0 rested.
-    monkeypatch.delenv("AGF_CROWDING_TAIL", raising=False)
+    monkeypatch.delenv("AGF_CROWDING_TAIL_CANDIDATE", raising=False)
     off = "AUDITCROWD race-off"
-    _seed_active(pg_conn, off, offset=1100, crowdings=[0.9] * 5, rest_count=0)
+    _seed_active(pg_conn, off, offset=1100, crowdings=[0.95] * 5, rest_count=0)
 
     offenders = _find(pg_conn)
     assert [o.keyword for o in offenders if o.keyword.startswith("AUDITCROWD")] == [off]
@@ -182,7 +182,7 @@ def test_main_dry_run_smoke(pg_conn, monkeypatch, capsys):
     # wrapper, in dry-run mode. main opens its own connection (not pg_conn), so it does
     # not see this txn's seed — it just has to run and print the dry-run header. Depending
     # on pg_conn keeps it skipped when AGF_TEST_DB_URL is unset and the schema migrated.
-    monkeypatch.delenv("AGF_CROWDING_TAIL", raising=False)
+    monkeypatch.delenv("AGF_CROWDING_TAIL_CANDIDATE", raising=False)
     monkeypatch.setattr(sys, "argv", ["audit_crowded_keywords"])
 
     audit.main()

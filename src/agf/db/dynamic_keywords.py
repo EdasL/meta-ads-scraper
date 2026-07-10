@@ -26,9 +26,13 @@ def _env_float(name: str, default: float) -> float:
 
 
 def crowding_tail() -> float:
-    # Crowding >= this is a "crowded" (clone-cluster) candidate. 0.80 = the measured
-    # top-quartile edge where like-rate collapses (2.8% vs 8-12%). Read at call time.
-    return _env_float("AGF_CROWDING_TAIL", 0.80)
+    # Crowding >= this is a "crowded" (clone-cluster) candidate, for the CANDIDATE-space
+    # consumers (trial promotion, enrich priority, audit). 0.90 = the candidate corpus's
+    # p75 (2026-07-10 prod calibration) — the top-quartile edge the like-rate cliff sits
+    # at. NOTE the candidate space is denser than the app space where the review-queue's
+    # own AGF_CROWDING_TAIL=0.80 lives (app p75~0.84); a shared 0.80 here would flag ~64%
+    # of candidates (below their median), not the crowded tail. Read at call time.
+    return _env_float("AGF_CROWDING_TAIL_CANDIDATE", 0.90)
 
 
 def crowded_candidate_count(conn, keyword: str, *, tail: float) -> int:

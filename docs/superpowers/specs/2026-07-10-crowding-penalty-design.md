@@ -110,8 +110,16 @@ Normalize rows; matmul; top-k mean. 3.4k×3.4k×768 ≈ 2 s numpy — fine per c
 - Run once after the first crowding-populated cycle; keep the script for re-runs.
 
 ## Env knobs (all optional, defaults in code)
-`AGF_CROWDING_K=10` · `AGF_CROWDING_TAIL=0.80` · `AGF_CROWDING_PENALTY=0.5` (python
-enrich) · `AGF_CROWDING_PENALTY_GO=0.5` (review queue).
+`AGF_CROWDING_K=10` · `AGF_CROWDING_TAIL_CANDIDATE=0.90` (python: promotion, enrich,
+audit — candidate embedding space, p75) · `AGF_CROWDING_TAIL=0.80` (Go review queue —
+app embedding space, p75) · `AGF_CROWDING_PENALTY=0.5` · `AGF_CROWDING_PENALTY_GO=0.5`.
+
+**Calibration (2026-07-10 prod):** the two embedding corpora have different densities,
+so one absolute tail can't serve both. App space (rated apps, n≈1949): median 0.78,
+p75≈0.84 → review-queue tail 0.80. Candidate space (kept candidates, n≈3351): median
+0.84, p75=0.90 → candidate-consumer tail 0.90. A shared 0.80 flagged 64% of candidates
+(below their median), not the crowded tail. Both tails = each corpus's ~p75, matching
+the measured top-quartile like-rate cliff.
 
 ## Test plan
 - Pure: crowding math (known-geometry fixtures; leave-one-out masks self; k > corpus).

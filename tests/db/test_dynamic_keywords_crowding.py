@@ -60,9 +60,9 @@ def test_all_crowded_trial_not_promoted(pg_conn, monkeypatch):
     # 5 finds, all embedding-space clones (crowding >= tail) -> uncrowded yield 0 -> retired.
     monkeypatch.setenv("AGF_FLYWHEEL_TRIAL_SWEEPS", "4")
     monkeypatch.delenv("AGF_FLYWHEEL_PROMOTE_MIN_NEW", raising=False)   # default 1
-    monkeypatch.delenv("AGF_CROWDING_TAIL", raising=False)             # default 0.80
+    monkeypatch.delenv("AGF_CROWDING_TAIL_CANDIDATE", raising=False)   # default 0.90
     kw = "FWCROWD allcrowd"
-    _seed_candidates(pg_conn, kw, offset=0, crowdings=[0.9] * 5)
+    _seed_candidates(pg_conn, kw, offset=0, crowdings=[0.95] * 5)
     kid = _trial_at_budget(pg_conn, kw, new_total=5)
 
     assert dk.record_keyword_sweep(pg_conn, kid, new_candidates=0) == "retired"
@@ -73,7 +73,7 @@ def test_zero_crowded_trial_promoted(pg_conn, monkeypatch):
     # 5 finds, none crowded -> full uncrowded yield -> promoted.
     monkeypatch.setenv("AGF_FLYWHEEL_TRIAL_SWEEPS", "4")
     monkeypatch.delenv("AGF_FLYWHEEL_PROMOTE_MIN_NEW", raising=False)
-    monkeypatch.delenv("AGF_CROWDING_TAIL", raising=False)
+    monkeypatch.delenv("AGF_CROWDING_TAIL_CANDIDATE", raising=False)
     kw = "FWCROWD uncrowded"
     _seed_candidates(pg_conn, kw, offset=100, crowdings=[0.1] * 5)
     kid = _trial_at_budget(pg_conn, kw, new_total=5)
@@ -87,7 +87,7 @@ def test_no_embeddings_trial_promoted_degrade_open(pg_conn, monkeypatch):
     # with no populated crowding promotes exactly as it does today.
     monkeypatch.setenv("AGF_FLYWHEEL_TRIAL_SWEEPS", "4")
     monkeypatch.delenv("AGF_FLYWHEEL_PROMOTE_MIN_NEW", raising=False)
-    monkeypatch.delenv("AGF_CROWDING_TAIL", raising=False)
+    monkeypatch.delenv("AGF_CROWDING_TAIL_CANDIDATE", raising=False)
     kw = "FWCROWD degrade"
     _seed_candidates(pg_conn, kw, offset=200,
                      crowdings=["no-emb", "no-emb", "no-emb", None, None])
@@ -98,19 +98,19 @@ def test_no_embeddings_trial_promoted_degrade_open(pg_conn, monkeypatch):
 
 
 def test_crowded_candidate_count_counts_only_tail(pg_conn, monkeypatch):
-    monkeypatch.delenv("AGF_CROWDING_TAIL", raising=False)
+    monkeypatch.delenv("AGF_CROWDING_TAIL_CANDIDATE", raising=False)
     kw = "FWCROWD counting"
-    # 3 crowded (>=0.80), 1 just under, 1 NULL, 1 with no embedding at all.
+    # 3 crowded (>=0.90), 1 just under, 1 NULL, 1 with no embedding at all.
     _seed_candidates(pg_conn, kw, offset=300,
-                     crowdings=[0.95, 0.80, 0.81, 0.79, None, "no-emb"])
+                     crowdings=[0.99, 0.95, 0.91, 0.88, None, "no-emb"])
     assert dk.crowded_candidate_count(pg_conn, kw, tail=dk.crowding_tail()) == 3
 
 
 def test_crowding_tail_reads_env(monkeypatch):
-    monkeypatch.setenv("AGF_CROWDING_TAIL", "0.5")
+    monkeypatch.setenv("AGF_CROWDING_TAIL_CANDIDATE", "0.5")
     assert dk.crowding_tail() == 0.5
-    monkeypatch.delenv("AGF_CROWDING_TAIL", raising=False)
-    assert dk.crowding_tail() == 0.80
+    monkeypatch.delenv("AGF_CROWDING_TAIL_CANDIDATE", raising=False)
+    assert dk.crowding_tail() == 0.90
 
 
 def test_apply_verdicts_uses_uncrowded_yield(pg_conn, monkeypatch):
@@ -118,11 +118,11 @@ def test_apply_verdicts_uses_uncrowded_yield(pg_conn, monkeypatch):
     # an uncrowded one promotes, and a no-embedding one degrades open (promotes).
     monkeypatch.setenv("AGF_FLYWHEEL_TRIAL_SWEEPS", "2")
     monkeypatch.delenv("AGF_FLYWHEEL_PROMOTE_MIN_NEW", raising=False)   # default 1
-    monkeypatch.delenv("AGF_CROWDING_TAIL", raising=False)
+    monkeypatch.delenv("AGF_CROWDING_TAIL_CANDIDATE", raising=False)
 
     crowded_kw, clean_kw, bare_kw = ("FWCROWD batch-crowd", "FWCROWD batch-clean",
                                      "FWCROWD batch-bare")
-    _seed_candidates(pg_conn, crowded_kw, offset=400, crowdings=[0.9] * 5)
+    _seed_candidates(pg_conn, crowded_kw, offset=400, crowdings=[0.95] * 5)
     _seed_candidates(pg_conn, clean_kw, offset=500, crowdings=[0.1] * 5)
     _seed_candidates(pg_conn, bare_kw, offset=600, crowdings=["no-emb"] * 5)
     for kw in (crowded_kw, clean_kw, bare_kw):
