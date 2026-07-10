@@ -37,14 +37,13 @@ openers are EXCLUDED (already in `FUNNEL_PHRASES`). Four groups:
   `on the App Store`, `start your free trial`, `3-day free trial`
 - **AI copy phrases** (KEYWORD_EXACT_PHRASE): `AI headshots`, `AI photo generator`,
   `AI companion`, `AI girlfriend`, `talk to AI`, `your personal AI`, `AI powered`,
-  `calorie counter`, `snap a photo of your meal`, `just take a photo`,
-  `palm reading`, `birth chart`, `your zodiac`
+  `birth chart`, `your zodiac`
 - **Intent/emotion hooks** (KEYWORD_EXACT_PHRASE): `does this actually work`,
   `wish I knew sooner`, `my biggest regret`, `what no one tells you about`,
   `stopped using`, `thousands switched`, `customers are obsessed`
 
-~27 terms × ≤150 pages ≈ ≤4k SERP requests per weekly pass — the same order as
-the funnel deep pass (28 × 100), and the proxy pool sits ~90% idle.
+~23 terms × ≤150 pages ≈ ≤3.5k SERP requests per weekly pass — the same order
+as the funnel deep pass (28 × 100), and the proxy pool sits ~90% idle.
 
 ## Mechanism
 
