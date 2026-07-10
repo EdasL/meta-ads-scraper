@@ -9,6 +9,7 @@ incumbent ceiling was removed 2026-07-10, user-requested).
 
 Commits per keyword (short transactions), so a mid-run throttle-kill keeps progress."""
 import os
+import threading
 import time
 from datetime import datetime, timezone
 from urllib.parse import urlparse
@@ -26,6 +27,34 @@ from agf.scoring.vetoes import FUNNEL_INCUMBENT_PAGE_LIKES_MAX
 SOCIAL_HOSTS = {"facebook.com", "fb.me", "m.facebook.com", "l.facebook.com", "lm.facebook.com",
                 "instagram.com", "api.whatsapp.com", "wa.me", "t.co", "ad.doubleclick.net",
                 "youtube.com", "youtu.be", "twitter.com", "x.com", "linktr.ee", "messenger.com"}
+
+
+class SweepBreaker:
+    """Thread-safe dead-proxy circuit breaker shared across concurrent sweep
+    workers. `threshold` consecutive facade-exhausted errors ACROSS workers trip
+    it; any worker's success resets the streak (so we abort only when the whole
+    gateway looks down). threshold=0 disables (the default single-caller case)."""
+
+    def __init__(self, threshold: int):
+        self._threshold = threshold
+        self._lock = threading.Lock()
+        self._consecutive = 0
+        self._tripped = False
+
+    def record_error(self) -> bool:
+        with self._lock:
+            self._consecutive += 1
+            if self._threshold and self._consecutive >= self._threshold:
+                self._tripped = True
+            return self._tripped
+
+    def record_ok(self) -> None:
+        with self._lock:
+            self._consecutive = 0
+
+    def tripped(self) -> bool:
+        with self._lock:
+            return self._tripped
 
 
 def _host(url: str | None) -> str:
@@ -130,7 +159,8 @@ def _env_float(name: str, default: float) -> float:
 
 async def run_sweep(engine, extractor, *, entries=None, keywords=None,
                     countries=("US",), max_pages: int = 2, kw_delay: float = 3.0,
-                    max_consecutive_errors: int = 0, sleep=time.sleep,
+                    max_consecutive_errors: int = 0,
+                    breaker: "SweepBreaker | None" = None, sleep=time.sleep,
                     heartbeat=None, patience_pages: int | None = None,
                     max_depth: int | None = None,
                     page_delay: float | None = None,
@@ -177,6 +207,8 @@ async def run_sweep(engine, extractor, *, entries=None, keywords=None,
         max_depth = _env_int("AGF_SWEEP_MAX_DEPTH", 15)
     if page_delay is None:
         page_delay = _env_float("AGF_SWEEP_PAGE_DELAY", 2.0)
+    if breaker is None:
+        breaker = SweepBreaker(max_consecutive_errors)
     stats = {"keywords_swept": 0, "serp_requests": 0, "raw_ads": 0,
              "candidates_new": 0, "candidates_seen": 0, "errors": 0,
              "funnel_new": 0, "funnel_seen": 0,
@@ -184,8 +216,9 @@ async def run_sweep(engine, extractor, *, entries=None, keywords=None,
                        "non_app": 0, "no_store_id": 0, "funnel_captured": 0}}
     if track_pages:
         stats["page_log"] = []
-    consecutive_errors = 0
     for entry in entries:
+        if breaker.tripped():
+            break
         # entry.max_pages is the per-keyword ceiling; max_depth supersedes the legacy
         # per-keyword flat cap but never lowers it (a caller/harness that asked for
         # deeper via max_pages still gets it).
@@ -209,11 +242,10 @@ async def run_sweep(engine, extractor, *, entries=None, keywords=None,
                 # failed `search`: count the error, bump the breaker, move on. Pages
                 # persisted before the raise stay committed (short per-page txns).
                 stats["errors"] += 1
-                consecutive_errors += 1
-                if max_consecutive_errors and consecutive_errors >= max_consecutive_errors:
+                if breaker.record_error():
                     raise ExtractError(
-                        f"sweep circuit-breaker: {consecutive_errors} consecutive search "
-                        f"errors — proxy/gateway likely down, aborting cycle",
+                        "sweep circuit-breaker: consecutive search errors across "
+                        "workers — proxy/gateway likely down, aborting cycle",
                         ErrorKind.TRANSIENT)
                 sleep(kw_delay * 2)
                 errored = True
@@ -242,7 +274,7 @@ async def run_sweep(engine, extractor, *, entries=None, keywords=None,
         stats["serp_requests"] += pages_fetched  # actual pages fetched this keyword
         if errored:
             continue
-        consecutive_errors = 0                    # any fully-paged keyword clears the streak
+        breaker.record_ok()                       # any fully-paged keyword clears the streak
         stats["keywords_swept"] += 1
         sleep(kw_delay)
     return stats

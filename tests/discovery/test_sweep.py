@@ -6,7 +6,7 @@ from datetime import date
 import pytest
 from sqlalchemy import text
 
-from agf.discovery.sweep import classify_candidate, run_sweep
+from agf.discovery.sweep import SweepBreaker, classify_candidate, run_sweep
 from agf.discovery.taxonomy import TaxonomyEntry
 from agf.extract.errors import ErrorKind, ExtractError
 from agf.parse import AdRecord
@@ -225,6 +225,44 @@ def test_sweep_isolated_errors_do_not_trip_breaker():
     stats = asyncio.run(run_sweep(None, _Flaky(), entries=_entries(8), sleep=lambda s: None,
                                   max_consecutive_errors=3))
     assert stats["errors"] == 4 and stats["keywords_swept"] == 4
+
+
+# --- SweepBreaker (shareable circuit-breaker, spec 2026-07-10 concurrent) ----------
+def test_breaker_trips_at_threshold_and_is_sticky():
+    b = SweepBreaker(3)
+    assert b.record_error() is False
+    assert b.record_error() is False
+    assert b.record_error() is True          # 3rd consecutive trips
+    assert b.tripped() is True
+    b.record_ok()                             # ok after trip does not un-trip
+    assert b.tripped() is True
+
+
+def test_breaker_resets_on_ok():
+    b = SweepBreaker(3)
+    b.record_error(); b.record_error()
+    b.record_ok()
+    assert b.record_error() is False          # streak reset, only 1 now
+    assert b.tripped() is False
+
+
+def test_breaker_disabled_at_zero():
+    b = SweepBreaker(0)
+    for _ in range(10):
+        assert b.record_error() is False
+    assert b.tripped() is False
+
+
+def test_run_sweep_uses_injected_shared_breaker():
+    # A breaker already near its threshold from a sibling worker trips this
+    # sweep on its first error even though max_consecutive_errors is not passed.
+    shared = SweepBreaker(2)
+    shared.record_error()                     # sibling worker already errored once
+    ext = _DeadProxyExtractor()
+    with pytest.raises(ExtractError):
+        asyncio.run(run_sweep(None, ext, entries=_entries(20), sleep=lambda s: None,
+                              breaker=shared))
+    assert ext.calls == 1                     # one more error -> 2 total -> trip
 
 
 # --- adaptive-depth paging (patience window + safety cap + first_seen_depth) -------
