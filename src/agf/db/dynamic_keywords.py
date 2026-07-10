@@ -18,6 +18,31 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.environ.get(name, "").strip() or default)
+    except ValueError:
+        return default
+
+
+def crowding_tail() -> float:
+    # Crowding >= this is a "crowded" (clone-cluster) candidate. 0.80 = the measured
+    # top-quartile edge where like-rate collapses (2.8% vs 8-12%). Read at call time.
+    return _env_float("AGF_CROWDING_TAIL", 0.80)
+
+
+def crowded_candidate_count(conn, keyword: str, *, tail: float) -> int:
+    """How many of this keyword's kept candidates sit in a crowded embedding cluster
+    (crowding >= tail). Degrade OPEN: a candidate with no embedding row or NULL
+    crowding is NOT counted (NULL >= tail is NULL), so a keyword whose crowding has
+    not been populated yet reports 0 and behaves as it does today."""
+    return conn.execute(text(
+        "SELECT count(*) FROM discovery.candidates c "
+        "JOIN discovery.candidate_embeddings e ON e.candidate_id = c.id "
+        "WHERE c.source_keyword = :kw AND e.crowding >= :tail"),
+        {"kw": keyword, "tail": tail}).scalar_one()
+
+
 # Verdict cadence — env-backed so the pool can be made to turn over faster.
 # Lower TRIAL_SWEEPS = quicker verdicts = the trial pool recycles in days, not
 # weeks. Read at call time (not import) so plist/env changes take effect on
@@ -131,7 +156,7 @@ def record_keyword_sweep(conn, keyword_id: int, *, new_candidates: int) -> str:
         "    dry_streak = CASE WHEN :n > 0 THEN 0 ELSE dry_streak + 1 END, "
         "    last_swept_at = now() "
         "WHERE id = :i "
-        "RETURNING status, sweeps_used, new_candidates_total, dry_streak, rest_count"),
+        "RETURNING keyword, status, sweeps_used, new_candidates_total, dry_streak, rest_count"),
         {"n": new_candidates, "i": keyword_id}).one()
 
     def _rest(new_rc: int) -> str:
@@ -160,7 +185,10 @@ def record_keyword_sweep(conn, keyword_id: int, *, new_candidates: int) -> str:
     # Trial verdict (unchanged): an unproven trial still retires.
     if row.status != "trial" or row.sweeps_used < trial_sweeps():
         return row.status
-    verdict = "active" if row.new_candidates_total >= promote_min_new() else "retired"
+    # Promote on UNCROWDED yield only: clone-cluster finds don't count toward the bar.
+    uncrowded = row.new_candidates_total - crowded_candidate_count(
+        conn, row.keyword, tail=crowding_tail())
+    verdict = "active" if uncrowded >= promote_min_new() else "retired"
     conn.execute(text("UPDATE discovery.dynamic_keywords SET status=:s WHERE id=:i"),
                  {"s": verdict, "i": keyword_id})
     return verdict
@@ -172,13 +200,21 @@ def apply_verdicts(conn, *, kind: str | None = None) -> dict:
     recycle a backlog after lowering AGF_FLYWHEEL_TRIAL_SWEEPS. Trials that
     haven't reached the budget are left as 'trial'. `kind` scopes it to one pool
     (None = all kinds, back-compat). Returns counts."""
+    # Uncrowded-yield metric, same as record_keyword_sweep: subtract the keyword's
+    # crowded (clone-cluster) finds via a correlated subquery so this stays one
+    # statement. Degrade OPEN: NULL/absent crowding contributes 0 to the count.
     rows = conn.execute(text(
-        "UPDATE discovery.dynamic_keywords SET status = CASE "
-        "  WHEN new_candidates_total >= :promote THEN 'active' ELSE 'retired' END "
-        "WHERE status = 'trial' AND sweeps_used >= :budget "
-        "  AND (CAST(:kind AS TEXT) IS NULL OR kind = :kind) "
+        "UPDATE discovery.dynamic_keywords k SET status = CASE "
+        "  WHEN k.new_candidates_total - ("
+        "    SELECT count(*) FROM discovery.candidates c "
+        "    JOIN discovery.candidate_embeddings e ON e.candidate_id = c.id "
+        "    WHERE c.source_keyword = k.keyword AND e.crowding >= :tail"
+        "  ) >= :promote THEN 'active' ELSE 'retired' END "
+        "WHERE k.status = 'trial' AND k.sweeps_used >= :budget "
+        "  AND (CAST(:kind AS TEXT) IS NULL OR k.kind = :kind) "
         "RETURNING status"),
-        {"promote": promote_min_new(), "budget": trial_sweeps(), "kind": kind}).all()
+        {"promote": promote_min_new(), "budget": trial_sweeps(),
+         "tail": crowding_tail(), "kind": kind}).all()
     promoted = sum(1 for r in rows if r.status == "active")
     return {"promoted": promoted, "retired": len(rows) - promoted}
 
