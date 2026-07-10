@@ -16,11 +16,14 @@ class ProxyPool:
         self._dead_until: dict[str, float] = {}
         self._now = _time.time
 
+    @staticmethod
+    def list_from_env(var: str = "AGF_PROXIES") -> list[str]:
+        raw = os.environ.get(var, "") or ""
+        return [p.strip() for p in re.split(r"[\n,]+", raw) if p.strip()]
+
     @classmethod
     def from_env(cls, var: str = "AGF_PROXIES", **kw) -> "ProxyPool":
-        raw = os.environ.get(var, "") or ""
-        parts = [p.strip() for p in re.split(r"[\n,]+", raw) if p.strip()]
-        return cls(parts, **kw)
+        return cls(cls.list_from_env(var), **kw)
 
     def __len__(self) -> int:
         return len(self._proxies)

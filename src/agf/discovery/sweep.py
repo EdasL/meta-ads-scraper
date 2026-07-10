@@ -8,9 +8,11 @@ funnels fold into discovery.funnel_candidates via fold_web_funnel since 2026-07-
 incumbent ceiling was removed 2026-07-10, user-requested).
 
 Commits per keyword (short transactions), so a mid-run throttle-kill keeps progress."""
+import asyncio
 import os
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 
@@ -278,3 +280,69 @@ async def run_sweep(engine, extractor, *, entries=None, keywords=None,
         stats["keywords_swept"] += 1
         sleep(kw_delay)
     return stats
+
+
+def _partition(items: list, k: int) -> list[list]:
+    """Round-robin `items` into k shards (balanced counts; empty shards dropped)."""
+    shards = [[] for _ in range(max(1, k))]
+    for i, it in enumerate(items):
+        shards[i % len(shards)].append(it)
+    return [s for s in shards if s]
+
+
+def _merge_sweep_stats(parts: list[dict]) -> dict:
+    """Sum the per-worker stats dicts into one run_once/close_sweep_run-shaped dict."""
+    merged = {"keywords_swept": 0, "serp_requests": 0, "raw_ads": 0,
+              "candidates_new": 0, "candidates_seen": 0, "errors": 0,
+              "funnel_new": 0, "funnel_seen": 0,
+              "drops": {"no_link": 0, "social": 0, "non_app": 0,
+                        "no_store_id": 0, "funnel_captured": 0}}
+    has_page_log = any("page_log" in p for p in parts)
+    if has_page_log:
+        merged["page_log"] = []
+    for p in parts:
+        for key, val in p.items():
+            if key == "drops":
+                for dk, dv in val.items():
+                    merged["drops"][dk] = merged["drops"].get(dk, 0) + dv
+            elif key == "page_log":
+                merged["page_log"].extend(val)
+            else:
+                merged[key] = merged.get(key, 0) + val
+    return merged
+
+
+def run_parallel_sweep(engine, extractors, *, entries=None, keywords=None,
+                       countries=("US",), max_pages: int = 2, kw_delay: float = 3.0,
+                       max_consecutive_errors: int = 0, heartbeat=None,
+                       patience_pages: int | None = None, max_depth: int | None = None,
+                       page_delay: float | None = None, track_pages: bool = False) -> dict:
+    """Run the sweep across len(extractors) concurrent workers, each with its OWN
+    extractor (own warm session + proxy). Entries are round-robin partitioned into
+    disjoint shards; a single SweepBreaker is shared so a gateway-wide outage aborts
+    the whole cycle. Returns one merged stats dict identical in shape to run_sweep's.
+
+    Falls back to a single in-loop run_sweep when there is one extractor (or one
+    shard), so the dry-run / small-keyword paths keep their exact behaviour."""
+    if entries is None:
+        entries = sweep_entries()
+    if keywords is not None:
+        entries = [e for e in entries if e.keyword in set(keywords)]
+    shards = _partition(entries, len(extractors))
+    breaker = SweepBreaker(max_consecutive_errors)
+
+    def _run(extractor, shard):
+        return asyncio.run(run_sweep(
+            engine, extractor, entries=shard, countries=countries,
+            max_pages=max_pages, kw_delay=kw_delay,
+            max_consecutive_errors=max_consecutive_errors, breaker=breaker,
+            heartbeat=heartbeat, patience_pages=patience_pages,
+            max_depth=max_depth, page_delay=page_delay, track_pages=track_pages))
+
+    if len(shards) <= 1:
+        parts = [_run(extractors[0], shards[0])] if shards else []
+    else:
+        pairs = list(zip(extractors, shards))       # extractor i owns shard i
+        with ThreadPoolExecutor(max_workers=len(pairs)) as pool:
+            parts = list(pool.map(lambda pr: _run(pr[0], pr[1]), pairs))
+    return _merge_sweep_stats(parts) if parts else _merge_sweep_stats([{}])
