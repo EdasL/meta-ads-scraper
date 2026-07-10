@@ -7,9 +7,12 @@ Composes the already-tested pieces behind ONE guarded loop —
     app-store refresh (daily adtech.app_metrics snapshot + metadata + reviews) →
     daily funnel stage (funnel_phrase sweep → confirm/label landing pages) →
     daily keyword flywheel (mine gem ad copy → trial-sweep dynamic keywords) →
-    [optional] run_scoring →
     enrich keepers + flagged gems via run_worker(make_enrich_handler(deps_factory))
-— then sleeps briefly and repeats. By default (AGF_CONTINUOUS_DISCOVERY=1) the
+— then sleeps briefly and repeats. Scoring + the corpus-scoring compute stages
+(velocity snapshot, content/candidate embeddings, preference scoring) no longer
+run in this loop: they are decoupled onto the cron (run_scoring every 30 min,
+agf.workers.compute_cycle every 15 min) so feed freshness never waits behind the
+~40-min discovery cycle. By default (AGF_CONTINUOUS_DISCOVERY=1) the
 sweep+triage stage runs every tick so the brand DB grows continuously; set it to 0
 for the legacy cadence of one finished discovery.sweep_runs row per day.
 
