@@ -131,7 +131,7 @@ some of the best finds are not app ads — they are **web quiz funnels** (locali
 ## where code live
 
 - worker loop, stage order, budgets — `src/agf/workers/main.py` (`run_once`)
-- keywords: taxonomy / lifecycle / mining — `src/agf/discovery/taxonomy.py`, `db/dynamic_keywords.py`, `keyword_mining.py`
+- keywords: taxonomy / lifecycle / mining / minting — `src/agf/discovery/taxonomy.py`, `db/dynamic_keywords.py`, `keyword_mining.py`, `frame_mint.py`, novelty gate in `keyword_redundancy.py`
 - sweep + adaptive depth — `src/agf/discovery/sweep.py`
 - meta GraphQL client + proxies — `src/agf/extract/search.py`, `session_pool.py`, `proxy.py`, `tls_client.py`
 - triage + store lookups — `src/agf/discovery/triage.py`, `enrich_full/appstore.py`, `enrich_full/sidecar/gp_lookup.js`
