@@ -116,5 +116,29 @@ services:
       cloud-sql-proxy:
         condition: service_started
 
+  # Continuous enrich consumer: drains public.pipeline_jobs (kind='enrich') that the
+  # worker tick enqueues, running enrich_one per advertiser as a subprocess (crash
+  # isolation) with SKIP-LOCKED claim + lease/reaper crash recovery. Needs the full
+  # enrich environment (Meta extractor via proxies, Gemini, S3). Separate from the
+  # on-demand `enrich` daemon (public.enrich_jobs), which stays untouched.
+  pipeline:
+    image: europe-west1-docker.pkg.dev/peon-489013/agf/worker:latest
+    restart: unless-stopped
+    init: true
+    command: python -m agf.enrich_full.pipeline_daemon
+    environment:
+      AGF_DATABASE_URL: ${AGF_DATABASE_URL}
+      AGF_PROXIES: ${AGF_PROXIES}
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      S3_ENDPOINT: ${S3_ENDPOINT}
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      S3_BUCKET: ${S3_BUCKET}
+      AGF_ENRICH_ONE_TIMEOUT_SEC: ${AGF_ENRICH_ONE_TIMEOUT_SEC:-180}
+      AGF_PIPELINE_POLL_SEC: ${AGF_PIPELINE_POLL_SEC:-5}
+    depends_on:
+      cloud-sql-proxy:
+        condition: service_started
+
 volumes:
   minio_data:
