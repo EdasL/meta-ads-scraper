@@ -23,14 +23,25 @@ from agf.db.engine import begin, get_engine
 from agf.enrich_full.run_enrich import EnrichDeps, enrich_gem
 from agf.scoring.run_scoring import refresh_emerging_matview, score_all
 from agf.workers.main import prefetch_creative_urls
+from agf.workers.scheduler import mark_crawled
+
+# Allowlist mapping the CLI arg to a vetted literal table name. The status/
+# error_text/finished_at columns are identical on both, so one UPDATE serves
+# both. NEVER interpolate the raw arg into SQL — always map through this dict.
+_STATUS_TABLES = {
+    "enrich_jobs": "public.enrich_jobs",
+    "pipeline_jobs": "public.pipeline_jobs",
+}
 
 
-def set_status(engine, job_id, status, *, error_text=None, finished=False):
+def set_status(engine, job_id, status, *, error_text=None, finished=False,
+               status_table="enrich_jobs"):
     """Write a terminal/in-flight status onto the job row (own committed txn)."""
+    table = _STATUS_TABLES[status_table]  # KeyError on anything off-allowlist
     with begin(engine) as conn:
         conn.execute(
             text(
-                "UPDATE public.enrich_jobs "
+                f"UPDATE {table} "
                 "SET status=:s, error_text=:e, "
                 "    finished_at = CASE WHEN :fin THEN now() ELSE finished_at END "
                 "WHERE id=:i"
@@ -95,17 +106,28 @@ def _default_score(engine, advertiser_id, as_of):
 
 
 def run_job(engine, *, advertiser_id, job_id, enrich_call, score_call,
-            as_of=None):
+            as_of=None, status_table="enrich_jobs",
+            mark_crawled_on_success=False):
     """Orchestrate one enrichment job and record its status. enrich_call and
-    score_call are injected so the state machine is testable in isolation."""
+    score_call are injected so the state machine is testable in isolation.
+
+    status_table selects the vetted job table set_status writes to.
+    mark_crawled_on_success appends a crawl_log row for the advertiser AFTER a
+    successful enrich (queue consumer path) — never on the error path.
+    """
     as_of = as_of or date.today()
     try:
         enrich_call(engine, advertiser_id)
         score_call(engine, advertiser_id, as_of)
-        set_status(engine, job_id, "done", finished=True)
+        if mark_crawled_on_success:
+            with begin(engine) as conn:
+                mark_crawled(conn, "advertiser", advertiser_id)
+        set_status(engine, job_id, "done", finished=True,
+                   status_table=status_table)
     except BaseException as e:  # record ANY failure (incl. timeout) on the row
         try:
-            set_status(engine, job_id, "error", error_text=str(e)[:500], finished=True)
+            set_status(engine, job_id, "error", error_text=str(e)[:500],
+                       finished=True, status_table=status_table)
         except Exception:
             pass  # best-effort; the Go stale-guard (180s) is the backstop
         raise
@@ -118,6 +140,9 @@ def main(argv=None):
     ap.add_argument("--top-n", type=int, default=5)
     ap.add_argument("--media-cap", type=int, default=120)
     ap.add_argument("--timeout", type=int, default=180)
+    ap.add_argument("--status-table", default="enrich_jobs",
+                    choices=tuple(_STATUS_TABLES))
+    ap.add_argument("--mark-crawled", action="store_true", default=False)
     args = ap.parse_args(argv)
 
     engine = get_engine()
@@ -144,6 +169,8 @@ def main(argv=None):
                 eng, aid, extractor=extractor, http_client=http_client,
                 top_n=args.top_n, media_cap=args.media_cap),
             score_call=_default_score,
+            status_table=args.status_table,
+            mark_crawled_on_success=args.mark_crawled,
         )
     except BaseException:
         sys.exit(1)
