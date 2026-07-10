@@ -19,7 +19,11 @@ quartile (mean-10NN-sim ≥ ~0.80) is ~4σ worse, dislike 84%. Apps with 11+ nea
 3. **Enrich priority** demotes crowded candidates.
 4. **Go review queue** demotes crowded gems at serve time.
 5. **One-off audit** rests existing ACTIVE keywords whose finds are mostly crowded
-   (kills "calorie tracking" et al. on day one; they can wake later under new rules).
+   (kills "calorie tracking" et al. on day one. KNOWN GAP, semi-by-design: the
+   resting→active revive path still runs on raw yield — a rested offender that keeps
+   finding clones wakes and re-activates after its cooldown. Serve-time demotion
+   bounds the damage; durable lifecycle gating is a follow-up. Re-run the audit
+   periodically meanwhile.)
 
 Out of scope: Discover "foryou" sort (still reads stale preference_scores — known
 separate issue), GemScore formula changes, funnel keywords.

@@ -11,8 +11,13 @@ These are the trawling nets (e.g. "calorie tracking") that promote on clone volu
 Default is a DRY RUN: one report line per offender plus a summary count, mutating
 nothing. `--apply` rests each offender exactly the way the flywheel does when an active
 keyword goes dry (record_keyword_sweep._rest): status='resting', dry_streak=0,
-rest_count += 1, next_eligible_at = now() + cooldown — so it leaves the daily rotation
-and wakes later under the new uncrowded-yield rules.
+rest_count += 1, next_eligible_at = now() + cooldown — so it leaves the daily rotation.
+
+CAVEAT (whole-branch review 2026-07-10): the resting→active REVIVE path still runs on
+RAW yield (record_keyword_sweep revives on any new candidate; this sweep's finds are
+not embedded yet, so an uncrowded check there would degrade open and do nothing). A
+rested offender that keeps finding clones WILL wake and re-activate — re-run this
+audit periodically until the lifecycle gains a durable crowded-share check.
 
 Run:
     PYTHONPATH=src AGF_DATABASE_URL=postgresql://agf:agf@localhost:5433/agf \\
