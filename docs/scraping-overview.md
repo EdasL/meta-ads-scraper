@@ -27,9 +27,8 @@ why go deep at all? because biggest-spenders-first means page 1 is Calm and Duol
 
 what one ad gives grug: the meta **page** running it (name, id, like count), the creative (text, image, video), **the link it points to**, start date, active or not. grug sorts every page found:
 
-- page has **>10,000 likes** → incumbent, ignore forever
-- ad links to **App Store / Google Play** → new row in the candidates table, with the keyword that found it and how deep it sat
-- ad links to a **real web landing page** (not a store redirect, not an ad-tracker bounce) → funnel candidate, side lane, see bottom
+- ad links to **App Store / Google Play** → new row in the candidates table, with the keyword that found it and how deep it sat. no page-size limit for apps (the old 10k-likes ceiling was removed 2026-07-10 — the store ratings gate at triage is the size filter now)
+- ad links to a **real web landing page** (not a store redirect, not an ad-tracker bounce) → funnel candidate, side lane, see bottom (funnels DO keep a likes ceiling, a huge one: 5M)
 - anything else → trash
 
 ### step 2 — triage, right after sweep (~minutes)
@@ -71,7 +70,7 @@ missing media gets patched (12 per cycle), missing funnel screenshots retried. c
 once a night the cron scores **every advertiser in the corpus**:
 
 - compute **GemScore** 0–100. two things dominate: **scaling velocity** (~42% weight — how long the winner ads have been running, capped at 35 days because one month of continuous spend already proves a winner and beyond that "age" just rewards incumbents; plus ad-count growth and creative iteration) and **demand** (~38% — is the store side confirming: ratings accumulating, reviews coming). small weights for rating quality, funnel, web presence.
-- apply **vetoes** — hard kills regardless of score: fewer than **2 weeks** of observed weekly history (too early to tell), more than **200 active ads** (funded growth team), more than **10,000 page likes**, more than **5,000 ratings**, is a game, no resolvable app, is a relaunch of an old app.
+- apply **vetoes** — hard kills regardless of score: fewer than **2 weeks** of observed weekly history (too early to tell), more than **200 active ads** (funded growth team), more than **5,000 ratings**, is a game, no resolvable app, is a relaunch of an old app. (the 10,000-page-likes veto existed until 2026-07-10, then removed.)
 - write the score rows, then **refresh the feed view**.
 
 the website reads only that view. the hourly :00 refresh updates numbers/media for gems that already have a score row — but a NEW gem physically cannot appear before the nightly scoring gives it a score row. that is the gate on "when does the user see it".
@@ -81,13 +80,13 @@ the website reads only that view. the hourly :00 refresh updates numbers/media f
 fake app "SleepySheep" (sleep-sounds subscription app). all times tuesday, UTC.
 
 - **09:00** — worker wakes, cycle starts. sweep begins walking the 301 keywords.
-- **09:31** — keyword "sleep tracker app", page 4. ad #17: page "SleepySheep", 2,340 likes (under 10k — not incumbent), ad links to the App Store. candidate row written: found by "sleep tracker app", depth 4.
+- **09:31** — keyword "sleep tracker app", page 4. ad #17: page "SleepySheep", ad links to the App Store. candidate row written: found by "sleep tracker app", depth 4.
 - **09:44** — sweep ends. triage runs on this cycle's ~40 new candidates. apple batch lookup: SleepySheep has **1,850 ratings** → under 5,000 → **KEEP**. advertiser row created. still zero ads stored.
 - **09:52** — keeper history: pull SleepySheep's whole page by page id → **34 ads**. oldest still-running ad started 45 days ago. rebuild 16 monday-aligned weeks from the start dates → **7 weeks of non-zero history, on day one**. ad rows + weekly series written.
 - **10:05** — embeddings: SleepySheep's store listing embedded; it looks like stuff the user liked before → front of the enrich queue.
 - **10:12** — enrich (it made the ~21-gem cut): full pull with inactive ads, media for top 5 ads → cloud storage, store snapshot, one ad points to `quiz.sleepysheep.com` → rendered, screenshotted, classified: subscription quiz funnel. nice signal.
 - **10:40** — repairs, cycle ends, worker sleeps. rest of tuesday: ~8 more cycles happen; SleepySheep is now just a known advertiser getting routine refreshes. **it is NOT on the website yet** — no score row exists.
-- **wednesday 02:15** — nightly scoring. SleepySheep: 7 weeks observed (≥2, passes), 34 active ads (≤200), 2,340 likes (≤10k), 1,850 ratings (≤5k), not a game, app verified, not a relaunch → **no veto**. winner ad age 45d → capped at 35 → strong velocity axis; ratings clearly accumulating → strong demand axis. **GemScore 64** → also flagged as alert (≥60).
+- **wednesday 02:15** — nightly scoring. SleepySheep: 7 weeks observed (≥2, passes), 34 active ads (≤200), 1,850 ratings (≤5k), not a game, app verified, not a relaunch → **no veto**. winner ad age 45d → capped at 35 → strong velocity axis; ratings clearly accumulating → strong demand axis. **GemScore 64** → also flagged as alert (≥60).
 - **~02:25** — scoring finishes, refreshes the feed view. SleepySheep now exists in `frontend.emerging_scaling_apps`.
 - **08:30** — user opens app.peon.works, Discover feed. SleepySheep is there: GemScore, real ad creatives, growth series, quiz-funnel link. review queue sees it too (same view underneath).
 
