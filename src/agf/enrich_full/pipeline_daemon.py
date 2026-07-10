@@ -18,7 +18,7 @@ import time
 from sqlalchemy import text
 
 from agf.db.engine import begin, get_engine
-from agf.db.pipeline_jobs import (claim_next, purge_done, reap_expired,
+from agf.db.pipeline_jobs import (claim_next, purge_terminal, reap_expired,
                                   set_job_status)
 
 log = logging.getLogger("agf.pipeline")
@@ -90,7 +90,7 @@ _last_purge = 0.0
 
 
 def _maybe_purge(engine, *, now=time.time) -> None:
-    """Delete old 'done' rows at most ~once/day (churn-table bloat control)."""
+    """Delete old terminal (done/error) rows at most ~once/day (churn-table bloat)."""
     global _last_purge
     t = now()
     if t - _last_purge < PURGE_EVERY_SEC:
@@ -98,11 +98,11 @@ def _maybe_purge(engine, *, now=time.time) -> None:
     _last_purge = t
     try:
         with begin(engine) as conn:
-            deleted = purge_done(conn, older_than_days=PURGE_OLDER_THAN_DAYS)
+            deleted = purge_terminal(conn, older_than_days=PURGE_OLDER_THAN_DAYS)
         if deleted:
-            log.info("purged %d old done enrich job(s)", deleted)
+            log.info("purged %d old terminal enrich job(s)", deleted)
     except Exception:
-        log.exception("purge_done failed")
+        log.exception("purge_terminal failed")
 
 
 def main() -> None:

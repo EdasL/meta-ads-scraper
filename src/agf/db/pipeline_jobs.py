@@ -79,10 +79,13 @@ def set_job_status(conn, job_id: int, status: str, error: str | None = None) -> 
         {"status": status, "error": error, "id": job_id})
 
 
-def purge_done(conn, older_than_days: int) -> int:
-    """Delete 'done' rows finished more than `older_than_days` days ago (bloat
-    control for the aggressive-autovacuum churn table). Returns rows deleted."""
+def purge_terminal(conn, older_than_days: int) -> int:
+    """Delete terminal ('done' OR 'error') rows finished more than `older_than_days`
+    days ago (bloat control for the aggressive-autovacuum churn table). Both terminal
+    states must be purged: with re-enqueue, 'error' rows also accumulate. Returns rows
+    deleted."""
     return conn.execute(text(
         "DELETE FROM public.pipeline_jobs "
-        "WHERE status = 'done' AND finished_at < now() - make_interval(days => :days)"),
+        "WHERE status IN ('done','error') "
+        "AND finished_at < now() - make_interval(days => :days)"),
         {"days": older_than_days}).rowcount

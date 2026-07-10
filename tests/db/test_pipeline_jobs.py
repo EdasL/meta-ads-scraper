@@ -7,7 +7,7 @@ committed (not rolled back) so concurrent claims are visible across connections.
 import pytest
 from sqlalchemy import text
 
-from agf.db.pipeline_jobs import (claim_next, enqueue_enrich, purge_done,
+from agf.db.pipeline_jobs import (claim_next, enqueue_enrich, purge_terminal,
                                   reap_expired, set_job_status)
 
 SENTINEL = 999_000_000
@@ -132,20 +132,29 @@ def test_reap_expired_requeues_then_errors(engine):
     assert row[1] == "error" and row[3] is None
 
 
-def test_purge_done_deletes_only_old_done(engine):
+def test_purge_terminal_deletes_old_done_and_error(engine):
+    A4, A5 = SENTINEL + 4, SENTINEL + 5
     with engine.begin() as conn:
-        enqueue_enrich(conn, [A1, A2, A3])
+        enqueue_enrich(conn, [A1, A2, A3, A4, A5])
         ids = {r[0]: r[1] for r in conn.execute(text(
             "SELECT advertiser_id, id FROM public.pipeline_jobs WHERE advertiser_id >= :s"),
             {"s": SENTINEL}).fetchall()}
-        # A1: done & OLD -> purged; A2: done & RECENT -> kept; A3: queued -> kept
+        # A1: done  & OLD    -> purged
+        # A2: done  & RECENT -> kept
+        # A3: queued         -> kept (never terminal)
+        # A4: error & OLD    -> purged (re-enqueue now accumulates error rows too)
+        # A5: error & RECENT -> kept
         set_job_status(conn, ids[A1], "done")
         set_job_status(conn, ids[A2], "done")
+        set_job_status(conn, ids[A4], "error", error="dead landing")
+        set_job_status(conn, ids[A5], "error", error="dead landing")
         conn.execute(text(
             "UPDATE public.pipeline_jobs SET finished_at = now() - make_interval(days => 40) "
-            "WHERE advertiser_id = :a"), {"a": A1})
+            "WHERE advertiser_id = ANY(:a)"), {"a": [A1, A4]})
     with engine.begin() as conn:
-        assert purge_done(conn, older_than_days=30) == 1
+        assert purge_terminal(conn, older_than_days=30) == 2
     remaining = {r[0]: r[1] for r in _rows(engine)}
-    assert A1 not in remaining
-    assert remaining[A2] == "done" and remaining[A3] == "queued"
+    assert A1 not in remaining and A4 not in remaining
+    assert remaining[A2] == "done"
+    assert remaining[A3] == "queued"
+    assert remaining[A5] == "error"
