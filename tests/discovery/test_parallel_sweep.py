@@ -1,8 +1,9 @@
 """Concurrent K-worker sweep (spec 2026-07-10): _partition/_merge pure functions and
 the run_parallel_sweep orchestrator. DB tests use SWEEPTEST* sentinels (shared session
 DB) with delete-before/after, mirroring test_sweep.test_run_sweep_persists_and_counts."""
-import asyncio
+from threading import Barrier, Event, Lock
 import pytest
+import agf.discovery.sweep as sweep_module
 from agf.discovery.sweep import (run_parallel_sweep, _partition, _merge_sweep_stats,
                                  SweepBreaker)
 from agf.discovery.taxonomy import TaxonomyEntry
@@ -40,15 +41,102 @@ def test_merge_sums_counters_drops_and_page_log():
     assert len(m["page_log"]) == 2
 
 
-def _fake_with(keyword_to_ads: dict) -> FakeExtractor:
-    fe = FakeExtractor()
-    fe.keyword_ads = keyword_to_ads
-    return fe
+def test_parallel_sweep_dynamically_reuses_fast_lane():
+    slow_started = Event()
+    release_slow = Event()
+    fast_calls = []
+    fast_lock = Lock()
+
+    class _Slow(FakeExtractor):
+        async def search_page(self, *, query="", cursor=None, **kw):
+            slow_started.set()
+            release_slow.wait(timeout=0.5)
+            return [], None, False
+
+    class _Fast(FakeExtractor):
+        async def search_page(self, *, query="", cursor=None, **kw):
+            assert slow_started.wait(timeout=0.5)
+            with fast_lock:
+                fast_calls.append(query)
+                if len(fast_calls) == 2:
+                    release_slow.set()
+            return [], None, False
+
+    stats = run_parallel_sweep(
+        None,
+        [_Slow(), _Fast()],
+        entries=_entries(3),
+        kw_delay=0,
+        page_delay=0,
+    )
+
+    assert len(fast_calls) == 2
+    assert release_slow.is_set()
+    assert stats["keywords_swept"] == 3
+    assert stats["serp_requests"] == 3
 
 
-def test_parallel_sweep_isolates_shards_per_extractor(_migrated_engine):
-    # Each worker's fake records which keywords it was asked to search; assert no
-    # keyword is served by more than one extractor (no cross-thread bleed).
+def test_parallel_sweep_preserves_depth_cursor_and_lane(monkeypatch):
+    calls = []
+    processed = []
+
+    class _Paged(FakeExtractor):
+        def __init__(self, lane_id):
+            super().__init__()
+            self.lane_id = lane_id
+
+        async def search_page(self, *, query="", cursor=None, **kw):
+            calls.append((self.lane_id, query, cursor))
+            if query != "kw0":
+                return [], None, False
+            if cursor is None:
+                return ["page-1"], "cursor-2", True
+            if cursor == "cursor-2":
+                return ["page-2"], "cursor-3", True
+            return ["page-3"], None, False
+
+    def _record_page(_engine, records, *, entry, depth, stats):
+        processed.append((entry.keyword, depth, list(records)))
+        stats["raw_ads"] += len(records)
+        return len(records)
+
+    monkeypatch.setattr(sweep_module, "_process_page", _record_page)
+    stats = run_parallel_sweep(
+        None,
+        [_Paged(0), _Paged(1)],
+        entries=_entries(2),
+        kw_delay=0,
+        page_delay=0,
+        patience_pages=3,
+        max_depth=3,
+        track_pages=True,
+    )
+
+    kw0_calls = [call for call in calls if call[1] == "kw0"]
+    assert [cursor for _lane, _query, cursor in kw0_calls] == [
+        None,
+        "cursor-2",
+        "cursor-3",
+    ]
+    assert len({lane for lane, _query, _cursor in kw0_calls}) == 1
+    assert [depth for keyword, depth, _records in processed if keyword == "kw0"] == [
+        1,
+        2,
+        3,
+    ]
+    assert stats["keywords_swept"] == 2
+    assert stats["serp_requests"] == 4
+    assert stats["raw_ads"] == 3
+    page_log = {row["keyword"]: row for row in stats["page_log"]}
+    assert page_log == {
+        "kw0": {"keyword": "kw0", "pages": 3, "ads": 3, "ceiling_hit": False},
+        "kw1": {"keyword": "kw1", "pages": 1, "ads": 0, "ceiling_hit": False},
+    }
+
+
+def test_parallel_sweep_keeps_each_keyword_on_one_extractor():
+    # Each lane's fake records which keywords it was asked to search; assert no
+    # keyword continuation crosses extractors (no cross-thread bleed).
     # Empty-returning fakes => no DB writes, so no sentinel cleanup needed.
     seen = [set(), set(), set()]
     lock = __import__("threading").Lock()
@@ -63,7 +151,7 @@ def test_parallel_sweep_isolates_shards_per_extractor(_migrated_engine):
             return [], None, False
 
     exts = [_Recording(i) for i in range(3)]
-    run_parallel_sweep(_migrated_engine, exts, entries=_entries(9),
+    run_parallel_sweep(None, exts, entries=_entries(9),
                        kw_delay=0, page_delay=0)
     union = seen[0] | seen[1] | seen[2]
     assert union == {f"kw{i}" for i in range(9)}
@@ -82,9 +170,9 @@ def _sweep_ad(link, page_id):
 
 
 def test_parallel_sweep_merges_candidate_counts(_migrated_engine):
-    # Two keywords land distinct app candidates through different workers; merged
-    # stats must sum both. Uses the real _process_page -> DB path, so it MUST use
-    # SWEEPTEST sentinels + delete-before/after (mirrors test_run_sweep_persists).
+    # Two dynamically assigned keywords land distinct app candidates, including one
+    # on page 2. Merged stats and persisted depth must survive the real _process_page
+    # DB path, so this MUST use SWEEPTEST sentinels + delete-before/after.
     from sqlalchemy import text
     eng = _migrated_engine
     with eng.begin() as conn:
@@ -92,41 +180,84 @@ def test_parallel_sweep_merges_candidate_counts(_migrated_engine):
     try:
         a = _sweep_ad("https://apps.apple.com/us/app/x/id111", "SWEEPTESTP1")
         b = _sweep_ad("https://play.google.com/store/apps/details?id=com.b", "SWEEPTESTP2")
-        exts = [_fake_with({"kw0": [a]}), _fake_with({"kw1": [b]})]
+        exts = [
+            FakeExtractor()
+            .script_pages("kw0", [[], [a]])
+            .script_pages("kw1", [[b]])
+            for _ in range(2)
+        ]
         stats = run_parallel_sweep(eng, exts, entries=_entries(2),
-                                   kw_delay=0, page_delay=0)
-        assert stats["candidates_new"] == 2 and stats["keywords_swept"] == 2
+                                   kw_delay=0, page_delay=0, patience_pages=3,
+                                   max_depth=3, track_pages=True)
+        assert stats["candidates_new"] == 2
+        assert stats["keywords_swept"] == 2
+        assert stats["serp_requests"] == 3
+        assert stats["raw_ads"] == 2
+        page_log = {row["keyword"]: row for row in stats["page_log"]}
+        assert page_log["kw0"]["pages"] == 2
+        assert page_log["kw1"]["pages"] == 1
+        with eng.connect() as conn:
+            depths = dict(conn.execute(text(
+                "SELECT page_id, first_seen_depth FROM discovery.candidates "
+                "WHERE page_id LIKE 'SWEEPTEST%'"
+            )))
+        assert depths == {"SWEEPTESTP1": 2, "SWEEPTESTP2": 1}
     finally:
         with eng.begin() as conn:
             conn.execute(text("DELETE FROM discovery.candidates WHERE page_id LIKE 'SWEEPTEST%'"))
 
 
-def test_parallel_sweep_shared_breaker_aborts_all(_migrated_engine):
+def test_parallel_sweep_shared_breaker_aborts_all():
+    rounds = Barrier(3)
+
     class _Dead(FakeExtractor):
+        def __init__(self):
+            super().__init__()
+            self.calls = 0
+
         async def search_page(self, *, query="", cursor=None, **kw):
+            self.calls += 1
+            if self.calls <= 3:
+                rounds.wait(timeout=1)
             raise ExtractError("proxy down", ErrorKind.TRANSIENT)
 
     exts = [_Dead(), _Dead(), _Dead()]
     with pytest.raises(ExtractError):
-        run_parallel_sweep(_migrated_engine, exts, entries=_entries(30),
+        run_parallel_sweep(None, exts, entries=_entries(30),
                            kw_delay=0, page_delay=0, max_consecutive_errors=3)
 
 
-def test_parallel_sweep_one_dead_worker_does_not_abort(_migrated_engine):
-    # PER-WORKER breaker (2026-07-10 review): one worker's dead proxy slice erroring
-    # past the threshold must NOT false-abort the cycle while the other worker is
-    # healthy. The breaker trips only when ALL workers stall.
+def test_parallel_sweep_one_dead_worker_does_not_abort():
+    # PER-LANE breaker: one dead proxy lane erroring past the threshold must NOT
+    # false-abort the cycle while the other lane is healthy. The breaker trips only
+    # when ALL active lanes stall.
+    started = Barrier(2)
+
     class _Dead(FakeExtractor):
+        def __init__(self):
+            super().__init__()
+            self.first = True
+
         async def search_page(self, *, query="", cursor=None, **kw):
+            if self.first:
+                self.first = False
+                started.wait(timeout=1)
             raise ExtractError("proxy down", ErrorKind.TRANSIENT)
 
     class _Healthy(FakeExtractor):
+        def __init__(self):
+            super().__init__()
+            self.first = True
+
         async def search_page(self, *, query="", cursor=None, **kw):
+            if self.first:
+                self.first = False
+                started.wait(timeout=1)
             return [], None, False
 
-    exts = [_Dead(), _Healthy()]              # worker 0 dead, worker 1 healthy
-    # Does NOT raise; the healthy worker's shard completes.
-    stats = run_parallel_sweep(_migrated_engine, exts, entries=_entries(20),
+    exts = [_Dead(), _Healthy()]
+    stats = run_parallel_sweep(None, exts, entries=_entries(20),
                                kw_delay=0, page_delay=0, max_consecutive_errors=3)
-    assert stats["keywords_swept"] == 10      # healthy worker's 10 keywords all swept
-    assert stats["errors"] == 10              # dead worker errored on each of its 10
+    assert stats["keywords_swept"] > 0
+    assert stats["errors"] > 0
+    assert stats["keywords_swept"] + stats["errors"] == 20

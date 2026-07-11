@@ -12,7 +12,6 @@ import asyncio
 import os
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 
@@ -21,6 +20,7 @@ from agf.db.candidates import upsert_sweep_candidate
 from agf.db.engine import begin
 from agf.db.funnel_candidates import upsert_funnel_candidate
 from agf.discovery.funnel_classify import fold_web_funnel
+from agf.discovery.page_pool import PageJob, PageOutcome, run_page_pool
 from agf.discovery.taxonomy import sweep_entries
 from agf.extract.errors import ErrorKind, ExtractError
 from agf.scoring.vetoes import FUNNEL_INCUMBENT_PAGE_LIKES_MAX
@@ -335,36 +335,136 @@ def run_parallel_sweep(engine, extractors, *, entries=None, keywords=None,
                        max_consecutive_errors: int = 0, heartbeat=None,
                        patience_pages: int | None = None, max_depth: int | None = None,
                        page_delay: float | None = None, track_pages: bool = False) -> dict:
-    """Run the sweep across len(extractors) concurrent workers, each with its OWN
-    extractor (own warm session + proxy). Entries are round-robin partitioned into
-    disjoint shards; a single SweepBreaker is shared so a gateway-wide outage aborts
-    the whole cycle. Returns one merged stats dict identical in shape to run_sweep's.
+    """Run the sweep across extractor-backed proxy lanes.
 
-    Falls back to a single in-loop run_sweep when there is one extractor (or one
-    shard), so the dry-run / small-keyword paths keep their exact behaviour."""
+    With multiple extractors, unstarted keywords are claimed dynamically by the next
+    free lane while cursor continuations stay on the extractor that fetched page one.
+    A single extractor keeps the existing serial ``run_sweep`` path unchanged. Returns
+    one merged stats dict identical in shape to ``run_sweep``'s.
+    """
     if entries is None:
         entries = sweep_entries()
     if keywords is not None:
         entries = [e for e in entries if e.keyword in set(keywords)]
-    shards = _partition(entries, len(extractors))
-    # Per-worker breaker: trips only when EVERY worker (one per shard) independently
-    # reaches the threshold, so one dead proxy slice can't false-abort the whole cycle.
-    breaker = SweepBreaker(max_consecutive_errors, workers=len(shards) or 1)
-
-    def _run(extractor, shard, worker_id):
+    if len(extractors) == 1:
         return asyncio.run(run_sweep(
-            engine, extractor, entries=shard, countries=countries,
+            engine, extractors[0], entries=entries, countries=countries,
             max_pages=max_pages, kw_delay=kw_delay,
-            max_consecutive_errors=max_consecutive_errors, breaker=breaker,
+            max_consecutive_errors=max_consecutive_errors,
             heartbeat=heartbeat, patience_pages=patience_pages,
-            max_depth=max_depth, page_delay=page_delay, track_pages=track_pages,
-            worker_id=worker_id))
+            max_depth=max_depth, page_delay=page_delay, track_pages=track_pages))
+    if not entries:
+        return _merge_sweep_stats([{}])
 
-    if len(shards) <= 1:
-        parts = [_run(extractors[0], shards[0], 0)] if shards else []
-    else:
-        # worker i owns extractor i, shard i, AND breaker worker_id i
-        triples = list(zip(extractors, shards, range(len(shards))))
-        with ThreadPoolExecutor(max_workers=len(triples)) as pool:
-            parts = list(pool.map(lambda tr: _run(tr[0], tr[1], tr[2]), triples))
-    return _merge_sweep_stats(parts) if parts else _merge_sweep_stats([{}])
+    if patience_pages is None:
+        patience_pages = _env_int("AGF_SWEEP_PATIENCE_PAGES", 3)
+    if max_depth is None:
+        max_depth = _env_int("AGF_SWEEP_MAX_DEPTH", 15)
+    if page_delay is None:
+        page_delay = _env_float("AGF_SWEEP_PAGE_DELAY", 2.0)
+
+    active_lanes = min(len(entries), len(extractors))
+    breaker = SweepBreaker(max_consecutive_errors, workers=active_lanes)
+
+    def _new_stats():
+        stats = _merge_sweep_stats([{}])
+        if track_pages:
+            stats["page_log"] = []
+        return stats
+
+    states = {
+        index: {
+            "stats": _new_stats(),
+            "pages_fetched": 0,
+            "kw_ads": 0,
+            "consec_dry": 0,
+            "cursor": None,
+            "has_next": False,
+        }
+        for index, _entry in enumerate(entries)
+    }
+
+    def _finish(state, entry, *, completed):
+        stats = state["stats"]
+        if track_pages:
+            stats["page_log"].append({
+                "keyword": entry.keyword,
+                "pages": state["pages_fetched"],
+                "ads": state["kw_ads"],
+                "ceiling_hit": bool(state["has_next"] and state["cursor"]),
+            })
+        stats["serp_requests"] += state["pages_fetched"]
+        if completed:
+            stats["keywords_swept"] += 1
+
+    def _fetch(lane_id, job):
+        if breaker.tripped():
+            return PageOutcome(failed=True)
+
+        entry = job.payload
+        state = states[job.key]
+        stats = state["stats"]
+        try:
+            records, cursor, has_next = asyncio.run(
+                extractors[lane_id].search_page(
+                    query=entry.keyword,
+                    countries=list(countries),
+                    search_type=entry.search_type,
+                    cursor=job.cursor,
+                )
+            )
+        except ExtractError:
+            stats["errors"] += 1
+            _finish(state, entry, completed=False)
+            if breaker.record_error(lane_id):
+                error = ExtractError(
+                    "sweep circuit-breaker: consecutive search errors across "
+                    "workers — proxy/gateway likely down, aborting cycle",
+                    ErrorKind.TRANSIENT,
+                )
+                return PageOutcome(failed=True, error=error)
+            time.sleep(kw_delay * 2)
+            return PageOutcome(failed=True)
+
+        state["pages_fetched"] += 1
+        state["kw_ads"] += len(records)
+        state["cursor"] = cursor
+        state["has_next"] = has_next
+        page_new = _process_page(
+            engine,
+            records,
+            entry=entry,
+            depth=job.depth + 1,
+            stats=stats,
+        )
+        if heartbeat is not None:
+            heartbeat()
+        state["consec_dry"] = 0 if page_new > 0 else state["consec_dry"] + 1
+
+        entry_max_depth = max(max_depth, entry.max_pages, max_pages)
+        should_continue = (
+            has_next
+            and cursor
+            and state["consec_dry"] < patience_pages
+            and job.depth + 1 < entry_max_depth
+        )
+        if should_continue:
+            return PageOutcome(
+                cursor=cursor,
+                ready_at=time.monotonic() + page_delay,
+            )
+
+        _finish(state, entry, completed=True)
+        breaker.record_ok(lane_id)
+        time.sleep(kw_delay)
+        return PageOutcome()
+
+    outcomes = run_page_pool(
+        [PageJob(key=index, payload=entry) for index, entry in enumerate(entries)],
+        lane_count=len(extractors),
+        handler=_fetch,
+    )
+    for _job, outcome in outcomes:
+        if outcome.error is not None:
+            raise outcome.error
+    return _merge_sweep_stats([state["stats"] for state in states.values()])
