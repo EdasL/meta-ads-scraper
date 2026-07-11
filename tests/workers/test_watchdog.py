@@ -163,3 +163,24 @@ def test_prefetch_collects_urls_on_success(monkeypatch):
     monkeypatch.setenv("AGF_PREFETCH_TIMEOUT_SEC", "10")
     out = prefetch_creative_urls(_FastExtractor(), _FakeConn(), [7], max_pages=1)
     assert out == {7: {"A1": [("image", "http://img")]}}
+
+
+class _DeadlineExtractor:
+    """search raises the process-wide enrich deadline (ferried through the ceiling
+    thread) — simulating SIGALRM firing while the main thread waits in prefetch."""
+    async def search(self, **kw):
+        from agf.enrich_full.enrich_one import EnrichDeadline
+        raise EnrichDeadline("enrich exceeded 180s")
+
+
+def test_prefetch_does_not_swallow_enrich_deadline(monkeypatch):
+    # The 10173 hot-loop (2026-07-11): the alarm's TimeoutError landed inside
+    # prefetch's except (ExtractError, TimeoutError) and was treated as a routine
+    # per-gem skip, leaving the rest of the enrich UNGUARDED (one-shot alarm) so
+    # it ran to the daemon's hard kill. The deadline is a BaseException subclass
+    # precisely so no local network-failure handler can eat it.
+    import pytest
+    from agf.enrich_full.enrich_one import EnrichDeadline
+    monkeypatch.setenv("AGF_PREFETCH_TIMEOUT_SEC", "10")
+    with pytest.raises(EnrichDeadline):
+        prefetch_creative_urls(_DeadlineExtractor(), _FakeConn(), [1], max_pages=1)

@@ -185,3 +185,32 @@ def test_mark_crawled_called_on_error(monkeypatch):
     with begin(engine) as conn:
         status, _, _ = _status(conn, job_id)
     assert status == "error"
+
+
+def test_run_job_records_enrich_deadline_and_marks_crawl_log():
+    # The SIGALRM deadline must reach run_job's BaseException handler (status +
+    # crawl_log TTL marker) — not be swallowed en route (the 10173 hot-loop).
+    engine = get_engine()
+    with begin(engine) as conn:
+        job_id = _new_job(conn)
+        conn.execute(text("DELETE FROM logging.crawl_log "
+                          "WHERE entity_type='advertiser' AND entity_id=999001"))
+
+    def deadline(engine_, advertiser_id, **kw):
+        raise enrich_one.EnrichDeadline("enrich exceeded 180s")
+
+    try:
+        enrich_one.run_job(engine, advertiser_id=999001, job_id=job_id,
+                           enrich_call=deadline, score_call=lambda *a, **k: None,
+                           mark_crawled_on_success=True)
+    except enrich_one.EnrichDeadline:
+        pass  # run_job re-raises after recording
+    with begin(engine) as conn:
+        status, err, finished = _status(conn, job_id)
+        crawl = conn.execute(text(
+            "SELECT crawl_result FROM logging.crawl_log WHERE entity_type='advertiser' "
+            "AND entity_id=999001 ORDER BY crawled_at DESC LIMIT 1")).scalar()
+        conn.execute(text("DELETE FROM logging.crawl_log "
+                          "WHERE entity_type='advertiser' AND entity_id=999001"))
+    assert status == "error" and "exceeded" in err
+    assert crawl == "error:EnrichDeadline"

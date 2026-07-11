@@ -95,6 +95,18 @@ def _default_enrich(engine, advertiser_id, *, extractor, http_client,
                                media_cap=media_cap, deps=deps))
 
 
+class EnrichDeadline(BaseException):
+    """Raised by the SIGALRM wall-clock guard. Deliberately NOT an Exception (and
+    NOT a TimeoutError): per-stage network-failure handlers — prefetch's
+    `except (ExtractError, TimeoutError)` skip-and-continue — must never swallow
+    the process-wide deadline. When the alarm raised a plain TimeoutError, a
+    deadline that fired during creative prefetch was logged as a routine per-gem
+    skip, the one-shot alarm was spent, and the rest of the enrich ran unguarded
+    to the daemon's hard kill (advertiser 10173 hot-loop, 2026-07-11). Only
+    run_job's BaseException handler catches this, records the row + crawl_log,
+    and re-raises."""
+
+
 def _default_score(engine, advertiser_id, as_of):
     """Re-score just this advertiser, then refresh the matview (mirrors
     run_scoring but scoped via only_ids)."""
@@ -165,7 +177,7 @@ def main(argv=None):
     # row lands in 'error' rather than 'running' forever. The API stale-guard
     # is the UI-facing backstop if the signal can't interrupt a blocked call.
     def _on_alarm(signum, frame):
-        raise TimeoutError(f"enrich exceeded {args.timeout}s")
+        raise EnrichDeadline(f"enrich exceeded {args.timeout}s")
 
     signal.signal(signal.SIGALRM, _on_alarm)
     signal.alarm(args.timeout)
