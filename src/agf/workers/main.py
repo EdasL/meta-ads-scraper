@@ -764,7 +764,8 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
             try:
                 cr_stats = asyncio.run(refresh_corpus(
                     engine, extractor, budget_requests=corpus_refresh_budget,
-                    hist_pages=12))
+                    hist_pages=12,
+                    heartbeat=None if dry_run else _touch_heartbeat))
                 with begin(engine) as conn:
                     close_corpus_refresh_run(conn, cr_run_id, stats=cr_stats)
             except Exception as exc:

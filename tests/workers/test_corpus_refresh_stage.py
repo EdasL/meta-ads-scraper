@@ -106,7 +106,7 @@ def test_stage_runs_when_due_and_records_stats_and_budget(_migrated_engine, monk
     stats = {"advertisers_done": 3, "requests_spent": 36, "ads_stored": 5,
              "flipped": 2, "truncated": 0, "errors": 0}
 
-    async def _spy(engine, extractor, *, budget_requests, hist_pages):
+    async def _spy(engine, extractor, *, budget_requests, hist_pages, heartbeat=None):
         captured["budget"] = budget_requests
         captured["hist_pages"] = hist_pages
         return stats
@@ -127,7 +127,7 @@ def test_stage_runs_when_due_and_records_stats_and_budget(_migrated_engine, monk
 def test_stage_exception_lands_on_row_and_does_not_abort(_migrated_engine, monkeypatch):
     eng = _migrated_engine
 
-    async def _boom(engine, extractor, *, budget_requests, hist_pages):
+    async def _boom(engine, extractor, *, budget_requests, hist_pages, heartbeat=None):
         raise RuntimeError("meta throttled")
 
     # run_once must return normally (the stage failure is isolated, never re-raised)
@@ -145,7 +145,7 @@ def test_stage_skips_when_already_ran_today(_migrated_engine, monkeypatch):
     eng = _migrated_engine
     calls = {"n": 0}
 
-    async def _spy(engine, extractor, *, budget_requests, hist_pages):
+    async def _spy(engine, extractor, *, budget_requests, hist_pages, heartbeat=None):
         calls["n"] += 1
         return {"advertisers_done": 0}
 

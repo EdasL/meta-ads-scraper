@@ -161,3 +161,24 @@ def test_flip_skipped_when_listing_empty(pg_conn, _migrated_engine):
     active = {r.external_ad_id: r.is_active for r in pg_conn.execute(text(
         "SELECT external_ad_id, is_active FROM public.ads WHERE advertiser_id = :a"), {"a": adv})}
     assert active == {"cr-C1": True, "cr-C2": True}   # NOT flipped — empty listing is not trusted
+
+
+def test_refresh_corpus_beats_heartbeat_per_advertiser(pg_conn, _migrated_engine):
+    # The nightly corpus refresh runs longer than the watchdog's staleness budget
+    # (2026-07-11 crash-loop after the tick halved to 1800s shrank the budget to
+    # 65min): every long stage must beat the heartbeat per unit of work.
+    _clean_corpus(pg_conn)
+    eng = _migrated_engine
+    a = repo.upsert_advertiser(pg_conn, SimpleNamespace(page_id="CORPUSREFA", page_name="A", page_like_count=10))
+    repo.upsert_ad(pg_conn, make_ad("cr-A1", "CORPUSREFA", "A", "https://x/app"), a, None)
+    pg_conn.execute(text("UPDATE public.ads SET last_seen = '2000-01-01' WHERE advertiser_id = :a"), {"a": a})
+    pg_conn.commit()
+    ext = FakeExtractor(page_ads={
+        "CORPUSREFA": [make_ad("cr-A1", "CORPUSREFA", "A", "https://x/app")],
+    })
+    beats = []
+    res = asyncio.run(refresh_corpus(eng, ext, hist_pages=12, budget_requests=12,
+                                     sleep=lambda s: None,
+                                     heartbeat=lambda: beats.append(1)))
+    assert res["advertisers_done"] == 1
+    assert len(beats) >= 1                        # one beat per advertiser processed

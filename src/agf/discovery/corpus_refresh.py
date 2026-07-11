@@ -29,12 +29,18 @@ def advertisers_with_page(conn) -> list[tuple[int, str]]:
 async def refresh_corpus(engine, extractor, *, hist_pages: int = 12,
                          budget_requests: int = 12_000, weeks: int = 16,
                          kw_delay: float = 2.0, sleep=time.sleep,
-                         offset: int = 0, limit: int | None = None) -> dict:
+                         offset: int = 0, limit: int | None = None,
+                         heartbeat=None) -> dict:
     """Re-scrape the whole advertiser corpus (stalest first) under a proxy-request
     budget, flipping vanished ads on complete listings. The loop stops BEFORE an
     advertiser whose hist_pages pull would exceed budget_requests. offset/limit slice
     the target list (probe/resume). Returns
-    {advertisers_done, requests_spent, ads_stored, flipped, truncated, errors}."""
+    {advertisers_done, requests_spent, ads_stored, flipped, truncated, errors}.
+
+    `heartbeat` (worker watchdog hook) is called once per advertiser: this stage
+    runs longer than the watchdog's staleness budget (which scales with the tick
+    interval), so without per-unit beats a healthy refresh reads as a wedged
+    worker and gets killed mid-pass (the 2026-07-11 crash-loop)."""
     with engine.connect() as conn:
         targets = advertisers_with_page(conn)
     targets = targets[offset:]
@@ -45,6 +51,8 @@ async def refresh_corpus(engine, extractor, *, hist_pages: int = 12,
     for advertiser_id, page_id in targets:
         if stats["requests_spent"] + hist_pages > budget_requests:
             break
+        if heartbeat is not None:
+            heartbeat()
         stats["requests_spent"] += hist_pages
         try:
             res = await refresh_one_advertiser(engine, extractor, advertiser_id, page_id,
