@@ -318,3 +318,37 @@ def test_mint_per_pass_caps_one_pass_minting(_migrated_engine):
         assert len(stats["mined"]) == 1          # capped, despite room for more
     finally:
         _clean()
+
+
+def test_only_keywords_scopes_the_sweep_and_skips_admission(_migrated_engine):
+    # run_stage's --keywords: sweep ONLY the named live keywords; do not mine,
+    # mint, or retest-admit (a scoped test run must not mutate the trial pool).
+    eng = _migrated_engine
+
+    def _clean():
+        with eng.begin() as conn:
+            conn.execute(text("DELETE FROM discovery.dynamic_keywords "
+                              "WHERE keyword LIKE 'onlykw %'"))
+    _clean()
+    try:
+        with eng.begin() as conn:
+            add_trial_keywords(conn, ["onlykw target", "onlykw other"])
+        ex = _NoAdExtractor()
+        corpus = [(41, "the amber kite planner everyone loves"),
+                  (42, "the amber kite planner works")]
+        stats = run_flywheel_stage(eng, [ex], max_pages=1, kw_delay=0,
+                                   min_advertisers=2, retest_per_pass=5,
+                                   only_keywords=["onlykw target"],
+                                   corpus_fn=lambda conn, min_score: corpus)
+        assert ex.searched == ["onlykw target"]      # scoped: nothing else swept
+        assert stats["mined"] == [] and stats["retested"] == 0   # pool untouched
+        with eng.connect() as conn:
+            used = conn.execute(text(
+                "SELECT sweeps_used FROM discovery.dynamic_keywords "
+                "WHERE keyword='onlykw target'")).scalar()
+            other = conn.execute(text(
+                "SELECT sweeps_used FROM discovery.dynamic_keywords "
+                "WHERE keyword='onlykw other'")).scalar()
+        assert used == 1 and other == 0              # verdict recorded only for target
+    finally:
+        _clean()

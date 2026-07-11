@@ -486,7 +486,7 @@ def run_flywheel_stage(engine, extractors, *, max_pages=2, kw_delay=3.0,
                        mine_min_score=40.0, max_trials=40, min_advertisers=3,
                        mint_per_pass=25, retest_per_pass=0, active_gap_hours=0,
                        max_consecutive_errors=0, heartbeat=None,
-                       corpus_fn=fetch_gem_copy) -> dict:
+                       only_keywords=None, corpus_fn=fetch_gem_copy) -> dict:
     """One mine+sweep pass of the keyword flywheel: phrases recurring across the ad
     copy of scored gems become trial sweep keywords, every live keyword (trial|active,
     plus resting keywords whose cooldown has elapsed) gets an adaptive-depth exact-phrase
@@ -505,44 +505,51 @@ def run_flywheel_stage(engine, extractors, *, max_pages=2, kw_delay=3.0,
     trial room (see admit_retest_keywords); a re-admitted keyword's FIRST sweep runs
     with patience disabled up to AGF_SWEEP_MAX_DEPTH so a barren incumbent prefix
     can't cut it off before the deep pages its original verdict never saw.
-    `corpus_fn` is injectable for tests."""
+    `corpus_fn` is injectable for tests. `only_keywords` (scoped-test mode) sweeps
+    ONLY the named live keywords and skips all trial-pool mutation — no verdict apply,
+    mining, mint admission, or retest admission — so an on-demand sweep can't reshape
+    the audition pool."""
     if not isinstance(extractors, (list, tuple)):
         extractors = [extractors]
-    # Apply verdicts up front so a lowered AGF_FLYWHEEL_TRIAL_SWEEPS frees the trial
-    # pool on this run (trials already past the threshold promote/retire immediately)
-    # rather than waiting for each to be re-swept.
-    with begin(engine) as conn:
-        apply_verdicts(conn)
-    with engine.connect() as conn:
-        tried = tried_keywords(conn)
-        # mint_per_pass caps ONE pass's mint admissions independently of the trial
-        # ceiling: max_trials sizes the audition POOL (throughput + retest room),
-        # but the miner's phrase ranking degrades with depth, so an uncapped pass
-        # dumps its low-rank tail the moment the ceiling opens (182-junk-mint
-        # burst, 2026-07-10). 25 = the old ceiling's effective per-pass rate.
-        room = min(max_trials - trial_count(conn), mint_per_pass)
-        corpus = corpus_fn(conn, min_score=mine_min_score) if room > 0 else []
-    static = {e.keyword for e in all_entries()}
-    mined = mine_phrases(corpus, exclude=static | tried, limit=room,
-                         min_advertisers=min_advertisers) if corpus else []
-    # Drop over-specified re-finds (a mined phrase = an existing keyword + extra modifier
-    # words) BEFORE the embedding basin gate, which only compares vs retired/dry basins
-    # and so passes a superset of an ACTIVE productive keyword. Pure-Python, additive.
-    mined = drop_token_supersets(mined, static | tried) if mined else []
-    mined = _gate_keywords(engine, mined, limit=room) if mined else []
-    if mined:
+    mined, retested = [], 0
+    if only_keywords is None:
+        # Apply verdicts up front so a lowered AGF_FLYWHEEL_TRIAL_SWEEPS frees the trial
+        # pool on this run (trials already past the threshold promote/retire immediately)
+        # rather than waiting for each to be re-swept.
         with begin(engine) as conn:
-            add_trial_keywords(conn, mined)
-    retested = 0
-    if retest_per_pass > 0:
+            apply_verdicts(conn)
         with engine.connect() as conn:
-            room_left = max_trials - trial_count(conn)   # mints keep priority
-        if room_left > 0:
+            tried = tried_keywords(conn)
+            # mint_per_pass caps ONE pass's mint admissions independently of the trial
+            # ceiling: max_trials sizes the audition POOL (throughput + retest room),
+            # but the miner's phrase ranking degrades with depth, so an uncapped pass
+            # dumps its low-rank tail the moment the ceiling opens (182-junk-mint
+            # burst, 2026-07-10). 25 = the old ceiling's effective per-pass rate.
+            room = min(max_trials - trial_count(conn), mint_per_pass)
+            corpus = corpus_fn(conn, min_score=mine_min_score) if room > 0 else []
+        static = {e.keyword for e in all_entries()}
+        mined = mine_phrases(corpus, exclude=static | tried, limit=room,
+                             min_advertisers=min_advertisers) if corpus else []
+        # Drop over-specified re-finds (a mined phrase = an existing keyword + extra modifier
+        # words) BEFORE the embedding basin gate, which only compares vs retired/dry basins
+        # and so passes a superset of an ACTIVE productive keyword. Pure-Python, additive.
+        mined = drop_token_supersets(mined, static | tried) if mined else []
+        mined = _gate_keywords(engine, mined, limit=room) if mined else []
+        if mined:
             with begin(engine) as conn:
-                retested = admit_retest_keywords(
-                    conn, limit=min(retest_per_pass, room_left))
+                add_trial_keywords(conn, mined)
+        if retest_per_pass > 0:
+            with engine.connect() as conn:
+                room_left = max_trials - trial_count(conn)   # mints keep priority
+            if room_left > 0:
+                with begin(engine) as conn:
+                    retested = admit_retest_keywords(
+                        conn, limit=min(retest_per_pass, room_left))
     with engine.connect() as conn:
         live = live_keywords(conn, active_gap_hours=active_gap_hours)
+    if only_keywords is not None:
+        wanted = set(only_keywords)
+        live = [kw for kw in live if kw.keyword in wanted]
     shards = _partition(list(live), len(extractors))
     breaker = SweepBreaker(max_consecutive_errors, workers=len(shards) or 1)
     depth_cap = _env_int("AGF_SWEEP_MAX_DEPTH", 15)
