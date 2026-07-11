@@ -48,7 +48,7 @@ def run_page_pool(
     ``ready_at`` values are absolute ``time.monotonic()`` timestamps. Unassigned
     jobs can be claimed by any free lane. A live outcome cursor creates the next
     page on the same lane; a missing cursor or failed outcome terminates the chain.
-    Handler exceptions are captured as failed terminal outcomes.
+    Handler exceptions are captured as failed terminal outcomes and cancel the pool.
     """
     if lane_count < 1:
         raise ValueError("lane_count must be at least 1")
@@ -61,6 +61,7 @@ def run_page_pool(
     terminal: list[TerminalOutcome] = []
     condition = threading.Condition()
     remaining = 0
+    cancelled = False
 
     for job in jobs:
         if job.lane_id is None:
@@ -78,7 +79,7 @@ def run_page_pool(
         nonlocal remaining
         lane_ready = ready_by_lane[lane_id]
         with condition:
-            while remaining:
+            while remaining and not cancelled:
                 now = time.monotonic()
                 if lane_ready and lane_ready[0][0] <= now:
                     return heapq.heappop(lane_ready)[2]
@@ -99,16 +100,25 @@ def run_page_pool(
             return None
 
     def worker(lane_id: int) -> None:
-        nonlocal remaining
+        nonlocal cancelled, remaining
         while (job := claim(lane_id)) is not None:
             try:
                 outcome = handler(lane_id, job)
                 if not isinstance(outcome, PageOutcome):
                     raise TypeError("page handler must return PageOutcome")
             except Exception as error:
-                outcome = PageOutcome(failed=True, error=error)
+                with condition:
+                    terminal.append(
+                        (job, PageOutcome(failed=True, error=error))
+                    )
+                    cancelled = True
+                    remaining = 0
+                    condition.notify_all()
+                return
 
             with condition:
+                if cancelled:
+                    return
                 if outcome.failed or outcome.cursor is None:
                     terminal.append((job, outcome))
                     remaining -= 1

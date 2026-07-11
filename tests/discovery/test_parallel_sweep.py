@@ -1,7 +1,7 @@
 """Concurrent K-worker sweep (spec 2026-07-10): _partition/_merge pure functions and
 the run_parallel_sweep orchestrator. DB tests use SWEEPTEST* sentinels (shared session
 DB) with delete-before/after, mirroring test_sweep.test_run_sweep_persists_and_counts."""
-from threading import Barrier, Event, Lock
+from threading import Barrier, Event, Lock, Thread
 import pytest
 import agf.discovery.sweep as sweep_module
 from agf.discovery.sweep import (run_parallel_sweep, _partition, _merge_sweep_stats,
@@ -42,24 +42,26 @@ def test_merge_sums_counters_drops_and_page_log():
 
 
 def test_parallel_sweep_dynamically_reuses_fast_lane():
-    slow_started = Event()
+    first_calls = Barrier(2)
     release_slow = Event()
     fast_calls = []
     fast_lock = Lock()
 
     class _Slow(FakeExtractor):
         async def search_page(self, *, query="", cursor=None, **kw):
-            slow_started.set()
-            release_slow.wait(timeout=0.5)
+            first_calls.wait(timeout=1)
+            assert release_slow.wait(timeout=1)
             return [], None, False
 
     class _Fast(FakeExtractor):
         async def search_page(self, *, query="", cursor=None, **kw):
-            assert slow_started.wait(timeout=0.5)
             with fast_lock:
                 fast_calls.append(query)
-                if len(fast_calls) == 2:
-                    release_slow.set()
+                call_count = len(fast_calls)
+            if call_count == 1:
+                first_calls.wait(timeout=1)
+            else:
+                release_slow.set()
             return [], None, False
 
     stats = run_parallel_sweep(
@@ -74,6 +76,56 @@ def test_parallel_sweep_dynamically_reuses_fast_lane():
     assert release_slow.is_set()
     assert stats["keywords_swept"] == 3
     assert stats["serp_requests"] == 3
+
+
+def test_parallel_sweep_cancels_pool_when_extractor_raises_unexpected_error():
+    first_calls = Barrier(2)
+    failure_raised = Event()
+    claimed_after_failure = Event()
+    release_healthy = Event()
+    errors = []
+    failing_calls = []
+
+    class _Failing(FakeExtractor):
+        async def search_page(self, *, query="", cursor=None, **kw):
+            failing_calls.append(query)
+            if len(failing_calls) == 1:
+                first_calls.wait(timeout=1)
+                failure_raised.set()
+                raise RuntimeError("persistence failed")
+            claimed_after_failure.set()
+            return [], None, False
+
+    class _Healthy(FakeExtractor):
+        async def search_page(self, *, query="", cursor=None, **kw):
+            first_calls.wait(timeout=1)
+            assert release_healthy.wait(timeout=1)
+            return [], None, False
+
+    def _run_sweep():
+        try:
+            run_parallel_sweep(
+                None,
+                [_Failing(), _Healthy()],
+                entries=_entries(3),
+                kw_delay=0,
+                page_delay=0,
+            )
+        except Exception as error:
+            errors.append(error)
+
+    sweep_thread = Thread(target=_run_sweep)
+    sweep_thread.start()
+    assert failure_raised.wait(timeout=1)
+    failed_lane_claimed_again = claimed_after_failure.wait(timeout=0.2)
+    release_healthy.set()
+    sweep_thread.join(timeout=1)
+
+    assert not sweep_thread.is_alive()
+    assert len(errors) == 1
+    assert isinstance(errors[0], RuntimeError)
+    assert not failed_lane_claimed_again
+    assert len(failing_calls) == 1
 
 
 def test_parallel_sweep_preserves_depth_cursor_and_lane(monkeypatch):
