@@ -1078,6 +1078,16 @@ def _summary_line(s: dict) -> str:
     sw, tr = s.get("sweep"), s.get("triage")
     sweep_part = (f"new={sw['candidates_new']} seen={sw['candidates_seen']} "
                   f"kw={sw['keywords_swept']}" if sw else "skipped(daily-gate)")
+    if sw and sw.get("telemetry"):
+        telemetry = sw["telemetry"]
+        sweep_part += (
+            f" pages={telemetry['pages_completed']}"
+            f" request_s={telemetry['request_seconds']:.2f}"
+            f" queue_s={telemetry['queue_wait_seconds']:.2f}"
+            f" persist_s={telemetry.get('persistence_seconds', 0.0):.2f}"
+            f" lane_errors={sum(telemetry['lane_errors'].values())}"
+            f" peak_ready={telemetry['peak_ready_jobs']}"
+        )
     kept = tr["kept"] if tr else 0
     line = f"[worker] sweep: {sweep_part} kept={kept}"
     if s.get("keeper_history") is not None:

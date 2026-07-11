@@ -176,6 +176,18 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
+def _new_telemetry(lane_count: int, *, peak_ready_jobs: int = 0) -> dict:
+    return {
+        "pages_completed": 0,
+        "request_seconds": 0.0,
+        "queue_wait_seconds": 0.0,
+        "persistence_seconds": 0.0,
+        "lane_pages": {lane_id: 0 for lane_id in range(lane_count)},
+        "lane_errors": {lane_id: 0 for lane_id in range(lane_count)},
+        "peak_ready_jobs": peak_ready_jobs,
+    }
+
+
 async def run_sweep(engine, extractor, *, entries=None, keywords=None,
                     countries=("US",), max_pages: int = 2, kw_delay: float = 3.0,
                     max_consecutive_errors: int = 0,
@@ -234,6 +246,7 @@ async def run_sweep(engine, extractor, *, entries=None, keywords=None,
              "funnel_new": 0, "funnel_seen": 0,
              "drops": {"no_link": 0, "social": 0,
                        "non_app": 0, "no_store_id": 0, "funnel_captured": 0}}
+    stats["telemetry"] = _new_telemetry(1, peak_ready_jobs=min(1, len(entries)))
     if track_pages:
         stats["page_log"] = []
     for entry in entries:
@@ -252,6 +265,7 @@ async def run_sweep(engine, extractor, *, entries=None, keywords=None,
         errored = False
         while True:
             depth += 1
+            request_started = time.perf_counter()
             try:
                 records, cursor, has_next = await extractor.search_page(
                     query=entry.keyword, countries=list(countries),
@@ -262,6 +276,7 @@ async def run_sweep(engine, extractor, *, entries=None, keywords=None,
                 # failed `search`: count the error, bump the breaker, move on. Pages
                 # persisted before the raise stay committed (short per-page txns).
                 stats["errors"] += 1
+                stats["telemetry"]["lane_errors"][0] += 1
                 if breaker.record_error(worker_id):
                     raise ExtractError(
                         "sweep circuit-breaker: consecutive search errors across "
@@ -270,12 +285,26 @@ async def run_sweep(engine, extractor, *, entries=None, keywords=None,
                 sleep(kw_delay * 2)
                 errored = True
                 break
+            finally:
+                stats["telemetry"]["request_seconds"] += (
+                    time.perf_counter() - request_started
+                )
             pages_fetched += 1
             kw_ads += len(records)
             if collect is not None:
                 for ad in records:
                     collect(ad)
-            page_new = _process_page(engine, records, entry=entry, depth=depth, stats=stats)
+            persistence_started = time.perf_counter()
+            try:
+                page_new = _process_page(
+                    engine, records, entry=entry, depth=depth, stats=stats
+                )
+            finally:
+                stats["telemetry"]["persistence_seconds"] += (
+                    time.perf_counter() - persistence_started
+                )
+            stats["telemetry"]["pages_completed"] += 1
+            stats["telemetry"]["lane_pages"][0] += 1
             if heartbeat is not None:
                 heartbeat()        # prove liveness each PAGE so the watchdog (stale-
                                    # heartbeat kill) never fells a deep-but-progressing sweep
@@ -325,6 +354,24 @@ def _merge_sweep_stats(parts: list[dict]) -> dict:
                     merged["drops"][dk] = merged["drops"].get(dk, 0) + dv
             elif key == "page_log":
                 merged["page_log"].extend(val)
+            elif key == "telemetry":
+                telemetry = merged.setdefault("telemetry", _new_telemetry(0))
+                for metric in (
+                    "pages_completed",
+                    "request_seconds",
+                    "queue_wait_seconds",
+                    "persistence_seconds",
+                ):
+                    telemetry[metric] += val.get(metric, 0)
+                telemetry["peak_ready_jobs"] = max(
+                    telemetry["peak_ready_jobs"],
+                    val.get("peak_ready_jobs", 0),
+                )
+                for metric in ("lane_pages", "lane_errors"):
+                    for lane_id, count in val.get(metric, {}).items():
+                        telemetry[metric][lane_id] = (
+                            telemetry[metric].get(lane_id, 0) + count
+                        )
             else:
                 merged[key] = merged.get(key, 0) + val
     return merged
@@ -354,7 +401,9 @@ def run_parallel_sweep(engine, extractors, *, entries=None, keywords=None,
             heartbeat=heartbeat, patience_pages=patience_pages,
             max_depth=max_depth, page_delay=page_delay, track_pages=track_pages))
     if not entries:
-        return _merge_sweep_stats([{}])
+        stats = _merge_sweep_stats([{}])
+        stats["telemetry"] = _new_telemetry(len(extractors))
+        return stats
 
     if patience_pages is None:
         patience_pages = _env_int("AGF_SWEEP_PATIENCE_PAGES", 3)
@@ -365,6 +414,8 @@ def run_parallel_sweep(engine, extractors, *, entries=None, keywords=None,
 
     active_lanes = min(len(entries), len(extractors))
     breaker = SweepBreaker(max_consecutive_errors, workers=active_lanes)
+    telemetry = _new_telemetry(len(extractors))
+    telemetry_lock = threading.Lock()
 
     def _new_stats():
         stats = _merge_sweep_stats([{}])
@@ -404,6 +455,7 @@ def run_parallel_sweep(engine, extractors, *, entries=None, keywords=None,
         entry = job.payload
         state = states[job.key]
         stats = state["stats"]
+        request_started = time.perf_counter()
         try:
             records, cursor, has_next = asyncio.run(
                 extractors[lane_id].search_page(
@@ -425,18 +477,30 @@ def run_parallel_sweep(engine, extractors, *, entries=None, keywords=None,
                 return PageOutcome(failed=True, error=error)
             time.sleep(kw_delay * 2)
             return PageOutcome(failed=True)
+        finally:
+            with telemetry_lock:
+                telemetry["request_seconds"] += (
+                    time.perf_counter() - request_started
+                )
 
         state["pages_fetched"] += 1
         state["kw_ads"] += len(records)
         state["cursor"] = cursor
         state["has_next"] = has_next
-        page_new = _process_page(
-            engine,
-            records,
-            entry=entry,
-            depth=job.depth + 1,
-            stats=stats,
-        )
+        persistence_started = time.perf_counter()
+        try:
+            page_new = _process_page(
+                engine,
+                records,
+                entry=entry,
+                depth=job.depth + 1,
+                stats=stats,
+            )
+        finally:
+            with telemetry_lock:
+                telemetry["persistence_seconds"] += (
+                    time.perf_counter() - persistence_started
+                )
         if heartbeat is not None:
             heartbeat()
         state["consec_dry"] = 0 if page_new > 0 else state["consec_dry"] + 1
@@ -463,8 +527,11 @@ def run_parallel_sweep(engine, extractors, *, entries=None, keywords=None,
         [PageJob(key=index, payload=entry) for index, entry in enumerate(entries)],
         lane_count=len(extractors),
         handler=_fetch,
+        telemetry=telemetry,
     )
     for _job, outcome in outcomes:
         if outcome.error is not None:
             raise outcome.error
-    return _merge_sweep_stats([state["stats"] for state in states.values()])
+    stats = _merge_sweep_stats([state["stats"] for state in states.values()])
+    stats["telemetry"] = telemetry
+    return stats
