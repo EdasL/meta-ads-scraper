@@ -252,7 +252,7 @@ def test_parallel_sweep_merges_candidate_counts(_migrated_engine):
             depths = dict(conn.execute(text(
                 "SELECT page_id, first_seen_depth FROM discovery.candidates "
                 "WHERE page_id LIKE 'SWEEPTEST%'"
-            )))
+            )).all())
         assert depths == {"SWEEPTESTP1": 2, "SWEEPTESTP2": 1}
     finally:
         with eng.begin() as conn:
