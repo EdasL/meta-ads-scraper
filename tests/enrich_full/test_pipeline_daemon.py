@@ -71,6 +71,19 @@ def test_process_once_runner_raises_marks_error(engine):
     # safety net: a runner that died without recording status must not leave the
     # row stuck 'running'
     assert _status(engine, A1) == "error"
+    # ... AND must mark the crawl_log so the TTL applies — an OUTER-killed
+    # subprocess (240s hard kill, advertiser 10173 hot-loop 2026-07-11) never
+    # reaches enrich_one's own error-path marker, and without this row claim_due
+    # sorts the advertiser never-crawled-first and re-enqueues it every tick.
+    with engine.connect() as conn:
+        result = conn.execute(text(
+            "SELECT crawl_result FROM logging.crawl_log "
+            "WHERE entity_type='advertiser' AND entity_id=:a "
+            "ORDER BY crawled_at DESC LIMIT 1"), {"a": A1}).scalar()
+    assert result is not None and result.startswith("error:")
+    with engine.begin() as conn:
+        conn.execute(text("DELETE FROM logging.crawl_log "
+                          "WHERE entity_type='advertiser' AND entity_id=:a"), {"a": A1})
 
 
 def test_process_once_empty_queue_returns_false(engine):

@@ -18,6 +18,7 @@ import time
 from sqlalchemy import text
 
 from agf.db.engine import begin, get_engine
+from agf.workers.scheduler import mark_crawled
 from agf.db.pipeline_jobs import (claim_next, purge_terminal, reap_expired,
                                   set_job_status)
 
@@ -75,7 +76,13 @@ def process_once(engine, *, runner=run_pipeline_subprocess) -> bool:
         log.exception("enrich job %d runner failed", job_id)
         err = str(e)[:500]
     # Safety net: if the runner exited without writing a terminal status (crash
-    # before set_status), don't leave the row 'running' forever.
+    # before set_status), don't leave the row 'running' forever — and mark the
+    # crawl_log too. A subprocess killed by the OUTER timeout (hard kill at
+    # ENRICH_ONE_TIMEOUT_SEC+60) never reaches enrich_one's own error-path
+    # crawl_log marker; without one, claim_due sorts the advertiser
+    # never-crawled-first and the producer re-enqueues it EVERY tick — the
+    # starvation hot-loop (advertiser 10173, 2026-07-11), one wedge-path deeper
+    # than the 2026-07-10 fix.
     with begin(engine) as conn:
         still_running = conn.execute(text(
             "SELECT 1 FROM public.pipeline_jobs WHERE id = :i AND status = 'running'"),
@@ -83,6 +90,8 @@ def process_once(engine, *, runner=run_pipeline_subprocess) -> bool:
         if still_running:
             set_job_status(conn, job_id, "error",
                            error=err or "enrichment exited without recording status")
+            mark_crawled(conn, "advertiser", advertiser_id,
+                         "error:runner_killed" if err else "error:no_status")
     return True
 
 
