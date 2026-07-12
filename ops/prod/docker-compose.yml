@@ -150,5 +150,25 @@ services:
       cloud-sql-proxy:
         condition: service_started
 
+  # Keeper-history consumer: drains kind='keeper_history' pipeline_jobs (the
+  # worker tick enqueues due keepers each pass). 3 subprocess lanes absorb
+  # ≥1,000 keepers/day so kept apps become scored DB rows within the hour
+  # (spec 2026-07-12-keeper-absorption). No Gemini/S3 — keeper pulls are pure
+  # Meta listing + DB writes.
+  keeper:
+    image: europe-west1-docker.pkg.dev/peon-489013/agf/worker:latest
+    restart: unless-stopped
+    init: true
+    command: python -m agf.discovery.keeper_daemon
+    environment:
+      AGF_DATABASE_URL: ${AGF_DATABASE_URL}
+      AGF_PROXIES: ${AGF_PROXIES}
+      AGF_KEEPER_LANES: ${AGF_KEEPER_LANES:-3}
+      AGF_KEEPER_ONE_TIMEOUT_SEC: ${AGF_KEEPER_ONE_TIMEOUT_SEC:-120}
+      AGF_PIPELINE_POLL_SEC: ${AGF_PIPELINE_POLL_SEC:-5}
+    depends_on:
+      cloud-sql-proxy:
+        condition: service_started
+
 volumes:
   minio_data:
