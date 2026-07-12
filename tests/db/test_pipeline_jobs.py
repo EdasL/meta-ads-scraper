@@ -132,6 +132,26 @@ def test_reap_expired_requeues_then_errors(engine):
     assert row[1] == "error" and row[3] is None
 
 
+def test_enqueue_jobs_keeper_kind_dedups_active(engine):
+    from agf.db.pipeline_jobs import enqueue_jobs
+    with engine.begin() as conn:
+        assert enqueue_jobs(conn, "keeper_history", [A1, A2]) == 2
+    # second enqueue while the first pair is still queued dedups both
+    with engine.begin() as conn:
+        assert enqueue_jobs(conn, "keeper_history", [A1]) == 0
+    with engine.connect() as conn:
+        kinds = conn.execute(text(
+            "SELECT DISTINCT kind FROM public.pipeline_jobs WHERE advertiser_id = ANY(:a)"),
+            {"a": [A1, A2]}).scalars().all()
+    assert kinds == ["keeper_history"]
+
+
+def test_enqueue_enrich_still_works(engine):
+    from agf.db.pipeline_jobs import enqueue_enrich
+    with engine.begin() as conn:
+        assert enqueue_enrich(conn, [A3]) == 1
+
+
 def test_purge_terminal_deletes_old_done_and_error(engine):
     A4, A5 = SENTINEL + 4, SENTINEL + 5
     with engine.begin() as conn:

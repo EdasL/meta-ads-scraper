@@ -59,6 +59,9 @@ def _clean(eng):
             "SELECT id FROM public.advertisers WHERE page_id LIKE 'KEEPERHIST%'"
         )).scalars().all()
         if ids:
+            conn.execute(text("DELETE FROM logging.crawl_log WHERE "
+                              "entity_type='keeper_history' AND entity_id = ANY(:i)"),
+                         {"i": ids})
             conn.execute(text("DELETE FROM adtech.app_advertiser_metrics "
                               "WHERE advertiser_id = ANY(:i)"), {"i": ids})
             conn.execute(text("DELETE FROM public.creatives c USING public.ads a "
@@ -81,6 +84,47 @@ def test_missing_history_detection(pg_conn):
     repo.upsert_app_advertiser_metric(pg_conn, a2, date(2026, 6, 1), 3, 1, None)
     got = [t for t in keepers_missing_history(pg_conn) if t[0] in (a1, a2, a3)]
     assert got == [(a1, PAGES[0]), (a3, PAGES[2])]      # kept w/o metrics, oldest first
+
+
+# --- due selection (TTL failure suppression) ----------------------------------
+def test_keepers_due_excludes_fresh_crawl_log(_migrated_engine):
+    # Separate committed txns so each now() advances — mark_crawled writes a
+    # clock_timestamp() row and the ttl_hours=0 assertion needs the marker to be
+    # strictly in the past relative to a later query's now().
+    from agf.discovery.keeper_history import keepers_due_for_history
+    from agf.workers.scheduler import mark_crawled
+    eng = _migrated_engine
+    _clean(eng)
+    try:
+        with eng.begin() as conn:
+            adv_id = _seed_keeper(conn, PAGES[0], STORE_IDS[0], triaged_at="2000-01-01")
+        with eng.connect() as conn:
+            due = [a for a, _pid in keepers_due_for_history(conn)]
+        assert adv_id in due
+        with eng.begin() as conn:
+            mark_crawled(conn, "keeper_history", adv_id, "error:ExtractError")
+        with eng.connect() as conn:
+            due = [a for a, _pid in keepers_due_for_history(conn)]
+        assert adv_id not in due                    # TTL suppression
+        with eng.connect() as conn:
+            due0 = [a for a, _pid in keepers_due_for_history(conn, ttl_hours=0)]
+        assert adv_id in due0                        # ttl 0 = everything due
+    finally:
+        _clean(eng)
+
+
+def test_keepers_due_respects_limit(_migrated_engine):
+    from agf.discovery.keeper_history import keepers_due_for_history
+    eng = _migrated_engine
+    _clean(eng)
+    try:
+        with eng.begin() as conn:
+            _seed_keeper(conn, PAGES[0], STORE_IDS[0], triaged_at="2000-01-01")
+            _seed_keeper(conn, PAGES[1], STORE_IDS[1], triaged_at="2000-01-02")
+        with eng.connect() as conn:
+            assert len(keepers_due_for_history(conn, limit=1)) <= 1
+    finally:
+        _clean(eng)
 
 
 # --- budget -------------------------------------------------------------------

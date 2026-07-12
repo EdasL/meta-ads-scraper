@@ -10,24 +10,31 @@ placeholder-sensitive path).
 from sqlalchemy import text
 
 
-def enqueue_enrich(conn, advertiser_ids) -> int:
-    """Bulk-insert kind='enrich' rows for `advertiser_ids` IN THE GIVEN ORDER (FIFO
-    drain order = taste priority). `ON CONFLICT ... DO NOTHING` against the partial
-    active-unique index dedups any advertiser that already has a queued/running job.
-    Returns the count actually inserted (i.e. minus the deduped ones)."""
+def enqueue_jobs(conn, kind: str, advertiser_ids) -> int:
+    """Bulk-insert `kind` rows for `advertiser_ids` IN THE GIVEN ORDER (FIFO drain
+    order = taste priority). `ON CONFLICT ... DO NOTHING` against the partial
+    active-unique index (kind, advertiser_id) WHERE status IN ('queued','running')
+    dedups any advertiser that already has a queued/running job OF THIS KIND — a
+    different kind for the same advertiser is a distinct queue slot. Returns the
+    count actually inserted (i.e. minus the deduped ones)."""
     ids = list(advertiser_ids)
     if not ids:
         return 0
     rows = conn.execute(text(
         "INSERT INTO public.pipeline_jobs (kind, advertiser_id) "
-        "SELECT 'enrich', a.aid "
+        "SELECT :kind, a.aid "
         "FROM unnest(CAST(:aids AS bigint[])) WITH ORDINALITY AS a(aid, ord) "
         "ORDER BY a.ord "
         "ON CONFLICT (kind, advertiser_id) WHERE status IN ('queued','running') "
         "DO NOTHING "
         "RETURNING id"),
-        {"aids": ids}).fetchall()
+        {"kind": kind, "aids": ids}).fetchall()
     return len(rows)
+
+
+def enqueue_enrich(conn, advertiser_ids) -> int:
+    """kind='enrich' wrapper — keeps every existing call site unchanged."""
+    return enqueue_jobs(conn, "enrich", advertiser_ids)
 
 
 def claim_next(conn, kind: str, lease_sec: int):

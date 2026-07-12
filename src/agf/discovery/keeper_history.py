@@ -38,6 +38,30 @@ def keepers_missing_history(conn) -> list[tuple[int, str]]:
     """)).all()]
 
 
+def keepers_due_for_history(conn, *, ttl_hours: int = 168,
+                            limit: int = 1000) -> list[tuple[int, str]]:
+    """keepers_missing_history minus advertisers with a logging.crawl_log row of
+    entity_type='keeper_history' fresher than ttl_hours (failure suppression: a
+    keeper whose pull errored waits out the TTL instead of hot-looping the
+    queue). Oldest triaged first, bounded by limit. Success needs no marker —
+    a pulled keeper gains metrics rows and drops out of the base query."""
+    return [(r[0], r[1]) for r in conn.execute(text("""
+        SELECT c.kept_advertiser_id, a.page_id
+        FROM discovery.candidates c
+        JOIN public.advertisers a ON a.id = c.kept_advertiser_id
+        WHERE c.status = 'kept' AND c.kept_advertiser_id IS NOT NULL
+          AND NOT EXISTS (SELECT 1 FROM adtech.app_advertiser_metrics m
+                          WHERE m.advertiser_id = c.kept_advertiser_id)
+          AND NOT EXISTS (SELECT 1 FROM logging.crawl_log l
+                          WHERE l.entity_type = 'keeper_history'
+                            AND l.entity_id = c.kept_advertiser_id
+                            AND l.crawled_at > now() - make_interval(hours => :ttl))
+        GROUP BY c.kept_advertiser_id, a.page_id
+        ORDER BY MIN(c.triaged_at), c.kept_advertiser_id
+        LIMIT :lim
+    """), {"ttl": ttl_hours, "lim": limit}).all()]
+
+
 def _week_starts(today: date, n: int) -> list[date]:
     """n Monday-aligned week_start dates, oldest -> newest (newest = this week's
     Monday) — mirrors scripts/persist_candidates.py and step 1.5's week_start."""
