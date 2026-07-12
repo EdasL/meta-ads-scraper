@@ -722,14 +722,18 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
     #      budget half is NOT reallocated (gem enrich keeps its current rate).
     keeper_enqueued = 0
     if not dry_run:
-        with begin(engine) as conn:
-            due = keepers_due_for_history(
-                conn, ttl_hours=_env_int("AGF_KEEPER_TTL_HOURS", 168),
-                limit=_env_int("AGF_KEEPER_ENQUEUE_PER_TICK", 1000))
-            keeper_enqueued = enqueue_jobs(conn, "keeper_history",
-                                           [a for a, _p in due])
-        if keeper_enqueued:
-            print(f"[worker] keeper_history enqueued {keeper_enqueued}", flush=True)
+        try:
+            with begin(engine) as conn:
+                due = keepers_due_for_history(
+                    conn, ttl_hours=_env_int("AGF_KEEPER_TTL_HOURS", 168),
+                    limit=_env_int("AGF_KEEPER_ENQUEUE_PER_TICK", 1000))
+                keeper_enqueued = enqueue_jobs(conn, "keeper_history",
+                                               [a for a, _p in due])
+            if keeper_enqueued:
+                print(f"[worker] keeper_history enqueued {keeper_enqueued}", flush=True)
+        except Exception as exc:
+            print(f"[worker] keeper enqueue failed: {exc!r}", file=sys.stderr,
+                  flush=True)
 
     keeper_history = None
     if sweep_due and _env_int("AGF_KEEPER_HISTORY_INLINE", 0):

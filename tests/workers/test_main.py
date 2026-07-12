@@ -283,6 +283,45 @@ def test_inline_keeper_pull_off_by_default(monkeypatch, _migrated_engine):
         "keepers_done": 0, "requests_spent": 0, "ads_stored": 0, "errors": 0}
 
 
+def test_keeper_enqueue_failure_does_not_abort_tick(monkeypatch, _migrated_engine):
+    """A transient failure in the keeper-enqueue producer (keepers_due_for_history /
+    enqueue_jobs) must NOT cost the app pipeline the rest of the tick — same isolation
+    contract as the funnel/corpus stages. Make keepers_due_for_history raise, then assert
+    run_once completes AND the later inline keeper-pull stage still ran."""
+    import agf.workers.main as m
+    calls = []
+
+    async def spy_pull(engine, extractor, **kw):
+        calls.append(kw)
+        return {"keepers_done": 0, "requests_spent": 0, "ads_stored": 0, "errors": 0}
+
+    def boom(conn, **kw):
+        raise RuntimeError("transient DB error")
+
+    monkeypatch.setattr(m, "discovery_due", lambda *a, **k: True)   # sweep_due = True
+    monkeypatch.setattr(m, "build_extractors", lambda dry_run, now_epoch, k: [object()])
+    monkeypatch.setattr(m, "run_parallel_sweep", lambda *a, **k: {
+        "keywords_swept": 0, "candidates_new": 0, "candidates_seen": 0,
+        "errors": 0, "drops": {}})
+    monkeypatch.setattr(m, "keepers_due_for_history", boom)
+    monkeypatch.setattr(m, "taste_prioritized_kept", lambda conn, **kw: [])
+    monkeypatch.setattr(m, "eligible_gem_ids", lambda conn, s: [])
+    monkeypatch.setattr(m, "pull_keeper_history", spy_pull)
+
+    monkeypatch.setenv("AGF_KEEPER_HISTORY_INLINE", "1")  # exercise the later stage
+    summary = run_once(
+        _migrated_engine, object(), now_epoch=NOW, as_of=date(2026, 6, 4),
+        dry_run=False, http_client=None, continuous_discovery=True,
+        funnel_daily=False, corpus_refresh_daily=False,
+        generic_deep_enabled=False, flywheel_daily=False,
+        release_mint_enabled=False, media_repair_per_cycle=0,
+        funnel_repair_per_cycle=0, enrich_budget=600)
+
+    # tick completed despite the enqueue failure, and the later stage still ran
+    assert summary["keeper_enqueued"] == 0
+    assert len(calls) == 1
+
+
 def test_dry_run_sweep_triages_and_enriches(monkeypatch, _migrated_engine):
     eng = _migrated_engine
     _clean_fake(eng)
