@@ -32,6 +32,10 @@ def _page_id(engine, advertiser_id: int) -> str | None:
 
 def run(engine, advertiser_id: int, job_id: int, *,
         refresh=refresh_one_advertiser, extractor=None) -> int:
+    # A SIGALRM firing before the try below (during the page_id read or Extractor
+    # construction) escapes uncaught — that path is backstopped by the keeper
+    # daemon: outer subprocess timeout + still-running safety net writes both the
+    # error status and the crawl_log marker (see keeper_daemon.process_once).
     page_id = _page_id(engine, advertiser_id)
     if page_id is None:
         set_status(engine, job_id, "error", error_text="advertiser has no page_id",
