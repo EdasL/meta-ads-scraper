@@ -91,6 +91,11 @@ services:
       AGF_FRAME_MINT_MIN_ADVERTISERS: ${AGF_FRAME_MINT_MIN_ADVERTISERS:-2}
       AGF_FUNNEL_DEEP_PAGES: ${AGF_FUNNEL_DEEP_PAGES:-100}
       AGF_FUNNEL_DEEP_EVERY_DAYS: ${AGF_FUNNEL_DEEP_EVERY_DAYS:-7}
+      # Corpus-refresh proxy budget: 12 req/advertiser, so 9000 = ~750 advertisers/day
+      # -> full ~2k-advertiser cycle every ~3 days (was 3000 = ~8-day cycle, too slow
+      # for gem maturation re-scores). Runtime ~4.5h nightly, blocks the tick loop;
+      # the stage heartbeats per advertiser so the watchdog tolerates it.
+      AGF_CORPUS_REFRESH_BUDGET: ${AGF_CORPUS_REFRESH_BUDGET:-9000}
       # Watchdog/healthcheck staleness budget (worker default: max(this, 2×sweep
       # interval + 300)). Bump via .env when a long backfill shares the box and
       # legitimately slows stages past the budget.
