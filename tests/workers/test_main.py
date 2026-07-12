@@ -199,9 +199,97 @@ def test_production_run_once_enqueues_and_skips_run_worker(monkeypatch, _migrate
         _clean()
 
 
-def test_dry_run_sweep_triages_and_enriches(_migrated_engine):
+def test_run_once_enqueues_due_keepers(monkeypatch, _migrated_engine):
+    """Every production tick is the keeper PRODUCER: it selects due keepers and
+    enqueues them as kind='keeper_history' pipeline_jobs in FIFO/taste order (the
+    keeper daemon drains them). Mirrors the enrich-enqueue wiring test."""
+    import agf.workers.main as m
+    eng = _migrated_engine
+    SENT = 999_200_000
+    A1, A2 = SENT + 1, SENT + 2
+
+    def _clean():
+        with begin(eng) as conn:
+            conn.execute(text("DELETE FROM public.pipeline_jobs WHERE advertiser_id >= :s"),
+                         {"s": SENT})
+
+    _clean()
+    try:
+        # Isolate the producer: skip the sweep + enrich; control the due keeper set.
+        monkeypatch.setattr(m, "discovery_due", lambda *a, **k: False)
+        monkeypatch.setattr(m, "keepers_due_for_history",
+                            lambda conn, **kw: [(A1, "P1"), (A2, "P2")])
+        monkeypatch.setattr(m, "taste_prioritized_kept", lambda conn, **kw: [])
+        monkeypatch.setattr(m, "eligible_gem_ids", lambda conn, s: [])
+
+        summary = run_once(
+            eng, object(), now_epoch=NOW, as_of=date(2026, 6, 4), dry_run=False,
+            http_client=None, continuous_discovery=False,
+            funnel_daily=False, corpus_refresh_daily=False,
+            generic_deep_enabled=False, flywheel_daily=False,
+            release_mint_enabled=False, media_repair_per_cycle=0,
+            funnel_repair_per_cycle=0, enrich_budget=600)
+
+        assert summary["keeper_enqueued"] == 2
+        with eng.connect() as conn:
+            rows = conn.execute(text(
+                "SELECT advertiser_id, kind, status FROM public.pipeline_jobs "
+                "WHERE advertiser_id >= :s ORDER BY id"), {"s": SENT}).fetchall()
+        assert [r[0] for r in rows] == [A1, A2]        # FIFO / taste order preserved
+        assert all(r[1] == "keeper_history" and r[2] == "queued" for r in rows)
+    finally:
+        _clean()
+
+
+def test_inline_keeper_pull_off_by_default(monkeypatch, _migrated_engine):
+    """The old serial in-tick pull is opt-in: with a due sweep it does NOT run unless
+    AGF_KEEPER_HISTORY_INLINE=1. Spies pull_keeper_history over a minimal production
+    tick (sweep + enrich stubbed out)."""
+    import agf.workers.main as m
+    calls = []
+
+    async def spy_pull(engine, extractor, **kw):
+        calls.append(kw)
+        return {"keepers_done": 0, "requests_spent": 0, "ads_stored": 0, "errors": 0}
+
+    monkeypatch.setattr(m, "discovery_due", lambda *a, **k: True)   # sweep_due = True
+    monkeypatch.setattr(m, "build_extractors", lambda dry_run, now_epoch, k: [object()])
+    monkeypatch.setattr(m, "run_parallel_sweep", lambda *a, **k: {
+        "keywords_swept": 0, "candidates_new": 0, "candidates_seen": 0,
+        "errors": 0, "drops": {}})
+    monkeypatch.setattr(m, "keepers_due_for_history", lambda conn, **kw: [])
+    monkeypatch.setattr(m, "taste_prioritized_kept", lambda conn, **kw: [])
+    monkeypatch.setattr(m, "eligible_gem_ids", lambda conn, s: [])
+    monkeypatch.setattr(m, "pull_keeper_history", spy_pull)
+
+    def _run():
+        # http_client=None keeps triage + app-store stages offline (they gate on it).
+        return run_once(
+            _migrated_engine, object(), now_epoch=NOW, as_of=date(2026, 6, 4),
+            dry_run=False, http_client=None, continuous_discovery=True,
+            funnel_daily=False, corpus_refresh_daily=False,
+            generic_deep_enabled=False, flywheel_daily=False,
+            release_mint_enabled=False, media_repair_per_cycle=0,
+            funnel_repair_per_cycle=0, enrich_budget=600)
+
+    monkeypatch.delenv("AGF_KEEPER_HISTORY_INLINE", raising=False)
+    summary = _run()
+    assert calls == [] and summary["keeper_history"] is None
+
+    monkeypatch.setenv("AGF_KEEPER_HISTORY_INLINE", "1")
+    summary = _run()
+    assert len(calls) == 1
+    assert summary["keeper_history"] == {
+        "keepers_done": 0, "requests_spent": 0, "ads_stored": 0, "errors": 0}
+
+
+def test_dry_run_sweep_triages_and_enriches(monkeypatch, _migrated_engine):
     eng = _migrated_engine
     _clean_fake(eng)
+    # keeper history is now enqueue-driven; the inline in-tick pull is opt-in. Flip it
+    # on so this offline end-to-end still exercises pull_keeper_history (the daemon that
+    # drains the enqueued jobs isn't running in-process here).
+    monkeypatch.setenv("AGF_KEEPER_HISTORY_INLINE", "1")
     try:
         ex = build_extractor(dry_run=True, now_epoch=NOW)   # in-src fake, no network
         summary = run_once(eng, ex, now_epoch=NOW, as_of=date(2026, 6, 4), dry_run=True)
@@ -280,7 +368,7 @@ def test_dry_run_cli_runs_once_and_exits_zero(_migrated_engine):
     _clean_fake(_migrated_engine)
     try:
         env = {**os.environ, "PYTHONPATH": "src", "AGF_DATABASE_URL": db_url,
-               "AGF_DRY_RUN": "1"}
+               "AGF_DRY_RUN": "1", "AGF_KEEPER_HISTORY_INLINE": "1"}
         out = subprocess.run([sys.executable, "-m", "agf.workers.main"],
                              capture_output=True, text=True, env=env, timeout=120)
         assert out.returncode == 0, out.stderr

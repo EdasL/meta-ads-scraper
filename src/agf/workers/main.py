@@ -34,6 +34,10 @@ Env:
   AGF_MEDIA_CAP                media downloads per gem beyond top-N  (default 120)
   AGF_ENRICH_TTL_HOURS         re-enrich a gem at most this often    (default 168 = 7d)
   AGF_MIN_GEM_SCORE            enrich gems at/above this score       (default 70)
+  AGF_KEEPER_TTL_HOURS         re-enqueue a keeper's history at most this often (default 168 = 7d)
+  AGF_KEEPER_ENQUEUE_PER_TICK  due keepers enqueued per tick          (default 1000)
+  AGF_KEEPER_HISTORY_INLINE    run the OLD serial in-tick keeper pull  (default 0; the keeper
+                               daemon drains the enqueued jobs — flip to 1 as a fallback only)
   AGF_SWEEP_INTERVAL_SEC       sleep between sweeps                  (default 3600; ignored if once)
   AGF_SWEEP_MAX_CONSECUTIVE_ERRORS  dead-proxy circuit-breaker: abort the
                                cycle after this many keywords error in a row    (default 5;
@@ -102,7 +106,7 @@ from agf.db.dynamic_keywords import (add_trial_keywords, admit_retest_keywords,
                                      open_release_mint_run, record_keyword_sweep,
                                      release_mint_ran_today, retire_dry_streak,
                                      tried_keywords, trial_count)
-from agf.db.pipeline_jobs import enqueue_enrich
+from agf.db.pipeline_jobs import enqueue_enrich, enqueue_jobs
 from agf.db.corpus_refresh_runs import (close_corpus_refresh_run,
                                         corpus_refresh_ran_today,
                                         corpus_refresh_ran_within,
@@ -123,7 +127,8 @@ from agf.discovery.keyword_mining import fetch_gem_copy, mine_phrases
 from agf.discovery.funnel_sweep import deep_funnel_entries, run_funnel_sweep
 from agf.discovery.corpus_refresh import refresh_corpus
 from agf.discovery.generic_deep import run_generic_deep_stage
-from agf.discovery.keeper_history import pull_keeper_history
+from agf.discovery.keeper_history import (keepers_due_for_history,
+                                          pull_keeper_history)
 from agf.discovery.sweep import (SweepBreaker, _partition, run_parallel_sweep,
                                  run_sweep)
 from agf.discovery.websub_bridge import run_websub_bridge
@@ -709,15 +714,25 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
         with begin(engine) as conn:
             prune_app_history(conn, keep_days=keep_days)
 
-    # 1.8) keeper history — triage promotes keepers with advertiser+app rows but ZERO
-    #      ads, so their weekly series in adtech.app_advertiser_metrics never builds and
-    #      they can never pass the scoring persistence gate (weeks_observed >= 2). One
-    #      page-scoped active_status=ALL pull per keeper stores its ads and reconstructs
-    #      the last 16 Monday-aligned weeks (the proven scripts/persist_candidates.py
-    #      path). Same daily gate as the sweep; spends half the discovery enrich budget —
-    #      step 3 keeps the other half.
+    # 1.8) keeper absorption — triage promotes keepers with advertiser+app rows but
+    #      ZERO ads; their history pull now runs CONTINUOUSLY: each tick enqueues due
+    #      keepers (kind='keeper_history') and the keeper daemon drains them within
+    #      minutes (spec 2026-07-12). The old in-tick serial pull (25/day) stays
+    #      available behind AGF_KEEPER_HISTORY_INLINE=1 as a fallback only; its
+    #      budget half is NOT reallocated (gem enrich keeps its current rate).
+    keeper_enqueued = 0
+    if not dry_run:
+        with begin(engine) as conn:
+            due = keepers_due_for_history(
+                conn, ttl_hours=_env_int("AGF_KEEPER_TTL_HOURS", 168),
+                limit=_env_int("AGF_KEEPER_ENQUEUE_PER_TICK", 1000))
+            keeper_enqueued = enqueue_jobs(conn, "keeper_history",
+                                           [a for a, _p in due])
+        if keeper_enqueued:
+            print(f"[worker] keeper_history enqueued {keeper_enqueued}", flush=True)
+
     keeper_history = None
-    if sweep_due:
+    if sweep_due and _env_int("AGF_KEEPER_HISTORY_INLINE", 0):
         keeper_history = asyncio.run(pull_keeper_history(
             engine, extractor, budget_requests=enrich_budget // 2,
             sleep=(lambda s: None) if dry_run else time.sleep,
@@ -989,7 +1004,8 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
             print(f"[worker] websub bridge failed: {exc!r}", file=sys.stderr, flush=True)
 
     return {"sweep": sweep_stats, "triage": triage_stats,
-            "keeper_history": keeper_history, "funnel": funnel, "flywheel": flywheel,
+            "keeper_history": keeper_history, "keeper_enqueued": keeper_enqueued,
+            "funnel": funnel, "flywheel": flywheel,
             "release_mint": release_mint,
             "apps_refreshed": apps_refreshed,
             "enrich_candidates": enrich_candidates, "enriched": enriched,
