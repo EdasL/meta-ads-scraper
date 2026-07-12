@@ -165,7 +165,7 @@ services:
       AGF_PROXIES: ${AGF_PROXIES}
       AGF_KEEPER_LANES: ${AGF_KEEPER_LANES:-3}
       AGF_KEEPER_ONE_TIMEOUT_SEC: ${AGF_KEEPER_ONE_TIMEOUT_SEC:-120}
-      AGF_PIPELINE_POLL_SEC: ${AGF_PIPELINE_POLL_SEC:-5}
+      AGF_KEEPER_POLL_SEC: ${AGF_KEEPER_POLL_SEC:-5}
     depends_on:
       cloud-sql-proxy:
         condition: service_started

@@ -311,3 +311,11 @@ rendered on the dashboard. Fixed by unifying onto one bucket:
   services. The Mac `db/docker-compose.yml` now only defines the (dormant) local
   test postgres.
 - App icons are Apple/Play CDN URLs and render regardless.
+
+## Pipeline-jobs purge coupling (2026-07-12)
+
+Terminal (done/error) rows in `public.pipeline_jobs` — BOTH kinds, `enrich` AND
+`keeper_history` — are purged only by the enrich pipeline daemon's daily
+`purge_terminal` call (`agf/enrich_full/pipeline_daemon.py`, kind-blind DELETE).
+If the enrich daemon is ever decommissioned or split away, add a purge call to
+the keeper daemon or the rows accumulate unbounded.

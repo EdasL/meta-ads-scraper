@@ -28,8 +28,9 @@ Env:
   AGF_DRY_RUN=1                fake extractor + run once, no network  (also: --dry-run / --once)
   AGF_SWEEP_PAGES              SERP pages per sweep keyword          (default 2)
   AGF_KW_DELAY                 seconds between sweep keywords        (default 3.0)
-  AGF_DISCOVERY_ENRICH_BUDGET  proxy-request budget, split in half: keeper-history
-                               backfill gets budget//2, enrich the rest (default 600)
+  AGF_DISCOVERY_ENRICH_BUDGET  proxy-request budget for gem enrich (default 600);
+                               only under AGF_KEEPER_HISTORY_INLINE=1 does the legacy
+                               split apply (keeper backfill budget//2, enrich the rest)
   AGF_ENRICH_TOP_N             ads enriched per gem                  (default 5)
   AGF_MEDIA_CAP                media downloads per gem beyond top-N  (default 120)
   AGF_ENRICH_TTL_HOURS         re-enrich a gem at most this often    (default 168 = 7d)
