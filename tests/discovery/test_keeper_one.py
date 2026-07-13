@@ -91,6 +91,68 @@ def test_run_extract_error_marks_error_and_crawl_log(db_engine, seeded_keeper_no
         assert marked.startswith("error:")
 
 
+def test_run_kind_corpus_refresh_passes_flip_and_marks_done(db_engine, seeded_keeper_no_history):
+    """Generalized one-shot (spec 2026-07-13): kind='corpus_refresh' jobs run the
+    SAME code path with flip_vanished=True forwarded to refresh_one_advertiser."""
+    adv = seeded_keeper_no_history
+    with begin(db_engine) as conn:
+        enqueue_jobs(conn, "corpus_refresh", [adv])
+        job = conn.execute(text(
+            "SELECT id FROM public.pipeline_jobs WHERE kind='corpus_refresh' "
+            "AND advertiser_id=:a ORDER BY id DESC LIMIT 1"), {"a": adv}).scalar_one()
+    seen = []
+
+    async def fake_refresh(engine, extractor, advertiser_id, page_id, **kw):
+        seen.append(kw)
+        return {"ads_stored": 3, "truncated": False, "flipped": 1}
+
+    from agf.discovery.keeper_one import run
+    assert run(db_engine, adv, job, kind="corpus_refresh", flip_vanished=True,
+               refresh=fake_refresh, extractor=object()) == 0
+    assert seen and seen[0].get("flip_vanished") is True
+    with db_engine.connect() as conn:
+        status = conn.execute(text(
+            "SELECT status FROM public.pipeline_jobs WHERE id=:i"), {"i": job}).scalar_one()
+        assert status == "done"
+
+
+def test_run_kind_corpus_refresh_error_marks_kind_crawl_log(db_engine, seeded_keeper_no_history):
+    """Failure marker lands under the JOB's kind — corpus_due_for_refresh TTL-
+    suppresses on entity_type='corpus_refresh', never on the keeper kind."""
+    adv = seeded_keeper_no_history
+    with begin(db_engine) as conn:
+        conn.execute(text(
+            "DELETE FROM logging.crawl_log WHERE entity_type='corpus_refresh' "
+            "AND entity_id=:a"), {"a": adv})
+        enqueue_jobs(conn, "corpus_refresh", [adv])
+        job = conn.execute(text(
+            "SELECT id FROM public.pipeline_jobs WHERE kind='corpus_refresh' "
+            "AND advertiser_id=:a ORDER BY id DESC LIMIT 1"), {"a": adv}).scalar_one()
+
+    async def fake_refresh(*a, **kw):
+        raise ExtractError("boom")
+
+    from agf.discovery.keeper_one import run
+    try:
+        assert run(db_engine, adv, job, kind="corpus_refresh", flip_vanished=True,
+                   refresh=fake_refresh, extractor=object()) == 1
+        with db_engine.connect() as conn:
+            marked = conn.execute(text(
+                "SELECT crawl_result FROM logging.crawl_log "
+                "WHERE entity_type='corpus_refresh' AND entity_id=:a "
+                "ORDER BY crawled_at DESC LIMIT 1"), {"a": adv}).scalar_one()
+            assert marked.startswith("error:")
+            keeper_marked = conn.execute(text(
+                "SELECT 1 FROM logging.crawl_log WHERE entity_type='keeper_history' "
+                "AND entity_id=:a"), {"a": adv}).first()
+            assert keeper_marked is None            # wrong-kind marker would starve keepers
+    finally:
+        with db_engine.begin() as conn:
+            conn.execute(text(
+                "DELETE FROM logging.crawl_log WHERE entity_type='corpus_refresh' "
+                "AND entity_id=:a"), {"a": adv})
+
+
 MISSING_ADV = 999_111_222
 
 
