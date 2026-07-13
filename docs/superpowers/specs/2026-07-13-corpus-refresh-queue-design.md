@@ -57,6 +57,11 @@ anywhere in the file, including comments.)
 
 ## Failure paths (enumerated per the 2026-07-10 lesson)
 
+- **Success on a DEAD advertiser** (live-verify finding, added post-ship): an empty
+  listing bumps no `ads.last_seen`, so success itself must stamp progress —
+  keeper_one writes crawl_log `'ok'` on corpus success, and the due query
+  suppresses ANY corpus marker fresher than `stale_hours`. Without this the
+  stalest-first queue re-enqueued the same dead advertisers every tick.
 - Pull raises → keeper_one writes error status + crawl_log 'corpus_refresh' marker
   → producer TTL-suppresses for `err_ttl_hours` (168h default).
 - Subprocess killed by outer timeout → daemon safety net writes error + kind-aware
