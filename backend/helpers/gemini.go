@@ -165,18 +165,18 @@ func (h *GeminiHelper) GenerateExplainer(ctx context.Context, in ExplainerInput)
 	return out, nil
 }
 
-// HuntTurn is one prior chat turn fed back as history (oldest first).
-type HuntTurn struct {
+// HuntHistoryTurn is one prior chat turn fed back as history (oldest first).
+type HuntHistoryTurn struct {
 	Role    string
 	Content string
 }
 
 // HuntProposalInput is the context for one Peon proposal turn.
 type HuntProposalInput struct {
-	Message        string     // the user's new request
-	History        []HuntTurn // prior chat turns, oldest first
-	TriedTerms     []string   // all terms from prior rounds (never repeat)
-	RoundSummaries []string   // e.g. "round 1: 12 terms, 40 found, 5 kept"
+	Message        string            // the user's new request
+	History        []HuntHistoryTurn // prior chat turns, oldest first
+	TriedTerms     []string          // all terms from prior rounds (never repeat)
+	RoundSummaries []string          // e.g. "round 1: 12 terms, 40 found, 5 kept"
 }
 
 // HuntProposal is Peon's structured suggestion: a short plain-voice reply plus
@@ -196,6 +196,10 @@ const huntSystemInstruction = "You are Peon, Field Desk's discovery agent. " +
 	"as already tried. Reply text is 1-3 plain sentences on the angles you chose. " +
 	"Propose 8-15 terms."
 
+// Deprecated: GenerateHuntProposal is the single-shot proposal path. Task 4
+// switches the controller to GenerateHuntTurn (the function-calling agent loop);
+// this func + buildHuntPrompt become dead then. Kept compiling until then.
+//
 // GenerateHuntProposal asks Gemini (as Peon) for search terms + competitor apps
 // grounded in the chat history and prior-round outcomes. It mirrors
 // GenerateExplainer's structured-JSON + 3-attempt backoff discipline, then
@@ -354,6 +358,412 @@ func buildHuntPrompt(in HuntProposalInput) string {
 	}
 	fmt.Fprintf(&b, "\nNew request: %s\n", strings.TrimSpace(in.Message))
 	return b.String()
+}
+
+// ---------------------------------------------------------------------------
+// Peon agent loop (function-calling): GenerateHuntTurn + supporting types.
+// ---------------------------------------------------------------------------
+
+// HuntSettings carries optional scrape-tuning knobs the founder can set through
+// chat. Nil pointers mean "not set" (the key is omitted from the clamped map);
+// present pointers are clamped to their server-side bounds by ClampHuntSettings.
+type HuntSettings struct {
+	PageCap      *int // Ad Library pages per term (1-100)
+	Patience     *int // empty pages tolerated before stopping a term (1-10)
+	ListingPages *int // store listing pages fetched per app (1-30)
+}
+
+// ClampHuntSettings bounds each present knob and returns a map keyed by the
+// settings names the round row + pipeline job expect. Only keys present in the
+// input appear; the result is an empty (non-nil) map when nothing is set.
+func ClampHuntSettings(s HuntSettings) map[string]int {
+	out := map[string]int{}
+	if s.PageCap != nil {
+		out["page_cap"] = clampInt(*s.PageCap, 1, 100)
+	}
+	if s.Patience != nil {
+		out["patience"] = clampInt(*s.Patience, 1, 10)
+	}
+	if s.ListingPages != nil {
+		out["listing_pages"] = clampInt(*s.ListingPages, 1, 30)
+	}
+	return out
+}
+
+func clampInt(v, lo, hi int) int {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
+}
+
+// HuntToolExecutor is the read side the agent loop calls into for round
+// telemetry. Task 4 implements it against the repo layer, per-request and scoped
+// to the current hunt (foreign round ids come back as an error string the model
+// sees). This package only defines the interface.
+type HuntToolExecutor interface {
+	GetRoundReport(roundID int) (string, error)
+	GetRoundResults(roundID int, triage string) (string, error)
+}
+
+// HuntPlan is the terms + competitor apps + clamped settings for a round, shared
+// by the propose and start paths.
+type HuntPlan struct {
+	Terms          []string
+	CompetitorApps []string
+	Settings       map[string]int
+}
+
+// HuntTurn is the result of one Peon agent turn. Exactly one of Proposal/Start
+// is non-nil when the model called a terminal tool; both are nil for a plain
+// chat reply. ToolLog is the plain-sentence trace the loop wrote.
+type HuntTurn struct {
+	Reply    string
+	Proposal *HuntPlan
+	Start    *HuntPlan
+	ToolLog  []string
+}
+
+// HuntTurnInput is the context for one agent turn (a superset of
+// HuntProposalInput).
+type HuntTurnInput struct {
+	Message        string
+	History        []HuntHistoryTurn
+	TriedTerms     []string
+	RoundSummaries []string
+}
+
+const huntAgentInstruction = "You are Peon, Field Desk's discovery agent. You help the founder find " +
+	"emerging mobile apps by running Meta Ad Library search rounds.\n" +
+	"\n" +
+	"Search terms are generic niche queries a user would type (e.g. 'sleep stories app', " +
+	"'ai bedtime audio') — short, plain, and never brand or app names. Any brand or app the " +
+	"founder names belongs in competitor_apps, never in terms. Propose at most 15 terms and at " +
+	"most 3 competitor apps, and never repeat a term already tried.\n" +
+	"\n" +
+	"Before answering any question about what a prior round did or why terms stopped, call " +
+	"get_round_report (per-term pages/found/new, stop reasons, triage counts) and/or " +
+	"get_round_results (the actual result rows). Do not guess round outcomes from memory.\n" +
+	"\n" +
+	"To seed a round, call propose_round — this suggests a round the founder approves with the " +
+	"Start hunt button. Call start_round instead ONLY when the founder's LATEST message explicitly " +
+	"tells you to run/start/go now; otherwise always use propose_round.\n" +
+	"\n" +
+	"Optional round settings and their bounds: page_cap (Ad Library pages per term, 1-100), " +
+	"patience (empty pages tolerated before stopping a term, 1-10), listing_pages (store listing " +
+	"pages per app, 1-30). Set only the ones the founder asked for.\n" +
+	"\n" +
+	"Your reply text is 1-3 plain, professional sentences. The name Peon appears only in prose, " +
+	"never inside terms or competitor apps."
+
+// GenerateHuntTurn runs Peon as a Gemini function-calling agent: it can read
+// round telemetry via the tool executor, then finish with a plain reply or a
+// terminal propose_round/start_round. It mirrors GenerateExplainer's 3-attempt
+// backoff (per model call) and caps the loop at 6 iterations. Returns an error
+// (callers respond 502) when the helper is nil or a model call fails after
+// retries.
+func (h *GeminiHelper) GenerateHuntTurn(ctx context.Context, in HuntTurnInput, tools HuntToolExecutor) (HuntTurn, error) {
+	if h == nil {
+		return HuntTurn{}, fmt.Errorf("gemini helper not initialized")
+	}
+
+	decls := []*genai.FunctionDeclaration{
+		{
+			Name:        "get_round_report",
+			Description: "Telemetry for one prior round: settings used, per-term pages/found/new and why each term stopped, triage counts.",
+			Parameters: &genai.Schema{
+				Type:       genai.TypeObject,
+				Properties: map[string]*genai.Schema{"round_id": {Type: genai.TypeInteger, Description: "The round number to inspect."}},
+				Required:   []string{"round_id"},
+			},
+		},
+		{
+			Name:        "get_round_results",
+			Description: "Result rows for one prior round (page name, store, source term, was_new, triage, gem score); optional triage filter kept|vetoed|pending.",
+			Parameters: &genai.Schema{
+				Type: genai.TypeObject,
+				Properties: map[string]*genai.Schema{
+					"round_id": {Type: genai.TypeInteger, Description: "The round number to inspect."},
+					"triage":   {Type: genai.TypeString, Description: "Optional triage filter: kept, vetoed, or pending. Omit for all rows."},
+				},
+				Required: []string{"round_id"},
+			},
+		},
+		{
+			Name:        "propose_round",
+			Description: "Suggest a new round for the founder to approve with the Start hunt button. Use this unless the founder explicitly told you to run.",
+			Parameters:  planSchema(),
+		},
+		{
+			Name:        "start_round",
+			Description: "Start a round NOW. Only when the founder's latest message explicitly says to run/start/go.",
+			Parameters:  planSchema(),
+		},
+	}
+
+	config := &genai.GenerateContentConfig{
+		SystemInstruction: &genai.Content{Parts: []*genai.Part{{Text: huntAgentInstruction}}},
+		Tools:             []*genai.Tool{{FunctionDeclarations: decls}},
+		MaxOutputTokens:   2048,
+	}
+
+	contents := buildHuntTurnContents(in)
+	var toolLog []string
+
+	const maxIterations = 6
+	for iter := 0; iter < maxIterations; iter++ {
+		resp, err := h.generateWithRetry(ctx, contents, config)
+		if err != nil {
+			return HuntTurn{}, err
+		}
+
+		calls := resp.FunctionCalls()
+		if len(calls) == 0 {
+			return HuntTurn{Reply: firstText(resp), ToolLog: toolLog}, nil
+		}
+
+		// Append the model's own content (the function-call turn) before the
+		// tool responses, so the next call sees a well-formed transcript.
+		if len(resp.Candidates) > 0 && resp.Candidates[0].Content != nil {
+			contents = append(contents, resp.Candidates[0].Content)
+		}
+
+		var responseParts []*genai.Part
+		for _, call := range calls {
+			switch call.Name {
+			case "propose_round", "start_round":
+				plan := planFromArgs(call.Args, in.TriedTerms)
+				turn := HuntTurn{Reply: firstText(resp), ToolLog: toolLog}
+				if call.Name == "start_round" {
+					turn.ToolLog = append(turn.ToolLog, describePlan("started a round", plan))
+					turn.Start = &plan
+				} else {
+					turn.ToolLog = append(turn.ToolLog, describePlan("proposed a round", plan))
+					turn.Proposal = &plan
+				}
+				return turn, nil // terminal tools end the turn
+			case "get_round_report":
+				id := intArg(call.Args, "round_id")
+				out, rerr := tools.GetRoundReport(id)
+				if rerr != nil {
+					out = "error: " + rerr.Error()
+				}
+				toolLog = append(toolLog, fmt.Sprintf("checked round %d's report", id))
+				responseParts = append(responseParts, genai.NewPartFromFunctionResponse(call.Name, map[string]any{"report": out}))
+			case "get_round_results":
+				id := intArg(call.Args, "round_id")
+				triage := stringArg(call.Args, "triage")
+				out, rerr := tools.GetRoundResults(id, triage)
+				if rerr != nil {
+					out = "error: " + rerr.Error()
+				}
+				toolLog = append(toolLog, fmt.Sprintf("looked at round %d's results", id))
+				responseParts = append(responseParts, genai.NewPartFromFunctionResponse(call.Name, map[string]any{"results": out}))
+			default:
+				responseParts = append(responseParts, genai.NewPartFromFunctionResponse(call.Name, map[string]any{"error": "unknown tool"}))
+			}
+		}
+		contents = append(contents, genai.NewContentFromParts(responseParts, genai.RoleUser))
+	}
+
+	return HuntTurn{Reply: "Peon could not finish that request. Try rephrasing.", ToolLog: toolLog}, nil
+}
+
+// generateWithRetry runs one model call with the same 3-attempt exponential
+// backoff as GenerateExplainer.
+func (h *GeminiHelper) generateWithRetry(ctx context.Context, contents []*genai.Content, config *genai.GenerateContentConfig) (*genai.GenerateContentResponse, error) {
+	var result *genai.GenerateContentResponse
+	var err error
+	maxRetries := 3
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		result, err = h.client.Models.GenerateContent(ctx, h.model, contents, config)
+		if err == nil {
+			return result, nil
+		}
+		waitTime := time.Duration(1<<attempt) * time.Second
+		log.Printf("Gemini API error (attempt %d/%d): %v, retrying in %v", attempt+1, maxRetries, err, waitTime)
+		time.Sleep(waitTime)
+	}
+	return nil, fmt.Errorf("gemini API error after %d retries: %w", maxRetries, err)
+}
+
+// settingsSchema declares the three optional integer knobs with their bounds in
+// the descriptions (the server still clamps).
+func settingsSchema() *genai.Schema {
+	return &genai.Schema{
+		Type: genai.TypeObject,
+		Properties: map[string]*genai.Schema{
+			"page_cap":      {Type: genai.TypeInteger, Description: "Max Ad Library pages to scrape per term (1-100)."},
+			"patience":      {Type: genai.TypeInteger, Description: "Empty pages tolerated before stopping a term (1-10)."},
+			"listing_pages": {Type: genai.TypeInteger, Description: "Store listing pages to fetch per app (1-30)."},
+		},
+	}
+}
+
+// planSchema is the shared parameter schema for propose_round and start_round.
+func planSchema() *genai.Schema {
+	return &genai.Schema{
+		Type: genai.TypeObject,
+		Properties: map[string]*genai.Schema{
+			"terms":           {Type: genai.TypeArray, Description: "Generic niche search queries. Short, plain, no brand names. At most 15.", Items: &genai.Schema{Type: genai.TypeString}},
+			"competitor_apps": {Type: genai.TypeArray, Description: "Brand or app names the founder named as competitors. At most 3.", Items: &genai.Schema{Type: genai.TypeString}},
+			"settings":        settingsSchema(),
+		},
+		Required: []string{"terms"},
+	}
+}
+
+// planFromArgs builds a cleaned HuntPlan from a tool-call args map: terms are
+// normalized + de-duped + stripped of already-tried (cleanHuntTerms),
+// competitors are capped at 3, and settings are clamped. JSON numbers arrive as
+// float64, which intPtrArg narrows to int.
+func planFromArgs(args map[string]any, tried []string) HuntPlan {
+	plan := HuntPlan{
+		Terms:          cleanHuntTerms(stringSlice(args["terms"]), tried),
+		CompetitorApps: capStrings(stringSlice(args["competitor_apps"]), 3),
+		Settings:       map[string]int{},
+	}
+	if raw, ok := args["settings"].(map[string]any); ok {
+		plan.Settings = ClampHuntSettings(HuntSettings{
+			PageCap:      intPtrArg(raw, "page_cap"),
+			Patience:     intPtrArg(raw, "patience"),
+			ListingPages: intPtrArg(raw, "listing_pages"),
+		})
+	}
+	return plan
+}
+
+// describePlan renders a tool_log line like
+// "started a round — 3 terms · depth 30 · patience 6". Settings segments that
+// aren't set are omitted.
+func describePlan(verb string, plan HuntPlan) string {
+	segs := []string{fmt.Sprintf("%d terms", len(plan.Terms))}
+	if d, ok := plan.Settings["page_cap"]; ok {
+		segs = append(segs, fmt.Sprintf("depth %d", d))
+	}
+	if p, ok := plan.Settings["patience"]; ok {
+		segs = append(segs, fmt.Sprintf("patience %d", p))
+	}
+	if l, ok := plan.Settings["listing_pages"]; ok {
+		segs = append(segs, fmt.Sprintf("listing %d", l))
+	}
+	return verb + " — " + strings.Join(segs, " · ")
+}
+
+// buildHuntTurnContents renders the chat history as alternating user/model
+// genai contents, then a final user turn that carries the tried-terms +
+// prior-round context block above the founder's new message.
+func buildHuntTurnContents(in HuntTurnInput) []*genai.Content {
+	var contents []*genai.Content
+	for _, turn := range in.History {
+		text := strings.TrimSpace(turn.Content)
+		if text == "" {
+			continue
+		}
+		var role genai.Role = genai.RoleUser
+		if strings.EqualFold(turn.Role, "assistant") || strings.EqualFold(turn.Role, "model") {
+			role = genai.RoleModel
+		}
+		contents = append(contents, genai.NewContentFromText(text, role))
+	}
+
+	var b strings.Builder
+	if len(in.TriedTerms) > 0 {
+		fmt.Fprintf(&b, "Already tried terms: %s\n", strings.Join(in.TriedTerms, ", "))
+	}
+	if len(in.RoundSummaries) > 0 {
+		b.WriteString("Prior rounds:\n")
+		for _, s := range in.RoundSummaries {
+			if s = strings.TrimSpace(s); s != "" {
+				fmt.Fprintf(&b, "- %s\n", s)
+			}
+		}
+	}
+	if b.Len() > 0 {
+		b.WriteString("\n")
+	}
+	b.WriteString(strings.TrimSpace(in.Message))
+
+	contents = append(contents, genai.NewContentFromText(b.String(), genai.RoleUser))
+	return contents
+}
+
+// firstText joins the text parts of the top candidate, trimmed.
+func firstText(resp *genai.GenerateContentResponse) string {
+	if resp == nil || len(resp.Candidates) == 0 || resp.Candidates[0].Content == nil {
+		return ""
+	}
+	var b strings.Builder
+	for _, p := range resp.Candidates[0].Content.Parts {
+		if p == nil {
+			continue
+		}
+		if t := strings.TrimSpace(p.Text); t != "" {
+			if b.Len() > 0 {
+				b.WriteString(" ")
+			}
+			b.WriteString(t)
+		}
+	}
+	return strings.TrimSpace(b.String())
+}
+
+// stringSlice narrows a JSON array arg ([]any of strings) to []string.
+func stringSlice(v any) []string {
+	arr, ok := v.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(arr))
+	for _, e := range arr {
+		if s, ok := e.(string); ok {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// intArg reads an integer arg, tolerating the float64 JSON numbers carry.
+func intArg(args map[string]any, key string) int {
+	switch n := args[key].(type) {
+	case float64:
+		return int(n)
+	case int:
+		return n
+	case int64:
+		return int(n)
+	}
+	return 0
+}
+
+// intPtrArg returns a *int for a present numeric key, else nil (key absent).
+func intPtrArg(m map[string]any, key string) *int {
+	v, ok := m[key]
+	if !ok {
+		return nil
+	}
+	switch n := v.(type) {
+	case float64:
+		i := int(n)
+		return &i
+	case int:
+		return &n
+	case int64:
+		i := int(n)
+		return &i
+	}
+	return nil
+}
+
+// stringArg reads a string arg, empty when absent or wrong type.
+func stringArg(args map[string]any, key string) string {
+	if s, ok := args[key].(string); ok {
+		return strings.TrimSpace(s)
+	}
+	return ""
 }
 
 // buildExplainerPrompt renders the grounding material as a compact, labelled

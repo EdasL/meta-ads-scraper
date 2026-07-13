@@ -185,9 +185,9 @@ func (c *HuntController) Message(ctx *gin.Context) {
 	}
 	cancel()
 
-	history := make([]helpers.HuntTurn, 0, len(prior))
+	history := make([]helpers.HuntHistoryTurn, 0, len(prior))
 	for _, m := range prior {
-		history = append(history, helpers.HuntTurn{Role: m.Role, Content: m.Content})
+		history = append(history, helpers.HuntHistoryTurn{Role: m.Role, Content: m.Content})
 	}
 	tried, roundLines := summarizeRounds(summaries)
 	if !c.proposeAndAppend(ctx, huntID, message, history, tried, roundLines) {
@@ -202,7 +202,7 @@ func (c *HuntController) Message(ctx *gin.Context) {
 // proposal jsonb carries only {terms, competitor_apps}; the reply is the message
 // content.
 func (c *HuntController) proposeAndAppend(ctx *gin.Context, huntID int, message string,
-	history []helpers.HuntTurn, tried, roundLines []string) bool {
+	history []helpers.HuntHistoryTurn, tried, roundLines []string) bool {
 	gctx, cancel := context.WithTimeout(ctx.Request.Context(), huntProposalTimeout)
 	defer cancel()
 	prop, err := c.gemini.GenerateHuntProposal(gctx, helpers.HuntProposalInput{
