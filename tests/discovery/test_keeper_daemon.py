@@ -16,15 +16,17 @@ A1 = SENTINEL + 1
 
 
 def _clean(engine):
-    # process_once claims the GLOBAL oldest queued keeper_history row, so the test
-    # must control the whole keeper_history queue — wipe every keeper_history job
-    # (transient queue table, nothing live runs against the test DB) plus the
-    # sentinel crawl_log markers the safety net writes.
+    # process_once claims the GLOBAL oldest queued row of its kinds, so the test
+    # must control the whole queue for BOTH kinds — wipe every keeper_history and
+    # corpus_refresh job (transient queue table, nothing live runs against the test
+    # DB) plus the sentinel crawl_log markers the safety net writes.
     with engine.begin() as conn:
         conn.execute(text(
-            "DELETE FROM public.pipeline_jobs WHERE kind='keeper_history'"))
+            "DELETE FROM public.pipeline_jobs "
+            "WHERE kind IN ('keeper_history', 'corpus_refresh')"))
         conn.execute(text(
-            "DELETE FROM logging.crawl_log WHERE entity_type='keeper_history' "
+            "DELETE FROM logging.crawl_log "
+            "WHERE entity_type IN ('keeper_history', 'corpus_refresh') "
             "AND entity_id >= :s"), {"s": SENTINEL})
 
 
@@ -58,14 +60,14 @@ def test_process_once_claims_and_runs(engine):
     job_id = _seed_job(engine, A1)
     calls = []
 
-    def fake_runner(advertiser_id, job_id):
-        calls.append((advertiser_id, job_id))
+    def fake_runner(advertiser_id, job_id, kind):
+        calls.append((advertiser_id, job_id, kind))
         # simulate keeper_one writing its own terminal 'done' status on the row
         set_status(engine, job_id, "done", finished=True, status_table="pipeline_jobs")
 
     from agf.discovery.keeper_daemon import process_once
     assert process_once(engine, runner=fake_runner) is True
-    assert calls == [(A1, job_id)]
+    assert calls == [(A1, job_id, "keeper_history")]
     # the runner wrote 'done'; the safety net leaves a terminal row untouched
     assert _status(engine, A1) == "done"
 
@@ -73,7 +75,7 @@ def test_process_once_claims_and_runs(engine):
 def test_process_once_safety_net_marks_error_and_crawl_log(engine):
     _seed_job(engine, A1)
 
-    def dead_runner(advertiser_id, job_id):
+    def dead_runner(advertiser_id, job_id, kind):
         pass  # exits without writing any status
 
     from agf.discovery.keeper_daemon import process_once
@@ -94,4 +96,88 @@ def test_process_once_safety_net_marks_error_and_crawl_log(engine):
 
 def test_process_once_empty_queue_returns_false(engine):
     from agf.discovery.keeper_daemon import process_once
-    assert process_once(engine, runner=lambda a, j: None) is False
+    assert process_once(engine, runner=lambda a, j, k: None) is False
+
+
+A2 = SENTINEL + 2
+
+
+def _seed_corpus_job(engine, advertiser_id):
+    with begin(engine) as conn:
+        enqueue_jobs(conn, "corpus_refresh", [advertiser_id])
+        return conn.execute(text(
+            "SELECT id FROM public.pipeline_jobs WHERE kind='corpus_refresh' "
+            "AND advertiser_id=:a ORDER BY id DESC LIMIT 1"),
+            {"a": advertiser_id}).scalar_one()
+
+
+def test_keeper_jobs_claimed_before_corpus(engine):
+    """Multi-kind priority (spec 2026-07-13): keeper_history (found→visible path)
+    always drains before corpus_refresh, regardless of enqueue order."""
+    corpus_job = _seed_corpus_job(engine, A2)   # enqueued FIRST (older run_after)
+    keeper_job = _seed_job(engine, A1)
+    calls = []
+
+    def fake_runner(advertiser_id, job_id, kind):
+        calls.append((advertiser_id, job_id, kind))
+        set_status(engine, job_id, "done", finished=True, status_table="pipeline_jobs")
+
+    from agf.discovery.keeper_daemon import process_once
+    assert process_once(engine, runner=fake_runner) is True
+    assert process_once(engine, runner=fake_runner) is True
+    assert calls == [(A1, keeper_job, "keeper_history"),
+                     (A2, corpus_job, "corpus_refresh")]
+
+
+def test_safety_net_marks_crawl_log_with_job_kind(engine):
+    """A corpus subprocess that dies without recording status must TTL-mark
+    entity_type='corpus_refresh' — a keeper-kind marker would let the corpus
+    producer re-enqueue it every tick (starvation hot-loop, 2026-07-11)."""
+    _seed_corpus_job(engine, A2)
+
+    def dead_runner(advertiser_id, job_id, kind):
+        pass  # exits without writing any status
+
+    from agf.discovery.keeper_daemon import process_once
+    assert process_once(engine, runner=dead_runner) is True
+    with engine.connect() as conn:
+        status = conn.execute(text(
+            "SELECT status FROM public.pipeline_jobs "
+            "WHERE kind='corpus_refresh' AND advertiser_id=:a"), {"a": A2}).scalar()
+        assert status == "error"
+        result = conn.execute(text(
+            "SELECT crawl_result FROM logging.crawl_log "
+            "WHERE entity_type='corpus_refresh' AND entity_id=:a "
+            "ORDER BY crawled_at DESC LIMIT 1"), {"a": A2}).scalar()
+    assert result is not None and result.startswith("error:")
+
+
+def test_corpus_error_spike_pauses_corpus_claims_not_keepers(engine, monkeypatch):
+    """The brake: at >= AGF_CORPUS_ERROR_PAUSE corpus errors in the last 30 min,
+    corpus claims pause; keeper claims are unaffected."""
+    monkeypatch.setenv("AGF_CORPUS_ERROR_PAUSE", "2")
+    # two fresh corpus error rows (sentinel advertisers to stay clean-able)
+    with begin(engine) as conn:
+        for i in (3, 4):
+            enqueue_jobs(conn, "corpus_refresh", [SENTINEL + i])
+        conn.execute(text(
+            "UPDATE public.pipeline_jobs SET status='error', finished_at=now() "
+            "WHERE kind='corpus_refresh' AND advertiser_id IN (:a, :b)"),
+            {"a": SENTINEL + 3, "b": SENTINEL + 4})
+    _seed_corpus_job(engine, A2)
+    keeper_job = _seed_job(engine, A1)
+    calls = []
+
+    def fake_runner(advertiser_id, job_id, kind):
+        calls.append((advertiser_id, job_id, kind))
+        set_status(engine, job_id, "done", finished=True, status_table="pipeline_jobs")
+
+    from agf.discovery.keeper_daemon import process_once
+    assert process_once(engine, runner=fake_runner) is True    # keeper still drains
+    assert process_once(engine, runner=fake_runner) is False   # corpus claim paused
+    assert calls == [(A1, keeper_job, "keeper_history")]
+    with engine.connect() as conn:
+        corpus_status = conn.execute(text(
+            "SELECT status FROM public.pipeline_jobs "
+            "WHERE kind='corpus_refresh' AND advertiser_id=:a"), {"a": A2}).scalar()
+    assert corpus_status == "queued"                           # untouched, not lost

@@ -1,11 +1,16 @@
-"""N-lane keeper-history consumer (worker VM). Mirrors enrich_full/pipeline_daemon.py
-but drains public.pipeline_jobs (kind='keeper_history') — the queue the worker tick's
-keeper producer fills — with AGF_KEEPER_LANES concurrent lanes instead of a single
-poll loop. Same crash-isolation contract: each job runs the one-shot keeper_one CLI in
-a subprocess; keeper_one writes its own terminal status onto the pipeline_jobs row and
-marks the crawl_log (entity_type='keeper_history') on failure. The daemon adds a safety
-net for a subprocess that dies before recording anything, and relies on reap_expired for
-a subprocess that wedges past its lease.
+"""N-lane keeper-history + corpus-refresh consumer (worker VM). Mirrors
+enrich_full/pipeline_daemon.py but drains public.pipeline_jobs with AGF_KEEPER_LANES
+concurrent lanes instead of a single poll loop, claiming kinds in strict priority:
+'keeper_history' (found→visible path) first, 'corpus_refresh' (spec 2026-07-13) only
+when no keeper job is claimable — so the lanes the worker tick's producers fill stay
+a fixed number of Meta streams no matter how much corpus backlog exists. Same
+crash-isolation contract: each job runs the one-shot keeper_one CLI in a subprocess;
+keeper_one writes its own terminal status onto the pipeline_jobs row and marks the
+crawl_log (entity_type=<job kind>) on failure. The daemon adds a safety net for a
+subprocess that dies before recording anything, and relies on reap_expired for a
+subprocess that wedges past its lease. A corpus error spike (>= AGF_CORPUS_ERROR_PAUSE
+errors in 30 min) pauses corpus claims only — the manual Meta-pressure dial order
+(keeper lanes → corpus cadence → sweep) stays a human decision.
 
 Terminal-row purge is NOT duplicated here: purge_terminal is kind-blind (its DELETE
 filters only on status IN ('done','error') and finished_at — no `kind` predicate, so it
@@ -29,7 +34,9 @@ from agf.workers.scheduler import mark_crawled
 
 log = logging.getLogger("agf.keeper")
 
-KIND = "keeper_history"
+# Claim priority: keepers (first history for a new find) always beat corpus refresh
+# (re-scrape of a known advertiser).
+KINDS = ("keeper_history", "corpus_refresh")
 
 # Wall-clock bound for one keeper_one subprocess. The CLI's own SIGALRM fires at
 # AGF_KEEPER_ONE_TIMEOUT_SEC; the subprocess timeout is the grace-padded hard kill.
@@ -45,45 +52,70 @@ LEASE_SEC = KEEPER_ONE_TIMEOUT_SEC + 120
 LANES = int(os.environ.get("AGF_KEEPER_LANES", "3"))
 
 
-def run_keeper_subprocess(advertiser_id: int, job_id: int) -> None:
+def run_keeper_subprocess(advertiser_id: int, job_id: int,
+                          kind: str = "keeper_history") -> None:
     """Default runner: the one-shot keeper CLI in a subprocess (crash isolation —
     a wedged pull can't take a lane down). keeper_one records its own terminal status
     on the pipeline_jobs row and marks the crawl_log on failure; on timeout we kill and
-    let the safety net mark the row."""
-    subprocess.run(
-        [sys.executable, "-m", "agf.discovery.keeper_one",
-         "--advertiser-id", str(advertiser_id),
-         "--job-id", str(job_id),
-         "--timeout", str(KEEPER_ONE_TIMEOUT_SEC)],
-        timeout=KEEPER_ONE_TIMEOUT_SEC + 60,
-        check=False,
-    )
+    let the safety net mark the row. corpus_refresh jobs flip vanished ads (the whole
+    point of a re-scrape); keeper first-pulls never do."""
+    cmd = [sys.executable, "-m", "agf.discovery.keeper_one",
+           "--advertiser-id", str(advertiser_id),
+           "--job-id", str(job_id),
+           "--kind", kind,
+           "--timeout", str(KEEPER_ONE_TIMEOUT_SEC)]
+    if kind == "corpus_refresh":
+        cmd.append("--flip-vanished")
+    subprocess.run(cmd, timeout=KEEPER_ONE_TIMEOUT_SEC + 60, check=False)
+
+
+def _corpus_paused(conn) -> bool:
+    """The brake: pause corpus claims while corpus errors spike (>= threshold in the
+    last 30 min) — a Meta challenge wave should not burn the whole backlog through
+    the error-TTL. Keeper claims are never braked here. Threshold <= 0 disables."""
+    threshold = int(os.environ.get("AGF_CORPUS_ERROR_PAUSE", "10"))
+    if threshold <= 0:
+        return False
+    n = conn.execute(text(
+        "SELECT count(*) FROM public.pipeline_jobs "
+        "WHERE kind = 'corpus_refresh' AND status = 'error' "
+        "AND finished_at > now() - make_interval(mins => 30)")).scalar_one()
+    return n >= threshold
 
 
 def process_once(engine, *, runner=run_keeper_subprocess) -> bool:
-    """One poll tick: reap expired leases, claim + run at most one keeper job.
+    """One poll tick: reap expired leases (both kinds), claim + run at most one job —
+    keeper_history first, corpus_refresh only when no keeper job is claimable.
     Returns True if a job was claimed (poll again immediately)."""
+    claimed = None
     with begin(engine) as conn:
-        reaped = reap_expired(conn, KIND)
-        if reaped:
-            log.warning("reaped %d expired keeper lease(s)", reaped)
-        claimed = claim_next(conn, KIND, lease_sec=LEASE_SEC)
+        for kind in KINDS:
+            reaped = reap_expired(conn, kind)
+            if reaped:
+                log.warning("reaped %d expired %s lease(s)", reaped, kind)
+        for kind in KINDS:
+            if kind == "corpus_refresh" and _corpus_paused(conn):
+                continue
+            row = claim_next(conn, kind, lease_sec=LEASE_SEC)
+            if row is not None:
+                claimed = (kind, row[0], row[1])
+                break
     if claimed is None:
         return False
-    job_id, advertiser_id = claimed
-    log.info("running keeper job %d (advertiser %d)", job_id, advertiser_id)
+    kind, job_id, advertiser_id = claimed
+    log.info("running %s job %d (advertiser %d)", kind, job_id, advertiser_id)
     err: str | None = None
     try:
-        runner(advertiser_id, job_id)
+        runner(advertiser_id, job_id, kind)
     except Exception as e:  # spawn/timeout failures — the row must not stick
-        log.exception("keeper job %d runner failed", job_id)
+        log.exception("%s job %d runner failed", kind, job_id)
         err = str(e)[:500]
     # Safety net: if the runner exited without writing a terminal status (crash
     # before set_status), don't leave the row 'running' forever — and mark the
-    # crawl_log too. A subprocess killed by the OUTER timeout (hard kill at
-    # KEEPER_ONE_TIMEOUT_SEC+60) never reaches keeper_one's own error-path
-    # crawl_log marker; without one, keepers_due_for_history sorts the advertiser
-    # never-crawled-first and the producer re-enqueues it EVERY tick — the
+    # crawl_log too, UNDER THE JOB'S KIND. A subprocess killed by the OUTER timeout
+    # (hard kill at KEEPER_ONE_TIMEOUT_SEC+60) never reaches keeper_one's own
+    # error-path crawl_log marker; without one, the kind's producer sorts the
+    # advertiser never-crawled-first and re-enqueues it EVERY tick — the
     # starvation hot-loop (advertiser 10173, 2026-07-11), one wedge-path deeper
     # than the 2026-07-10 fix.
     with begin(engine) as conn:
@@ -92,8 +124,8 @@ def process_once(engine, *, runner=run_keeper_subprocess) -> bool:
             {"i": job_id}).scalar()
         if still_running:
             set_job_status(conn, job_id, "error",
-                           error=err or "keeper pull exited without recording status")
-            mark_crawled(conn, KIND, advertiser_id,
+                           error=err or "pull exited without recording status")
+            mark_crawled(conn, kind, advertiser_id,
                          "error:runner_killed" if err else "error:no_status")
     return True
 
