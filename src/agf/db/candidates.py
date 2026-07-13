@@ -27,14 +27,22 @@ def upsert_sweep_candidate(conn, row: dict) -> tuple[int, bool]:
     return got.id, bool(got.was_new)
 
 
-def new_candidates(conn, limit: int | None = None):
-    """Untriaged candidates, oldest first."""
+def new_candidates(conn, limit: int | None = None, *, only_ids=None):
+    """Untriaged candidates, oldest first. `only_ids` (the repo's additive-allowlist
+    convention, cf. score_all) restricts the scan to those candidate ids — a hunt
+    round triages its OWN candidates without draining the global 'new' backlog.
+    Default None = unchanged (whole 'new' backlog)."""
     q = ("SELECT id, page_id, page_name, page_like_count, store, store_id, "
          "times_seen, source_keyword FROM discovery.candidates "
-         "WHERE status = 'new' ORDER BY first_seen_at, id")
+         "WHERE status = 'new'")
+    params: dict = {}
+    if only_ids is not None:
+        q += " AND id = ANY(CAST(:ids AS bigint[]))"
+        params["ids"] = list(only_ids)
+    q += " ORDER BY first_seen_at, id"
     if limit:
         q += f" LIMIT {int(limit)}"
-    return conn.execute(text(q)).all()
+    return conn.execute(text(q), params).all()
 
 
 def mark_triaged(conn, candidate_id: int, *, status: str,

@@ -19,8 +19,8 @@ from agf.db.candidates import upsert_sweep_candidate
 from agf.db.dynamic_keywords import add_trial_keywords
 from agf.db.engine import begin
 from agf.db.hunts import (apply_triage_to_results, load_round,
-                          mark_round_running, update_round_progress,
-                          upsert_hunt_result)
+                          mark_round_running, round_new_candidate_ids,
+                          update_round_progress, upsert_hunt_result)
 from agf.db.pipeline_jobs import enqueue_enrich
 from agf.discovery.sweep import classify_candidate
 from agf.discovery.triage import run_triage
@@ -175,8 +175,11 @@ def run_hunt_round(engine, extractors, round_id: int, *,
     # Phase 0 — competitor page pulls. typeahead/search_listing run OUTSIDE any
     # begin() block (no txn held across a network call); only _persist_page opens
     # short txns for the writes.
-    competitors = [c.get("name", "") for c in (rnd.competitor_apps or [])
-                   if c.get("name")]
+    # competitor_apps is a jsonb array of STRINGS (["calm"]) as the Go API writes it;
+    # accept that shape AND legacy [{"name": ...}] dicts.
+    raw = rnd.competitor_apps or []
+    competitors = [(c.get("name", "") if isinstance(c, dict) else str(c)) for c in raw]
+    competitors = [c for c in competitors if c]
     stats["competitor_pages"] = 0
     for name in competitors[:3]:
         progress.event(f"Resolving {name}'s ad page")
@@ -228,13 +231,16 @@ def run_hunt_round(engine, extractors, round_id: int, *,
     progress.event(f"Search finished — {stats['found']} found, "
                    f"{stats['new']} new to Field Desk")
 
-    # Phase 5 — triage readback + enrich enqueue + hunt keyword mint. run_triage
-    # is intentionally UNSCOPED (drains the whole status='new' backlog like the
-    # nightly tick); the readback maps only this round's candidates.
+    # Phase 5 — triage readback + enrich enqueue + hunt keyword mint. run_triage is
+    # SCOPED to this round's own candidates (only_ids) so a founder's round never blocks
+    # behind — and can't be SIGALRM-killed by — the global status='new' backlog; the
+    # nightly tick still drains that backlog unscoped.
     if lookup_ios is not None and lookup_android is not None:
         progress.event("Checking store listings (triage)")
         with begin(engine) as conn:
-            run_triage(conn, lookup_ios=lookup_ios, lookup_android=lookup_android)
+            own_ids = round_new_candidate_ids(conn, round_id)
+            run_triage(conn, lookup_ios=lookup_ios, lookup_android=lookup_android,
+                       only_ids=own_ids)
         with begin(engine) as conn:
             counts = apply_triage_to_results(conn, round_id)
             stats.update(counts)

@@ -53,11 +53,13 @@ def _promote(conn, row, meta) -> int:
     return advertiser_id
 
 
-def run_triage(conn, *, lookup_ios, lookup_android, limit=None) -> dict:
+def run_triage(conn, *, lookup_ios, lookup_android, limit=None, only_ids=None) -> dict:
     """Triage status='new' candidates (oldest first). lookup_*: callable(ids)->{store_id:
     AppMeta}. `limit` caps how many are examined per run so a backlog drains in bounded
-    slices instead of one unbounded pass. conn-first, no commit — the caller owns the txn."""
-    rows = new_candidates(conn, limit=limit)
+    slices instead of one unbounded pass. `only_ids` scopes triage to an id allowlist
+    (a hunt round triages just its own candidates — default None = whole backlog, the
+    nightly tick). conn-first, no commit — the caller owns the txn."""
+    rows = new_candidates(conn, limit=limit, only_ids=only_ids)
     stats = {"examined": len(rows), "kept": 0, "dropped": {},
              "lookup_failed_ios": False, "lookup_failed_android": False}
     ios_rows = [r for r in rows if r.store == "ios"]

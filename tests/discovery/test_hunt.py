@@ -13,7 +13,11 @@ pytestmark = pytest.mark.usefixtures("_migrated_engine")
 PAGE = "HUNTP1"
 
 
-def _mk_round(engine, terms, competitors=()):
+def _mk_round(engine, terms, competitors=(), *, competitor_json=None):
+    # competitor_json overrides the default {"name": ...} dict shape so a test can
+    # store the EXACT jsonb the Go API writes (a plain array of strings, ["calm"]).
+    comp = (competitor_json if competitor_json is not None
+            else [{"name": n} for n in competitors])
     with begin(engine) as conn:
         hunt_id = conn.execute(text(
             "INSERT INTO frontend.hunts (user_email, title) "
@@ -22,7 +26,7 @@ def _mk_round(engine, terms, competitors=()):
             "INSERT INTO frontend.hunt_rounds (hunt_id, terms, competitor_apps) "
             "VALUES (:h, CAST(:t AS jsonb), CAST(:c AS jsonb)) RETURNING id"),
             {"h": hunt_id, "t": json.dumps(list(terms)),
-             "c": json.dumps([{"name": n} for n in competitors])}).scalar_one()
+             "c": json.dumps(comp)}).scalar_one()
 
 
 @pytest.fixture
@@ -43,12 +47,14 @@ def engine(_migrated_engine):
         conn.execute(text(
             "DELETE FROM frontend.hunts WHERE user_email = 't@test.local'"))
         conn.execute(text(
-            "DELETE FROM discovery.candidates WHERE page_id LIKE 'HUNTP%'"))
+            "DELETE FROM discovery.candidates WHERE page_id LIKE 'HUNTP%' "
+            "OR page_id LIKE 'HUNTFOREIGN%'"))
         conn.execute(text(
-            "DELETE FROM public.advertisers WHERE page_id LIKE 'HUNTP%'"))
+            "DELETE FROM public.advertisers WHERE page_id LIKE 'HUNTP%' "
+            "OR page_id LIKE 'HUNTFOREIGN%'"))
         conn.execute(text(
             "DELETE FROM public.apps WHERE store = 'ios' "
-            "AND store_id IN ('900050', '900060', '900070')"))
+            "AND store_id IN ('900050', '900060', '900070', '900099')"))
 
 
 def _ios_ad(store_id: str, page_id: str = PAGE):
@@ -196,3 +202,52 @@ def test_no_lookups_leaves_triage_pending(engine):
     round_id = _mk_round(engine, ["pending term"])
     stats = run_hunt_round(engine, [ext], round_id)  # no lookups passed
     assert stats["pending"] == 1 and stats["kept"] == 0
+
+
+def test_string_competitor_apps_runs_phase0(engine):
+    # frontend.hunt_rounds.competitor_apps is a jsonb array of STRINGS (["calm"])
+    # — the real contract the Go API writes. Phase 0 must accept that shape, not
+    # only the legacy [{"name": ...}] dicts.
+    ext = FakeExtractor()
+    ext.typeahead_results = {"calm": [
+        {"page_id": "HUNTP9", "page_name": "Calm", "page_like_count": 5000,
+         "ig_username": None}]}
+    ext.listing_ads = {"HUNTP9": [_ios_ad("900050", page_id="HUNTP9")]}
+    round_id = _mk_round(engine, [], competitor_json=["calm"])
+    stats = run_hunt_round(engine, [ext], round_id)
+    assert stats["competitor_pages"] == 1
+    with engine.connect() as conn:
+        row = conn.execute(text(
+            "SELECT source_term, page_id FROM frontend.hunt_results "
+            "WHERE round_id = :r"), {"r": round_id}).one()
+    assert row.source_term == "page:calm" and row.page_id == "HUNTP9"
+
+
+def test_round_triage_scoped_to_own_candidates(engine):
+    # A round's phase-5 triage must touch ONLY its own candidates — never drain the
+    # global status='new' backlog (which risks SIGALRM-killing the round at 1800s).
+    from agf.db.candidates import upsert_sweep_candidate
+    with begin(engine) as conn:
+        upsert_sweep_candidate(conn, {
+            "page_id": "HUNTFOREIGN1", "page_name": "Foreign",
+            "page_like_count": 100, "store": "ios", "store_id": "900099",
+            "link_url": "https://apps.apple.com/us/app/id900099",
+            "cta_type": "INSTALL_MOBILE_APP", "ad_start_date": None,
+            "source_keyword": "foreign", "technique": "sweep",
+            "first_seen_depth": 1})
+    ext = FakeExtractor()
+    ext.script_pages("scoped term", [[_ios_ad("900060")], []])
+    round_id = _mk_round(engine, ["scoped term"])
+    lookups = lambda ids: {str(i): _meta() for i in ids}
+    stats = run_hunt_round(engine, [ext], round_id,
+                           lookup_ios=lookups, lookup_android=lookups)
+    assert stats["kept"] == 1
+    with engine.connect() as conn:
+        own = conn.execute(text(
+            "SELECT status FROM discovery.candidates "
+            "WHERE page_id = 'HUNTP1' AND store_id = '900060'")).scalar_one()
+        foreign = conn.execute(text(
+            "SELECT status FROM discovery.candidates "
+            "WHERE page_id = 'HUNTFOREIGN1'")).scalar_one()
+    assert own == "kept"
+    assert foreign == "new"   # untouched: outside the round's candidate set
