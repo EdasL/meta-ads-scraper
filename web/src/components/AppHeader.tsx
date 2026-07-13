@@ -4,7 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { signOut } from "next-auth/react";
-import { IconBookmark, IconCards, IconLogout, IconMenu2, IconSearch, IconSettings, IconX } from "@tabler/icons-react";
+import { IconBookmark, IconCards, IconLogout, IconMenu2, IconSearch, IconSettings, IconTargetArrow, IconX } from "@tabler/icons-react";
 import { useSavedList } from "@/lib/useSaved";
 
 export function AppHeader() {
@@ -14,6 +14,7 @@ export function AppHeader() {
 
   const links = [
     { href: "/discover", label: "Discover", Icon: IconSearch },
+    { href: "/hunt", label: "Hunt", Icon: IconTargetArrow },
     { href: "/review", label: "Review", Icon: IconCards },
     { href: "/saved", label: savedCount ? `Saved · ${savedCount}` : "Saved", Icon: IconBookmark },
     { href: "/settings", label: "Settings", Icon: IconSettings },

@@ -262,7 +262,10 @@ export interface HuntMessage {
 /** Live counters + append-only event log a running round writes to `progress`.
  *  Every field is optional: a freshly-queued round has `{}`. */
 export interface HuntRoundProgress {
-  lanes?: number;
+  /** Active lanes keyed by lane id, each with its current term + page — exactly
+   *  as the Python producer writes it (src/agf/discovery/hunt.py _Progress).
+   *  The active lane COUNT is `Object.keys(lanes).length`. */
+  lanes?: Record<string, { term: string; page: number }>;
   terms_done?: number;
   terms_total?: number;
   found?: number;
