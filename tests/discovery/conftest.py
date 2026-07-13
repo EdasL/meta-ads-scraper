@@ -30,6 +30,8 @@ class FakeExtractor:
     default_ads: list = field(default_factory=list)
     page_scripts: dict = field(default_factory=dict)  # query -> [[AdRecord], ...] (search_page)
     error_queries: set = field(default_factory=set)   # queries that raise ExtractError
+    typeahead_results: dict = field(default_factory=dict)  # name -> [{page_id,...}] (typeahead)
+    listing_ads: dict = field(default_factory=dict)   # page_id -> [AdRecord] (search_listing)
 
     async def search(self, *, query="", countries=("US",), active_status="ACTIVE",
                      sort_by_impressions=False, search_type="KEYWORD_UNORDERED",
@@ -80,9 +82,18 @@ class FakeExtractor:
             stats.update(pages=1, has_next=False)
         return records, None, False
 
+    async def typeahead(self, *, query=""):
+        """Ad Library page typeahead -> [{page_id, page_name, page_like_count, ig_username}]."""
+        if query in self.error_queries:
+            raise ExtractError(f"fake typeahead failure for {query!r}")
+        return list(self.typeahead_results.get(query, []))
+
     async def search_listing(self, *, page_id, countries=("US",), max_pages=12):
+        # listing_ads is the explicit per-page hook (hunt competitor pulls); when unset
         # delegate to self.search so subclasses that override search (e.g. to raise
         # ExtractError) still drive search_listing; truncation comes from page_truncated.
+        if page_id in self.listing_ads:
+            return list(self.listing_ads[page_id]), bool(self.page_truncated.get(page_id, False))
         ads = await self.search(view_all_page_id=page_id, search_type="page",
                                 active_status="ALL", max_pages=max_pages)
         return list(ads), bool(self.page_truncated.get(page_id, False))

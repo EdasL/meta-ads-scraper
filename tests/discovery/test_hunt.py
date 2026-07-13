@@ -29,10 +29,26 @@ def _mk_round(engine, terms, competitors=()):
 def engine(_migrated_engine):
     yield _migrated_engine
     with begin(_migrated_engine) as conn:
+        # Order matters: the pipeline_jobs subselect reads hunt_results, so it must
+        # run BEFORE the hunts delete cascades those rows away. Promoted advertisers/
+        # apps (sentinel page_id/store_id) come out after the candidates/hunt_results
+        # that FK-reference them.
+        conn.execute(text(
+            "DELETE FROM public.pipeline_jobs WHERE kind = 'enrich' AND advertiser_id IN "
+            "(SELECT kept_advertiser_id FROM frontend.hunt_results "
+            " WHERE kept_advertiser_id IS NOT NULL)"))
+        conn.execute(text(
+            "DELETE FROM discovery.dynamic_keywords "
+            "WHERE keyword IN ('hunt mint term', 'pending term') AND kind = 'app'"))
         conn.execute(text(
             "DELETE FROM frontend.hunts WHERE user_email = 't@test.local'"))
         conn.execute(text(
             "DELETE FROM discovery.candidates WHERE page_id LIKE 'HUNTP%'"))
+        conn.execute(text(
+            "DELETE FROM public.advertisers WHERE page_id LIKE 'HUNTP%'"))
+        conn.execute(text(
+            "DELETE FROM public.apps WHERE store = 'ios' "
+            "AND store_id IN ('900050', '900060', '900070')"))
 
 
 def _ios_ad(store_id: str, page_id: str = PAGE):
@@ -122,3 +138,61 @@ def test_lane_error_yields_partial_results_not_crash(engine):
             {"i": round_id}).one()
     assert any("could not search" in e["msg"].lower()
                for e in row.progress["events"])
+
+
+def _meta(name="Dreamy", is_game=False, rating_count=100):
+    from types import SimpleNamespace
+    return SimpleNamespace(name=name, seller="Dev", genre="Health",
+                           release_date=None, avg_rating=4.5,
+                           rating_count=rating_count, installs=None,
+                           icon_url=None, screenshots=[], price_label=None,
+                           description="", is_game=is_game)
+
+
+def test_competitor_page_pull_records_results(engine):
+    ext = FakeExtractor()
+    ext.typeahead_results = {"Calm": [
+        {"page_id": "HUNTP9", "page_name": "Calm", "page_like_count": 5000,
+         "ig_username": None}]}
+    ext.listing_ads = {"HUNTP9": [_ios_ad("900050", page_id="HUNTP9")]}
+    round_id = _mk_round(engine, [], competitors=("Calm",))
+    stats = run_hunt_round(engine, [ext], round_id)
+    assert stats["competitor_pages"] == 1
+    with engine.connect() as conn:
+        row = conn.execute(text(
+            "SELECT source_term, page_id FROM frontend.hunt_results "
+            "WHERE round_id = :r"), {"r": round_id}).one()
+    assert row.source_term == "page:Calm" and row.page_id == "HUNTP9"
+
+
+def test_triage_readback_enrich_and_keyword_mint(engine):
+    ext = FakeExtractor()
+    ext.script_pages("hunt mint term", [[_ios_ad("900060")], []])
+    round_id = _mk_round(engine, ["hunt mint term"])
+    lookups = lambda ids: {str(i): _meta() for i in ids}
+    stats = run_hunt_round(engine, [ext], round_id,
+                           lookup_ios=lookups, lookup_android=lookups)
+    assert stats["kept"] == 1 and stats["enrich_enqueued"] == 1
+    assert stats["keywords_minted"] == 1
+    with engine.connect() as conn:
+        res = conn.execute(text(
+            "SELECT triage, kept_advertiser_id FROM frontend.hunt_results "
+            "WHERE round_id = :r"), {"r": round_id}).one()
+        assert res.triage == "kept" and res.kept_advertiser_id is not None
+        kw = conn.execute(text(
+            "SELECT source, status FROM discovery.dynamic_keywords "
+            "WHERE keyword = 'hunt mint term' AND kind = 'app'")).one()
+        assert kw.source == "hunt" and kw.status == "trial"
+        job = conn.execute(text(
+            "SELECT status FROM public.pipeline_jobs "
+            "WHERE kind = 'enrich' AND advertiser_id = :a"),
+            {"a": res.kept_advertiser_id}).scalar_one()
+        assert job == "queued"
+
+
+def test_no_lookups_leaves_triage_pending(engine):
+    ext = FakeExtractor()
+    ext.script_pages("pending term", [[_ios_ad("900070")], []])
+    round_id = _mk_round(engine, ["pending term"])
+    stats = run_hunt_round(engine, [ext], round_id)  # no lookups passed
+    assert stats["pending"] == 1 and stats["kept"] == 0

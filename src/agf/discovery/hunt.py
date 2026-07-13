@@ -13,11 +13,17 @@ import threading
 import time
 from datetime import datetime, timezone
 
+from sqlalchemy import text
+
 from agf.db.candidates import upsert_sweep_candidate
+from agf.db.dynamic_keywords import add_trial_keywords
 from agf.db.engine import begin
-from agf.db.hunts import (load_round, mark_round_running, update_round_progress,
+from agf.db.hunts import (apply_triage_to_results, load_round,
+                          mark_round_running, update_round_progress,
                           upsert_hunt_result)
+from agf.db.pipeline_jobs import enqueue_enrich
 from agf.discovery.sweep import classify_candidate
+from agf.discovery.triage import run_triage
 from agf.extract.errors import ExtractError
 
 log = logging.getLogger("agf.hunt")
@@ -166,6 +172,36 @@ def run_hunt_round(engine, extractors, round_id: int, *,
     progress = _Progress(engine, round_id, terms_total=len(terms))
     progress.event(f"Hunt started — {len(terms)} terms, deep paging")
 
+    # Phase 0 — competitor page pulls. typeahead/search_listing run OUTSIDE any
+    # begin() block (no txn held across a network call); only _persist_page opens
+    # short txns for the writes.
+    competitors = [c.get("name", "") for c in (rnd.competitor_apps or [])
+                   if c.get("name")]
+    stats["competitor_pages"] = 0
+    for name in competitors[:3]:
+        progress.event(f"Resolving {name}'s ad page")
+        try:
+            pages = asyncio.run(extractors[0].typeahead(query=name))
+        except ExtractError:
+            progress.event(f"Could not resolve {name} — skipped")
+            stats["errors"] += 1
+            continue
+        if not pages:
+            progress.event(f"No Ad Library page found for {name}")
+            continue
+        page = pages[0]
+        try:
+            records, truncated = asyncio.run(extractors[0].search_listing(
+                page_id=page["page_id"], max_pages=HUNT_LISTING_PAGES))
+        except ExtractError:
+            progress.event(f"Could not pull {name}'s ads — skipped")
+            stats["errors"] += 1
+            continue
+        stats["competitor_pages"] += 1
+        found, new = _persist_page(engine, round_id, f"page:{name}", records,
+                                   1, stats, lock)
+        progress.page(0, f"page:{name}", 1, found, new)
+
     queue = collections.deque(terms)
 
     def lane(lane_id: int) -> None:
@@ -191,4 +227,34 @@ def run_hunt_round(engine, extractors, round_id: int, *,
         t.join()
     progress.event(f"Search finished — {stats['found']} found, "
                    f"{stats['new']} new to Field Desk")
+
+    # Phase 5 — triage readback + enrich enqueue + hunt keyword mint. run_triage
+    # is intentionally UNSCOPED (drains the whole status='new' backlog like the
+    # nightly tick); the readback maps only this round's candidates.
+    if lookup_ios is not None and lookup_android is not None:
+        progress.event("Checking store listings (triage)")
+        with begin(engine) as conn:
+            run_triage(conn, lookup_ios=lookup_ios, lookup_android=lookup_android)
+        with begin(engine) as conn:
+            counts = apply_triage_to_results(conn, round_id)
+            stats.update(counts)
+            kept_ids = [r.kept_advertiser_id for r in conn.execute(text(
+                "SELECT DISTINCT kept_advertiser_id FROM frontend.hunt_results "
+                "WHERE round_id = :r AND kept_advertiser_id IS NOT NULL"),
+                {"r": round_id})]
+            stats["enrich_enqueued"] = enqueue_enrich(conn, kept_ids)
+        progress.event(f"Triage done — {stats['kept']} kept, "
+                       f"{stats['vetoed']} vetoed; "
+                       f"{stats['enrich_enqueued']} queued for enrich")
+    else:
+        with begin(engine) as conn:
+            stats.update(apply_triage_to_results(conn, round_id))
+        stats["enrich_enqueued"] = 0
+    if terms:
+        with begin(engine) as conn:
+            stats["keywords_minted"] = add_trial_keywords(
+                conn, terms, source="hunt", kind="app")
+
+    progress.event(f"Hunt finished — {stats['found']} found, "
+                   f"{stats['new']} new to Field Desk, {stats['kept']} kept")
     return stats
