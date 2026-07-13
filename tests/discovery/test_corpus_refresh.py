@@ -163,6 +163,59 @@ def test_flip_skipped_when_listing_empty(pg_conn, _migrated_engine):
     assert active == {"cr-C1": True, "cr-C2": True}   # NOT flipped — empty listing is not trusted
 
 
+from agf.discovery.corpus_refresh import corpus_due_for_refresh
+from agf.workers.scheduler import mark_crawled
+
+
+def test_corpus_due_stalest_first_with_staleness_floor(pg_conn):
+    _clean_corpus(pg_conn)
+    a = repo.upsert_advertiser(pg_conn, SimpleNamespace(page_id="CORPUSREFA", page_name="A", page_like_count=10))
+    b = repo.upsert_advertiser(pg_conn, SimpleNamespace(page_id="CORPUSREFB", page_name="B", page_like_count=10))
+    r = repo.upsert_advertiser(pg_conn, SimpleNamespace(page_id="CORPUSREFR", page_name="R", page_like_count=10))
+    repo.upsert_ad(pg_conn, make_ad("cr-A1", "CORPUSREFA", "A", "https://x/app"), a, None)
+    repo.upsert_ad(pg_conn, make_ad("cr-B1", "CORPUSREFB", "B", "https://x/app"), b, None)
+    repo.upsert_ad(pg_conn, make_ad("cr-R1", "CORPUSREFR", "R", "https://x/app"), r, None)
+    # A stalest, B stale, R fresh (within the floor → NOT due even though queue is empty)
+    pg_conn.execute(text("UPDATE public.ads SET last_seen = now() - interval '10 days' WHERE advertiser_id = :i"), {"i": a})
+    pg_conn.execute(text("UPDATE public.ads SET last_seen = now() - interval '4 days' WHERE advertiser_id = :i"), {"i": b})
+    pg_conn.execute(text("UPDATE public.ads SET last_seen = now() - interval '1 hour' WHERE advertiser_id = :i"), {"i": r})
+
+    due = [p for p in corpus_due_for_refresh(pg_conn, stale_hours=48, err_ttl_hours=168, limit=100)
+           if p[1].startswith("CORPUSREF")]
+    assert due[0] == (a, "CORPUSREFA")               # stalest first
+    assert (b, "CORPUSREFB") in due
+    assert all(aid != r for aid, _ in due)           # fresh advertiser not due
+
+    # limit respected, order preserved
+    due1 = [p for p in corpus_due_for_refresh(pg_conn, stale_hours=48, err_ttl_hours=168, limit=1)]
+    assert due1 == [(a, "CORPUSREFA")]
+
+
+def test_corpus_due_suppresses_recent_error_marker(pg_conn):
+    _clean_corpus(pg_conn)
+    a = repo.upsert_advertiser(pg_conn, SimpleNamespace(page_id="CORPUSREFA", page_name="A", page_like_count=10))
+    b = repo.upsert_advertiser(pg_conn, SimpleNamespace(page_id="CORPUSREFB", page_name="B", page_like_count=10))
+    repo.upsert_ad(pg_conn, make_ad("cr-A1", "CORPUSREFA", "A", "https://x/app"), a, None)
+    repo.upsert_ad(pg_conn, make_ad("cr-B1", "CORPUSREFB", "B", "https://x/app"), b, None)
+    pg_conn.execute(text("UPDATE public.ads SET last_seen = now() - interval '10 days' WHERE advertiser_id = ANY(:i)"), {"i": [a, b]})
+    # A errored recently → suppressed; B errored beyond the TTL → due again
+    mark_crawled(pg_conn, "corpus_refresh", a, "error:TimeoutError")
+    mark_crawled(pg_conn, "corpus_refresh", b, "error:TimeoutError")
+    pg_conn.execute(text(
+        "UPDATE logging.crawl_log SET crawled_at = now() - interval '30 days' "
+        "WHERE entity_type = 'corpus_refresh' AND entity_id = :i"), {"i": b})
+
+    due_ids = [aid for aid, pid in corpus_due_for_refresh(pg_conn, stale_hours=48, err_ttl_hours=168, limit=100)
+               if pid.startswith("CORPUSREF")]
+    assert a not in due_ids                          # fresh error marker suppresses
+    assert b in due_ids                              # expired marker: due again
+    # a keeper_history marker must NOT suppress corpus refresh (kinds are distinct)
+    mark_crawled(pg_conn, "keeper_history", b, "error:TimeoutError")
+    due_ids = [aid for aid, pid in corpus_due_for_refresh(pg_conn, stale_hours=48, err_ttl_hours=168, limit=100)
+               if pid.startswith("CORPUSREF")]
+    assert b in due_ids
+
+
 def test_refresh_corpus_beats_heartbeat_per_advertiser(pg_conn, _migrated_engine):
     # The nightly corpus refresh runs longer than the watchdog's staleness budget
     # (2026-07-11 crash-loop after the tick halved to 1800s shrank the budget to

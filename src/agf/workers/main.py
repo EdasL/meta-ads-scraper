@@ -126,7 +126,7 @@ from agf.discovery.keyword_redundancy import (admit_by_novelty,
                                               redundancy_scores)
 from agf.discovery.keyword_mining import fetch_gem_copy, mine_phrases
 from agf.discovery.funnel_sweep import deep_funnel_entries, run_funnel_sweep
-from agf.discovery.corpus_refresh import refresh_corpus
+from agf.discovery.corpus_refresh import corpus_due_for_refresh, refresh_corpus
 from agf.discovery.generic_deep import run_generic_deep_stage
 from agf.discovery.keeper_history import (keepers_due_for_history,
                                           pull_keeper_history)
@@ -773,34 +773,52 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
                       flush=True)
         _touch_heartbeat()  # funnel renders landing pages — another long, blocking stage
 
-    # 1.91) corpus refresh — re-scrape found advertisers' live Meta listings (stalest
-    #       first) so GemScore's running-days/new-ads/depth stay current and vanished ads
-    #       flip is_active=false. Revives the dead manual refresh_corpus one-shot as a
-    #       recurring budget-bounded stage on the ~90% idle proxy headroom (re-scraping
-    #       knowns, not keyword search). Its OWN budget (AGF_CORPUS_REFRESH_BUDGET) — NOT
-    #       carved from enrich's, so it can't starve keeper enrich. Same isolation contract
-    #       as funnel: a failure lands on the run row and NEVER aborts the tick. The 30-min
-    #       scoring cron consumes the refreshed is_active/metrics — no scoring change.
-    if corpus_refresh_daily:
-        with engine.connect() as conn:
-            cr_due = corpus_refresh_due(conn, as_of, dry_run=dry_run,
-                                        continuous=continuous_discovery)
-        if cr_due:
-            with begin(engine) as conn:
-                cr_run_id = open_corpus_refresh_run(conn)
+    # 1.91) corpus refresh — CONTINUOUS since spec 2026-07-13: each tick enqueues the
+    #       stalest due advertisers as kind='corpus_refresh' pipeline_jobs and the
+    #       keeper daemon's lanes drain them at lower priority than keeper_history, so
+    #       the tick never blocks on the 12-page pulls (run 11, 2026-07-13: 7h55m
+    #       inside the tick froze discovery all morning). Same failure-isolation
+    #       contract as the keeper producer. The old in-tick blocking stage stays
+    #       available behind AGF_CORPUS_REFRESH_INLINE=1 (fallback), same daily gate;
+    #       discovery.corpus_refresh_runs keeps recording only inline/manual runs.
+    corpus_enqueued = 0
+    if corpus_refresh_daily and not dry_run:
+        if _env_int("AGF_CORPUS_REFRESH_INLINE", 0):
+            with engine.connect() as conn:
+                cr_due = corpus_refresh_due(conn, as_of, dry_run=dry_run,
+                                            continuous=continuous_discovery)
+            if cr_due:
+                with begin(engine) as conn:
+                    cr_run_id = open_corpus_refresh_run(conn)
+                try:
+                    cr_stats = asyncio.run(refresh_corpus(
+                        engine, extractor, budget_requests=corpus_refresh_budget,
+                        hist_pages=12,
+                        heartbeat=None if dry_run else _touch_heartbeat))
+                    with begin(engine) as conn:
+                        close_corpus_refresh_run(conn, cr_run_id, stats=cr_stats)
+                except Exception as exc:
+                    with begin(engine) as conn:
+                        close_corpus_refresh_run(conn, cr_run_id, error=repr(exc))
+                    print(f"[worker] corpus refresh stage failed: {exc!r}",
+                          file=sys.stderr, flush=True)
+                _touch_heartbeat()  # the inline fallback is a long, blocking Meta stage
+        else:
             try:
-                cr_stats = asyncio.run(refresh_corpus(
-                    engine, extractor, budget_requests=corpus_refresh_budget,
-                    hist_pages=12,
-                    heartbeat=None if dry_run else _touch_heartbeat))
                 with begin(engine) as conn:
-                    close_corpus_refresh_run(conn, cr_run_id, stats=cr_stats)
+                    cr_due_rows = corpus_due_for_refresh(
+                        conn,
+                        stale_hours=_env_int("AGF_CORPUS_STALE_HOURS", 48),
+                        err_ttl_hours=_env_int("AGF_CORPUS_ERR_TTL_HOURS", 168),
+                        limit=_env_int("AGF_CORPUS_JOBS_PER_TICK", 16))
+                    corpus_enqueued = enqueue_jobs(conn, "corpus_refresh",
+                                                   [a for a, _p in cr_due_rows])
+                if corpus_enqueued:
+                    print(f"[worker] corpus_refresh enqueued {corpus_enqueued}",
+                          flush=True)
             except Exception as exc:
-                with begin(engine) as conn:
-                    close_corpus_refresh_run(conn, cr_run_id, error=repr(exc))
-                print(f"[worker] corpus refresh stage failed: {exc!r}", file=sys.stderr,
+                print(f"[worker] corpus enqueue failed: {exc!r}", file=sys.stderr,
                       flush=True)
-            _touch_heartbeat()  # corpus refresh is a long, blocking Meta stage
 
     # 1.92) generic deep sweep — weekly to-exhaustion pass over ~19 static copy
     #       phrases (spec 2026-07-10): Ad Library search matches ad COPY, so generic
@@ -1010,6 +1028,7 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
 
     return {"sweep": sweep_stats, "triage": triage_stats,
             "keeper_history": keeper_history, "keeper_enqueued": keeper_enqueued,
+            "corpus_enqueued": corpus_enqueued,
             "funnel": funnel, "flywheel": flywheel,
             "release_mint": release_mint,
             "apps_refreshed": apps_refreshed,

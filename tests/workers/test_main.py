@@ -241,6 +241,121 @@ def test_run_once_enqueues_due_keepers(monkeypatch, _migrated_engine):
         _clean()
 
 
+def test_run_once_enqueues_due_corpus_refresh(monkeypatch, _migrated_engine):
+    """Every production tick is also the corpus-refresh PRODUCER (spec 2026-07-13):
+    it enqueues the stalest due advertisers as kind='corpus_refresh' pipeline_jobs
+    for the keeper lanes to drain — the in-tick blocking refresh_corpus stage must
+    NOT run (it froze discovery for 8h on 2026-07-13)."""
+    import agf.workers.main as m
+    eng = _migrated_engine
+    SENT = 999_300_000
+    A1, A2 = SENT + 1, SENT + 2
+    inline_calls = []
+
+    async def spy_refresh(*a, **kw):
+        inline_calls.append(kw)
+        return {"advertisers_done": 0, "requests_spent": 0, "ads_stored": 0,
+                "flipped": 0, "truncated": 0, "errors": 0}
+
+    def _clean():
+        with begin(eng) as conn:
+            conn.execute(text("DELETE FROM public.pipeline_jobs WHERE advertiser_id >= :s"),
+                         {"s": SENT})
+
+    _clean()
+    try:
+        monkeypatch.setattr(m, "discovery_due", lambda *a, **k: False)
+        monkeypatch.setattr(m, "keepers_due_for_history", lambda conn, **kw: [])
+        monkeypatch.setattr(m, "corpus_due_for_refresh",
+                            lambda conn, **kw: [(A1, "P1"), (A2, "P2")])
+        monkeypatch.setattr(m, "refresh_corpus", spy_refresh)
+        monkeypatch.setattr(m, "taste_prioritized_kept", lambda conn, **kw: [])
+        monkeypatch.setattr(m, "eligible_gem_ids", lambda conn, s: [])
+        monkeypatch.delenv("AGF_CORPUS_REFRESH_INLINE", raising=False)
+
+        summary = run_once(
+            eng, object(), now_epoch=NOW, as_of=date(2026, 6, 4), dry_run=False,
+            http_client=None, continuous_discovery=False,
+            funnel_daily=False, corpus_refresh_daily=True,
+            generic_deep_enabled=False, flywheel_daily=False,
+            release_mint_enabled=False, media_repair_per_cycle=0,
+            funnel_repair_per_cycle=0, enrich_budget=600)
+
+        assert summary["corpus_enqueued"] == 2
+        assert inline_calls == []                      # blocking stage stays off
+        with eng.connect() as conn:
+            rows = conn.execute(text(
+                "SELECT advertiser_id, kind, status FROM public.pipeline_jobs "
+                "WHERE advertiser_id >= :s ORDER BY id"), {"s": SENT}).fetchall()
+        assert [r[0] for r in rows] == [A1, A2]        # stalest-first order preserved
+        assert all(r[1] == "corpus_refresh" and r[2] == "queued" for r in rows)
+    finally:
+        _clean()
+
+
+def test_corpus_producer_failure_does_not_abort_tick(monkeypatch, _migrated_engine):
+    """Producer failure isolation — same contract as the keeper enqueue: a raising
+    corpus_due_for_refresh must not cost the tick its remaining stages."""
+    import agf.workers.main as m
+
+    def boom(conn, **kw):
+        raise RuntimeError("transient DB error")
+
+    monkeypatch.setattr(m, "discovery_due", lambda *a, **k: False)
+    monkeypatch.setattr(m, "keepers_due_for_history", lambda conn, **kw: [])
+    monkeypatch.setattr(m, "corpus_due_for_refresh", boom)
+    monkeypatch.setattr(m, "taste_prioritized_kept", lambda conn, **kw: [])
+    monkeypatch.setattr(m, "eligible_gem_ids", lambda conn, s: [])
+    monkeypatch.delenv("AGF_CORPUS_REFRESH_INLINE", raising=False)
+
+    summary = run_once(
+        _migrated_engine, object(), now_epoch=NOW, as_of=date(2026, 6, 4),
+        dry_run=False, http_client=None, continuous_discovery=False,
+        funnel_daily=False, corpus_refresh_daily=True,
+        generic_deep_enabled=False, flywheel_daily=False,
+        release_mint_enabled=False, media_repair_per_cycle=0,
+        funnel_repair_per_cycle=0, enrich_budget=600)
+    assert summary["corpus_enqueued"] == 0             # tick completed regardless
+
+
+def test_inline_corpus_stage_opt_in(monkeypatch, _migrated_engine):
+    """The old in-tick blocking refresh_corpus runs ONLY with
+    AGF_CORPUS_REFRESH_INLINE=1 (fallback), gated by the daily run-row as before."""
+    import agf.workers.main as m
+    eng = _migrated_engine
+    inline_calls = []
+
+    async def spy_refresh(*a, **kw):
+        inline_calls.append(kw)
+        return {"advertisers_done": 0, "requests_spent": 0, "ads_stored": 0,
+                "flipped": 0, "truncated": 0, "errors": 0}
+
+    monkeypatch.setattr(m, "discovery_due", lambda *a, **k: False)
+    monkeypatch.setattr(m, "keepers_due_for_history", lambda conn, **kw: [])
+    monkeypatch.setattr(m, "corpus_due_for_refresh", lambda conn, **kw: [])
+    monkeypatch.setattr(m, "refresh_corpus", spy_refresh)
+    monkeypatch.setattr(m, "corpus_refresh_due", lambda *a, **kw: True)
+    monkeypatch.setattr(m, "taste_prioritized_kept", lambda conn, **kw: [])
+    monkeypatch.setattr(m, "eligible_gem_ids", lambda conn, s: [])
+
+    def _run():
+        return run_once(
+            eng, object(), now_epoch=NOW, as_of=date(2026, 6, 4), dry_run=False,
+            http_client=None, continuous_discovery=False,
+            funnel_daily=False, corpus_refresh_daily=True,
+            generic_deep_enabled=False, flywheel_daily=False,
+            release_mint_enabled=False, media_repair_per_cycle=0,
+            funnel_repair_per_cycle=0, enrich_budget=600)
+
+    monkeypatch.delenv("AGF_CORPUS_REFRESH_INLINE", raising=False)
+    _run()
+    assert inline_calls == []                          # default: queue only
+
+    monkeypatch.setenv("AGF_CORPUS_REFRESH_INLINE", "1")
+    _run()
+    assert len(inline_calls) == 1                      # opt-in fallback runs
+
+
 def test_inline_keeper_pull_off_by_default(monkeypatch, _migrated_engine):
     """The old serial in-tick pull is opt-in: with a due sweep it does NOT run unless
     AGF_KEEPER_HISTORY_INLINE=1. Spies pull_keeper_history over a minimal production

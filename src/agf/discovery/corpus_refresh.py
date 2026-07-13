@@ -26,6 +26,30 @@ def advertisers_with_page(conn) -> list[tuple[int, str]]:
     """)).all()]
 
 
+def corpus_due_for_refresh(conn, *, stale_hours: int = 48, err_ttl_hours: int = 168,
+                           limit: int = 16) -> list[tuple[int, str]]:
+    """The queue-producer slice of the refresh target set: advertisers_with_page
+    whose freshest ad is older than stale_hours (the re-enqueue floor — a small
+    corpus never hot-loops), minus advertisers with a logging.crawl_log row of
+    entity_type='corpus_refresh' fresher than err_ttl_hours (failure suppression,
+    same starvation-hot-loop defense as keepers_due_for_history). Stalest first,
+    bounded by limit; enqueue_jobs' active-unique index dedups queued/running."""
+    return [(r[0], r[1]) for r in conn.execute(text("""
+        SELECT a.id, a.page_id
+        FROM public.advertisers a
+        JOIN public.ads ad ON ad.advertiser_id = a.id
+        WHERE a.page_id IS NOT NULL
+          AND NOT EXISTS (SELECT 1 FROM logging.crawl_log l
+                          WHERE l.entity_type = 'corpus_refresh'
+                            AND l.entity_id = a.id
+                            AND l.crawled_at > now() - make_interval(hours => :ttl))
+        GROUP BY a.id, a.page_id
+        HAVING MAX(ad.last_seen) < now() - make_interval(hours => :stale)
+        ORDER BY MAX(ad.last_seen) ASC, a.id
+        LIMIT :lim
+    """), {"ttl": err_ttl_hours, "stale": stale_hours, "lim": limit}).all()]
+
+
 async def refresh_corpus(engine, extractor, *, hist_pages: int = 12,
                          budget_requests: int = 12_000, weeks: int = 16,
                          kw_delay: float = 2.0, sleep=time.sleep,
