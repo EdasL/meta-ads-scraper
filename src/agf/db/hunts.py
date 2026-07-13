@@ -8,11 +8,26 @@ import json
 
 from sqlalchemy import text
 
+# Per-round scrape knobs (spec 2026-07-13-peon-agent-tools). Defaults mirror the
+# executor constants; stored per-round values overlay these, bounded below.
+DEFAULT_HUNT_SETTINGS = {"page_cap": 40, "patience": 3, "listing_pages": 10}
+_SETTINGS_BOUNDS = {"page_cap": (1, 100), "patience": (1, 10), "listing_pages": (1, 30)}
+
+
+def clamp_hunt_settings(raw: dict | None) -> dict:
+    """Effective per-round knobs: defaults overlaid with bounded stored values."""
+    out = dict(DEFAULT_HUNT_SETTINGS)
+    for key, (lo, hi) in _SETTINGS_BOUNDS.items():
+        val = (raw or {}).get(key)
+        if isinstance(val, (int, float)) and not isinstance(val, bool):
+            out[key] = max(lo, min(hi, int(val)))
+    return out
+
 
 def load_round(conn, round_id: int):
     """One hunt_rounds row (terms/competitor_apps as Python lists) or None."""
     return conn.execute(text(
-        "SELECT id, hunt_id, terms, competitor_apps, status "
+        "SELECT id, hunt_id, terms, competitor_apps, status, settings "
         "FROM frontend.hunt_rounds WHERE id = :i"), {"i": round_id}).first()
 
 

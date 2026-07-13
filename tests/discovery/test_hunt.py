@@ -13,7 +13,7 @@ pytestmark = pytest.mark.usefixtures("_migrated_engine")
 PAGE = "HUNTP1"
 
 
-def _mk_round(engine, terms, competitors=(), *, competitor_json=None):
+def _mk_round(engine, terms, competitors=(), *, competitor_json=None, settings=None):
     # competitor_json overrides the default {"name": ...} dict shape so a test can
     # store the EXACT jsonb the Go API writes (a plain array of strings, ["calm"]).
     comp = (competitor_json if competitor_json is not None
@@ -23,10 +23,18 @@ def _mk_round(engine, terms, competitors=(), *, competitor_json=None):
             "INSERT INTO frontend.hunts (user_email, title) "
             "VALUES ('t@test.local', 'hunt-exec-test') RETURNING id")).scalar_one()
         return conn.execute(text(
-            "INSERT INTO frontend.hunt_rounds (hunt_id, terms, competitor_apps) "
-            "VALUES (:h, CAST(:t AS jsonb), CAST(:c AS jsonb)) RETURNING id"),
+            "INSERT INTO frontend.hunt_rounds (hunt_id, terms, competitor_apps, settings) "
+            "VALUES (:h, CAST(:t AS jsonb), CAST(:c AS jsonb), CAST(:s AS jsonb)) "
+            "RETURNING id"),
             {"h": hunt_id, "t": json.dumps(list(terms)),
-             "c": json.dumps(comp)}).scalar_one()
+             "c": json.dumps(comp), "s": json.dumps(settings or {})}).scalar_one()
+
+
+def _progress(engine, round_id):
+    with engine.connect() as conn:
+        return conn.execute(text(
+            "SELECT progress FROM frontend.hunt_rounds WHERE id = :i"),
+            {"i": round_id}).scalar_one()
 
 
 @pytest.fixture
@@ -76,6 +84,9 @@ def test_round_sweeps_terms_and_records_results(engine):
     assert [r.store_id for r in rows] == ["900001", "900002"]
     assert all(r.was_new and r.candidate_id and r.source_term == "sleep app"
                for r in rows)
+    # per-term telemetry: page 1 finds 2, page 2 empty -> Meta exhausted
+    assert _progress(engine, round_id)["terms"]["sleep app"] == {
+        "pages": 2, "found": 2, "new": 2, "stop": "exhausted"}
 
 
 def test_non_candidate_dispositions_counted_in_drops(engine):
@@ -251,3 +262,58 @@ def test_round_triage_scoped_to_own_candidates(engine):
             "WHERE page_id = 'HUNTFOREIGN1'")).scalar_one()
     assert own == "kept"
     assert foreign == "new"   # untouched: outside the round's candidate set
+
+
+def test_settings_page_cap_limits_paging(engine):
+    # settings page_cap=2 stops a 5-live-page term at 2 pages with stop 'cap'.
+    # patience=1 must not fire first: every page carries a net-new ad.
+    pages = [[_ios_ad(f"90010{i}")] for i in range(5)]
+    ext = FakeExtractor()
+    ext.script_pages("cap term", pages)
+    round_id = _mk_round(engine, ["cap term"],
+                         settings={"page_cap": 2, "patience": 1})
+    run_hunt_round(engine, [ext], round_id)
+    assert _progress(engine, round_id)["terms"]["cap term"]["pages"] == 2
+    assert _progress(engine, round_id)["terms"]["cap term"]["stop"] == "cap"
+
+
+def test_settings_out_of_bounds_accepted_by_executor(engine):
+    # page_cap 999 clamps to 100; the executor accepts it and the 2-page term
+    # exhausts long before the clamped cap.
+    ext = FakeExtractor()
+    ext.script_pages("wide term", [[_ios_ad("900108")], []])
+    round_id = _mk_round(engine, ["wide term"], settings={"page_cap": 999})
+    stats = run_hunt_round(engine, [ext], round_id)
+    assert stats["found"] == 1
+    assert _progress(engine, round_id)["terms"]["wide term"]["stop"] == "exhausted"
+
+
+def test_term_stop_dry_recorded(engine):
+    dry = [[_ios_ad("900021")]] + [[] for _ in range(HUNT_PATIENCE + 5)]
+    ext = FakeExtractor()
+    ext.script_pages("dry term", dry)
+    round_id = _mk_round(engine, ["dry term"])
+    run_hunt_round(engine, [ext], round_id)
+    term = _progress(engine, round_id)["terms"]["dry term"]
+    assert term["stop"] == "dry"
+    assert term["pages"] == 1 + HUNT_PATIENCE
+
+
+def test_term_stop_error_recorded(engine):
+    ext = FakeExtractor()
+    ext.error_queries = {"bad term"}
+    round_id = _mk_round(engine, ["bad term"])
+    run_hunt_round(engine, [ext], round_id)
+    assert _progress(engine, round_id)["terms"]["bad term"]["stop"] == "error"
+
+
+def test_competitor_pull_records_listing_stop(engine):
+    ext = FakeExtractor()
+    ext.typeahead_results = {"Calm": [
+        {"page_id": "HUNTP9", "page_name": "Calm", "page_like_count": 5000,
+         "ig_username": None}]}
+    ext.listing_ads = {"HUNTP9": [_ios_ad("900050", page_id="HUNTP9")]}
+    round_id = _mk_round(engine, [], competitors=("Calm",))
+    run_hunt_round(engine, [ext], round_id)
+    term = _progress(engine, round_id)["terms"]["page:Calm"]
+    assert term["stop"] == "listing" and term["found"] == 1

@@ -5,7 +5,9 @@ import pytest
 from sqlalchemy import text
 
 from agf.db.hunts import (
+    DEFAULT_HUNT_SETTINGS,
     apply_triage_to_results,
+    clamp_hunt_settings,
     finish_round,
     load_round,
     mark_round_running,
@@ -45,7 +47,36 @@ def test_load_round_returns_terms_and_competitors(pg_conn):
     assert row.terms == ["a", "b"]
     assert row.competitor_apps == []
     assert row.status == "queued"
+    assert row.settings == {}   # migration 156 default
     assert load_round(pg_conn, round_id + 999_000) is None
+
+
+def test_load_round_returns_stored_settings(pg_conn):
+    hunt_id = _seed_hunt(pg_conn)
+    round_id = pg_conn.execute(text(
+        "INSERT INTO frontend.hunt_rounds (hunt_id, terms, competitor_apps, settings) "
+        "VALUES (:h, '[\"a\"]', '[]', CAST(:s AS jsonb)) RETURNING id"),
+        {"h": hunt_id, "s": json.dumps({"page_cap": 12})}).scalar_one()
+    assert load_round(pg_conn, round_id).settings == {"page_cap": 12}
+
+
+def test_clamp_hunt_settings_defaults_and_bounds():
+    assert clamp_hunt_settings(None) == DEFAULT_HUNT_SETTINGS
+    assert clamp_hunt_settings({}) == DEFAULT_HUNT_SETTINGS
+    # out-of-bounds clamp to the nearest legal value
+    assert clamp_hunt_settings({"page_cap": 999})["page_cap"] == 100
+    assert clamp_hunt_settings({"page_cap": 0})["page_cap"] == 1
+    assert clamp_hunt_settings({"patience": 50})["patience"] == 10
+    assert clamp_hunt_settings({"listing_pages": 99})["listing_pages"] == 30
+    # float coerces to int within bounds
+    assert clamp_hunt_settings({"page_cap": 12.9})["page_cap"] == 12
+    # bad types fall back to the default (bool is NOT an int here, None, str)
+    assert clamp_hunt_settings({"page_cap": True})["page_cap"] == 40
+    assert clamp_hunt_settings({"page_cap": None})["page_cap"] == 40
+    assert clamp_hunt_settings({"page_cap": "5"})["page_cap"] == 40
+    # unknown keys ignored; a partial dict fills the rest from defaults
+    assert clamp_hunt_settings({"patience": 5, "junk": 1}) == {
+        "page_cap": 40, "patience": 5, "listing_pages": 10}
 
 
 def test_round_status_transitions(pg_conn):

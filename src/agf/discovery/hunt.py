@@ -18,9 +18,10 @@ from sqlalchemy import text
 from agf.db.candidates import upsert_sweep_candidate
 from agf.db.dynamic_keywords import add_trial_keywords
 from agf.db.engine import begin
-from agf.db.hunts import (apply_triage_to_results, load_round,
-                          mark_round_running, round_new_candidate_ids,
-                          update_round_progress, upsert_hunt_result)
+from agf.db.hunts import (apply_triage_to_results, clamp_hunt_settings,
+                          load_round, mark_round_running,
+                          round_new_candidate_ids, update_round_progress,
+                          upsert_hunt_result)
 from agf.db.pipeline_jobs import enqueue_enrich
 from agf.discovery.sweep import classify_candidate
 from agf.discovery.triage import run_triage
@@ -50,7 +51,7 @@ class _Progress:
         self._round_id = round_id
         self._lock = threading.Lock()
         self._state = {"lanes": {}, "terms_done": 0, "terms_total": terms_total,
-                       "found": 0, "new": 0, "events": []}
+                       "found": 0, "new": 0, "events": [], "terms": {}}
 
     def _flush(self) -> None:
         with begin(self._engine) as conn:
@@ -79,6 +80,12 @@ class _Progress:
         with self._lock:
             self._state["terms_done"] += 1
             self._state["lanes"].pop(str(lane), None)
+            self._flush()
+
+    def term_stats(self, term: str, pages: int, found: int, new: int, stop: str) -> None:
+        with self._lock:
+            self._state.setdefault("terms", {})[term] = {
+                "pages": pages, "found": found, "new": new, "stop": stop}
             self._flush()
 
 
@@ -123,10 +130,16 @@ def _persist_page(engine, round_id: int, term: str, records, depth: int,
 
 def _sweep_term(engine, extractor, round_id: int, lane: int, term: str,
                 progress: _Progress, stats: dict, lock: threading.Lock,
-                sleep) -> None:
+                sleep, patience: int = HUNT_PATIENCE,
+                page_cap: int = HUNT_PAGE_CAP) -> tuple[int, int, int, str]:
+    """Deep-page one term. Returns (pages, found, new, stop) for lane telemetry;
+    the shared `stats` accumulators are updated as before. stop is one of
+    'exhausted' (Meta no next page), 'dry' (patience), 'cap' (page_cap),
+    'error' (search failed)."""
     cursor = None
     depth = 0
     consec_dry = 0
+    term_found = term_new = 0
     while True:
         depth += 1
         try:
@@ -138,19 +151,21 @@ def _sweep_term(engine, extractor, round_id: int, lane: int, term: str,
             with lock:
                 stats["errors"] += 1
             progress.event(f"Could not search '{term}' — skipped after an error")
-            return
+            return depth - 1, term_found, term_new, "error"
         with lock:
             stats["pages"] += 1
         found, new = _persist_page(engine, round_id, term, records, depth,
                                    stats, lock)
+        term_found += found
+        term_new += new
         progress.page(lane, term, depth, found, new)
         consec_dry = 0 if new > 0 else consec_dry + 1
         if not has_next or not cursor:
-            return
-        if consec_dry >= HUNT_PATIENCE:
-            return
-        if depth >= HUNT_PAGE_CAP:
-            return
+            return depth, term_found, term_new, "exhausted"
+        if consec_dry >= patience:
+            return depth, term_found, term_new, "dry"
+        if depth >= page_cap:
+            return depth, term_found, term_new, "cap"
         sleep(HUNT_PAGE_DELAY)
 
 
@@ -165,6 +180,7 @@ def run_hunt_round(engine, extractors, round_id: int, *,
             raise ValueError(f"hunt round {round_id} not found")
         mark_round_running(conn, round_id)
     terms = list(rnd.terms)
+    knobs = clamp_hunt_settings(rnd.settings)
     stats = {"terms_swept": 0, "pages": 0, "found": 0, "new": 0, "errors": 0,
              "kept": 0, "vetoed": 0, "pending": 0, "keywords_minted": 0,
              "drops": {}}
@@ -195,7 +211,7 @@ def run_hunt_round(engine, extractors, round_id: int, *,
         page = pages[0]
         try:
             records, truncated = asyncio.run(extractors[0].search_listing(
-                page_id=page["page_id"], max_pages=HUNT_LISTING_PAGES))
+                page_id=page["page_id"], max_pages=knobs["listing_pages"]))
         except ExtractError:
             progress.event(f"Could not pull {name}'s ads — skipped")
             stats["errors"] += 1
@@ -204,6 +220,7 @@ def run_hunt_round(engine, extractors, round_id: int, *,
         found, new = _persist_page(engine, round_id, f"page:{name}", records,
                                    1, stats, lock)
         progress.page(0, f"page:{name}", 1, found, new)
+        progress.term_stats(f"page:{name}", 1, found, new, "listing")
 
     queue = collections.deque(terms)
 
@@ -214,8 +231,11 @@ def run_hunt_round(engine, extractors, round_id: int, *,
                 term = queue.popleft()
             except IndexError:
                 return
-            _sweep_term(engine, extractor, round_id, lane_id, term,
-                        progress, stats, lock, sleep)
+            pages, found, new, stop = _sweep_term(
+                engine, extractor, round_id, lane_id, term,
+                progress, stats, lock, sleep,
+                knobs["patience"], knobs["page_cap"])
+            progress.term_stats(term, pages, found, new, stop)
             with lock:
                 stats["terms_swept"] += 1
             progress.term_done(lane_id)
