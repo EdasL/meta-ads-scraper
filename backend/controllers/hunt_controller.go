@@ -130,7 +130,7 @@ func (c *HuntController) Create(ctx *gin.Context) {
 		helpers.Detail(ctx, http.StatusInternalServerError, "could not start hunt.")
 		return
 	}
-	if _, err := repositories.InsertHuntMessage(rctx, db.DB(), huntID, "user", message, nil); err != nil {
+	if _, err := repositories.InsertHuntMessage(rctx, db.DB(), huntID, "user", message, nil, nil); err != nil {
 		helpers.Detail(ctx, http.StatusInternalServerError, "could not save message.")
 		return
 	}
@@ -178,7 +178,7 @@ func (c *HuntController) Message(ctx *gin.Context) {
 		helpers.Detail(ctx, http.StatusInternalServerError, "something went wrong.")
 		return
 	}
-	if _, err := repositories.InsertHuntMessage(rctx, db.DB(), huntID, "user", message, nil); err != nil {
+	if _, err := repositories.InsertHuntMessage(rctx, db.DB(), huntID, "user", message, nil, nil); err != nil {
 		cancel()
 		helpers.Detail(ctx, http.StatusInternalServerError, "could not save message.")
 		return
@@ -227,7 +227,7 @@ func (c *HuntController) proposeAndAppend(ctx *gin.Context, huntID int, message 
 
 	rctx, cancel2 := reqCtx(ctx)
 	defer cancel2()
-	if _, err := repositories.InsertHuntMessage(rctx, db.DB(), huntID, "assistant", prop.Reply, proposalJSON); err != nil {
+	if _, err := repositories.InsertHuntMessage(rctx, db.DB(), huntID, "assistant", prop.Reply, proposalJSON, nil); err != nil {
 		helpers.Detail(ctx, http.StatusInternalServerError, "could not save reply.")
 		return false
 	}
@@ -348,7 +348,7 @@ func (c *HuntController) StartRound(ctx *gin.Context) {
 
 	rctx, cancel := reqCtx(ctx)
 	defer cancel()
-	roundID, err := repositories.InsertHuntRound(rctx, db.DB(), huntID, body.MessageID, termsJSON, compsJSON)
+	roundID, err := repositories.InsertHuntRound(rctx, db.DB(), huntID, body.MessageID, termsJSON, compsJSON, nil)
 	if err != nil {
 		helpers.Detail(ctx, http.StatusInternalServerError, "could not start round.")
 		return

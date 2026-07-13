@@ -21,6 +21,7 @@ type HuntMessageRow struct {
 	Role      string          `json:"role"`
 	Content   string          `json:"content"`
 	Proposal  json.RawMessage `json:"proposal" gorm:"column:proposal"`
+	ToolLog   json.RawMessage `json:"tool_log" gorm:"column:tool_log"`
 	CreatedAt time.Time       `json:"created_at" gorm:"column:created_at"`
 }
 
@@ -32,9 +33,24 @@ type HuntRoundRow struct {
 	Competitors json.RawMessage `json:"competitor_apps" gorm:"column:competitor_apps"`
 	Status      string          `json:"status"`
 	Progress    json.RawMessage `json:"progress" gorm:"column:progress"`
+	Settings    json.RawMessage `json:"settings" gorm:"column:settings"`
 	ErrorText   *string         `json:"error_text" gorm:"column:error_text"`
 	CreatedAt   time.Time       `json:"created_at" gorm:"column:created_at"`
 	FinishedAt  *time.Time      `json:"finished_at" gorm:"column:finished_at"`
+}
+
+// HuntRoundReport is the tool-facing status digest for a single round, scoped to
+// its hunt. Triage counts are aggregated from hunt_results.
+type HuntRoundReport struct {
+	Status       string          `json:"status"`
+	ErrorText    *string         `json:"error_text" gorm:"column:error_text"`
+	StartedAt    *time.Time      `json:"started_at" gorm:"column:started_at"`
+	FinishedAt   *time.Time      `json:"finished_at" gorm:"column:finished_at"`
+	Settings     json.RawMessage `json:"settings" gorm:"column:settings"`
+	Progress     json.RawMessage `json:"progress" gorm:"column:progress"`
+	KeptCount    int             `json:"kept_count" gorm:"column:kept_count"`
+	VetoedCount  int             `json:"vetoed_count" gorm:"column:vetoed_count"`
+	PendingCount int             `json:"pending_count" gorm:"column:pending_count"`
 }
 
 // HuntResultRow is one (round, found page/store listing). GemScore is joined at

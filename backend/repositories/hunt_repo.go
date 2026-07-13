@@ -56,15 +56,16 @@ func ListHunts(ctx context.Context, g *gorm.DB, email string) ([]models.HuntRow,
 	return rows, err
 }
 
-// InsertHuntMessage appends a transcript entry and returns its id. proposal is
-// stored as jsonb; pass nil for user messages (persisted as SQL NULL).
-func InsertHuntMessage(ctx context.Context, g *gorm.DB, huntID int, role, content string, proposal json.RawMessage) (int, error) {
+// InsertHuntMessage appends a transcript entry and returns its id. proposal and
+// toolLog are stored as jsonb; pass nil for either (persisted as SQL NULL —
+// user messages carry no proposal, non-tool turns carry no tool_log).
+func InsertHuntMessage(ctx context.Context, g *gorm.DB, huntID int, role, content string, proposal, toolLog json.RawMessage) (int, error) {
 	var id int
 	err := db.WithWriteTx(ctx, g, func(tx *gorm.DB) error {
 		return tx.Raw(
-			`INSERT INTO frontend.hunt_messages (hunt_id, role, content, proposal)
-			 VALUES (?, ?, ?, CAST(? AS jsonb)) RETURNING id`,
-			huntID, role, content, jsonbArg(proposal),
+			`INSERT INTO frontend.hunt_messages (hunt_id, role, content, proposal, tool_log)
+			 VALUES (?, ?, ?, CAST(? AS jsonb), CAST(? AS jsonb)) RETURNING id`,
+			huntID, role, content, jsonbArg(proposal), jsonbArg(toolLog),
 		).Scan(&id).Error
 	})
 	return id, err
@@ -75,7 +76,7 @@ func ListHuntMessages(ctx context.Context, g *gorm.DB, huntID int) ([]models.Hun
 	var rows []models.HuntMessageRow
 	err := db.WithReadTx(ctx, g, func(tx *gorm.DB) error {
 		return tx.Raw(
-			`SELECT id, role, content, proposal, created_at
+			`SELECT id, role, content, proposal, tool_log, created_at
 			 FROM frontend.hunt_messages
 			 WHERE hunt_id = ?
 			 ORDER BY id`,
@@ -91,7 +92,7 @@ func ListHuntRounds(ctx context.Context, g *gorm.DB, huntID int) ([]models.HuntR
 	err := db.WithReadTx(ctx, g, func(tx *gorm.DB) error {
 		return tx.Raw(
 			`SELECT id, message_id, terms, competitor_apps, status, progress,
-			        error_text, created_at, finished_at
+			        settings, error_text, created_at, finished_at
 			 FROM frontend.hunt_rounds
 			 WHERE hunt_id = ?
 			 ORDER BY id`,
@@ -121,20 +122,71 @@ func ListHuntResults(ctx context.Context, g *gorm.DB, huntID int) ([]models.Hunt
 	return rows, err
 }
 
+// RoundReport returns the tool-facing status digest for one round, scoped to
+// its hunt (r.hunt_id = ?). It returns (nil, nil) when the round does not exist
+// under that hunt — the tool executor turns that into an error string. Triage
+// counts are aggregated from hunt_results with FILTER.
+func RoundReport(ctx context.Context, g *gorm.DB, huntID, roundID int) (*models.HuntRoundReport, error) {
+	var rows []models.HuntRoundReport
+	err := db.WithReadTx(ctx, g, func(tx *gorm.DB) error {
+		return tx.Raw(
+			`SELECT r.status, r.error_text, r.started_at, r.finished_at,
+			        r.settings, r.progress,
+			        count(hr.id) FILTER (WHERE hr.triage = 'kept')    AS kept_count,
+			        count(hr.id) FILTER (WHERE hr.triage = 'vetoed')  AS vetoed_count,
+			        count(hr.id) FILTER (WHERE hr.triage = 'pending') AS pending_count
+			 FROM frontend.hunt_rounds r
+			 LEFT JOIN frontend.hunt_results hr ON hr.round_id = r.id
+			 WHERE r.id = ? AND r.hunt_id = ?
+			 GROUP BY r.id, r.status, r.error_text, r.started_at, r.finished_at,
+			          r.settings, r.progress`,
+			roundID, huntID,
+		).Scan(&rows).Error
+	})
+	if err != nil || len(rows) == 0 {
+		return nil, err
+	}
+	return &rows[0], nil
+}
+
+// RoundResults returns a single round's results (scoped to its hunt via the
+// hunt_rounds JOIN), optionally filtered to one triage state, capped at limit.
+// It mirrors ListHuntResults' GemScore join.
+func RoundResults(ctx context.Context, g *gorm.DB, huntID, roundID int, triage string, limit int) ([]models.HuntResultRow, error) {
+	var rows []models.HuntResultRow
+	err := db.WithReadTx(ctx, g, func(tx *gorm.DB) error {
+		return tx.Raw(
+			`SELECT hr.id, hr.round_id, hr.page_id, hr.page_name, hr.store, hr.store_id,
+			        hr.link_url, hr.source_term, hr.was_new, hr.triage, hr.kept_advertiser_id,
+			        s.gem_score
+			 FROM frontend.hunt_results hr
+			 JOIN frontend.hunt_rounds r ON r.id = hr.round_id
+			 LEFT JOIN adtech.advertiser_scores s ON s.advertiser_id = hr.kept_advertiser_id
+			 WHERE r.hunt_id = ? AND hr.round_id = ?
+			   AND (? = '' OR hr.triage = ?)
+			 ORDER BY hr.id
+			 LIMIT ?`,
+			huntID, roundID, triage, triage, limit,
+		).Scan(&rows).Error
+	})
+	return rows, err
+}
+
 // InsertHuntRound inserts a queued round and enqueues its pipeline job in a
 // single write transaction: the job's advertiser_id carries the ROUND id (the
 // hunt worker daemon drains kind='hunt' jobs). The partial unique index on
 // (kind, advertiser_id) WHERE status IN ('queued','running') makes the enqueue
 // idempotent. messageID may be nil (SQL NULL).
-func InsertHuntRound(ctx context.Context, g *gorm.DB, huntID int, messageID *int, terms, competitors json.RawMessage) (int, error) {
+func InsertHuntRound(ctx context.Context, g *gorm.DB, huntID int, messageID *int, terms, competitors, settings json.RawMessage) (int, error) {
 	var roundID int
 	err := db.WithWriteTx(ctx, g, func(tx *gorm.DB) error {
 		if err := tx.Raw(
-			`INSERT INTO frontend.hunt_rounds (hunt_id, message_id, terms, competitor_apps)
-			 VALUES (?, ?, CAST(? AS jsonb), CAST(? AS jsonb)) RETURNING id`,
+			`INSERT INTO frontend.hunt_rounds (hunt_id, message_id, terms, competitor_apps, settings)
+			 VALUES (?, ?, CAST(? AS jsonb), CAST(? AS jsonb), CAST(? AS jsonb)) RETURNING id`,
 			// terms and competitor_apps are NOT NULL: default nil/empty to an
-			// empty JSON array rather than the SQL NULL jsonbArg would produce.
-			huntID, messageID, jsonbArgDefault(terms), jsonbArgDefault(competitors),
+			// empty JSON array. settings is NOT NULL DEFAULT '{}': default
+			// nil/empty to an empty JSON object.
+			huntID, messageID, jsonbArgDefault(terms), jsonbArgDefault(competitors), jsonbArgDefaultObj(settings),
 		).Scan(&roundID).Error; err != nil {
 			return err
 		}
@@ -185,6 +237,15 @@ func jsonbArg(raw json.RawMessage) any {
 func jsonbArgDefault(raw json.RawMessage) any {
 	if len(raw) == 0 {
 		return "[]"
+	}
+	return string(raw)
+}
+
+// jsonbArgDefaultObj is jsonbArgDefault for NOT NULL jsonb columns whose default
+// is an empty JSON object ("{}") — e.g. hunt_rounds.settings.
+func jsonbArgDefaultObj(raw json.RawMessage) any {
+	if len(raw) == 0 {
+		return "{}"
 	}
 	return string(raw)
 }
