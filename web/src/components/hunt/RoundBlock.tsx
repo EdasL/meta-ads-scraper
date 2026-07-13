@@ -13,22 +13,42 @@ function storeLabel(store: string): string {
   return store;
 }
 
-/** Bordered mono chip — the app's store presence, mirroring StorePresenceChips. */
-function StoreBadge({ store }: { store: string }) {
+/**
+ * Bordered mono chip — the app's store presence, mirroring StorePresenceChips.
+ * Links to the store listing (the ad's destination URL) when one was captured.
+ */
+function StoreBadge({ store, href }: { store: string; href?: string | null }) {
+  const style = {
+    fontSize: "var(--fs-xs)",
+    padding: "1px 8px",
+    border: "1px solid var(--ink)",
+    color: "var(--ink-soft)",
+    whiteSpace: "nowrap",
+  } as const;
+  if (href) {
+    return (
+      <a
+        className="font-mono"
+        style={{ ...style, textDecoration: "none" }}
+        href={href}
+        target="_blank"
+        rel="noreferrer"
+        title="Open the store listing"
+      >
+        {storeLabel(store)}
+      </a>
+    );
+  }
   return (
-    <span
-      className="font-mono"
-      style={{
-        fontSize: "var(--fs-xs)",
-        padding: "1px 8px",
-        border: "1px solid var(--ink)",
-        color: "var(--ink-soft)",
-        whiteSpace: "nowrap",
-      }}
-    >
+    <span className="font-mono" style={style}>
       {storeLabel(store)}
     </span>
   );
+}
+
+/** Meta Ad Library URL for a page — the found app's live ads, viewable before enrich. */
+function adLibraryUrl(pageId: string): string {
+  return `https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=US&view_all_page_id=${encodeURIComponent(pageId)}`;
 }
 
 /** Triage state as plain, color-stepped text (spec copy: checking / kept / vetoed). */
@@ -135,10 +155,31 @@ export function RoundBlock({ round, results }: { round: HuntRound; results: Hunt
                   flexWrap: "wrap",
                 }}
               >
-                <span className="t-sm w-strong" style={{ flex: "1 1 180px", minWidth: 0 }}>
-                  {r.page_name ?? r.store_id}
-                </span>
-                <StoreBadge store={r.store} />
+                {scored ? (
+                  <Link
+                    className="t-sm w-strong"
+                    href={`/gems/${r.kept_advertiser_id}`}
+                    style={{ flex: "1 1 180px", minWidth: 0, color: "var(--ink)", textDecoration: "underline" }}
+                    title="Open the gem page"
+                  >
+                    {r.page_name ?? r.store_id}
+                  </Link>
+                ) : (
+                  <span className="t-sm w-strong" style={{ flex: "1 1 180px", minWidth: 0 }}>
+                    {r.page_name ?? r.store_id}
+                  </span>
+                )}
+                <StoreBadge store={r.store} href={r.link_url} />
+                <a
+                  className="t-xs"
+                  href={adLibraryUrl(r.page_id)}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{ color: "var(--ink-soft)", textDecoration: "underline" }}
+                  title="Open this page's ads in the Meta Ad Library"
+                >
+                  Ads
+                </a>
                 <span className="t-xs" style={{ color: "var(--muted)" }} title="Search term that surfaced this app">
                   {r.source_term}
                 </span>
