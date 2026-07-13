@@ -138,6 +138,109 @@ func TestHuntStartRoundHappyPath(t *testing.T) {
 	require.Equal(t, "queued", jobStatus)
 }
 
+func TestHuntStartRoundWithSettings(t *testing.T) {
+	t.Setenv(middlewares.APITokenEnv, writeToken)
+	r := router()
+	huntID := seedHunt(t, authedEmail, "with settings")
+
+	w := postRounds(t, r, huntID,
+		`{"terms":["sleep stories app"],"competitor_apps":[],"settings":{"page_cap":30,"patience":6}}`)
+	require.Equal(t, http.StatusAccepted, w.Code)
+
+	// The 202 response echoes the stored (clamped) settings.
+	var round struct {
+		Settings map[string]int `json:"settings"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &round))
+	require.Equal(t, 30, round.Settings["page_cap"])
+	require.Equal(t, 6, round.Settings["patience"])
+
+	// GET shows the round's settings stored.
+	gw := httptest.NewRecorder()
+	r.ServeHTTP(gw, authed(httptest.NewRequest(http.MethodGet, "/api/hunts/"+strconv.Itoa(huntID), nil)))
+	require.Equal(t, http.StatusOK, gw.Code)
+	var resp struct {
+		Rounds []struct {
+			Settings map[string]int `json:"settings"`
+		} `json:"rounds"`
+	}
+	require.NoError(t, json.Unmarshal(gw.Body.Bytes(), &resp))
+	require.Len(t, resp.Rounds, 1)
+	require.Equal(t, 30, resp.Rounds[0].Settings["page_cap"])
+	require.Equal(t, 6, resp.Rounds[0].Settings["patience"])
+}
+
+func TestHuntStartRoundSettingsClamped(t *testing.T) {
+	t.Setenv(middlewares.APITokenEnv, writeToken)
+	r := router()
+	huntID := seedHunt(t, authedEmail, "clamp settings")
+
+	// page_cap 999 is above the 100 ceiling → the stored row clamps to 100.
+	w := postRounds(t, r, huntID, `{"terms":["sleep stories app"],"settings":{"page_cap":999}}`)
+	require.Equal(t, http.StatusAccepted, w.Code)
+
+	var stored string
+	require.NoError(t, db.DB().Raw(
+		`SELECT settings::text FROM frontend.hunt_rounds WHERE hunt_id = ?`, huntID).Scan(&stored).Error)
+	var st map[string]int
+	require.NoError(t, json.Unmarshal([]byte(stored), &st))
+	require.Equal(t, 100, st["page_cap"], "page_cap 999 clamps to 100")
+}
+
+func TestHuntStartRoundNoSettings(t *testing.T) {
+	t.Setenv(middlewares.APITokenEnv, writeToken)
+	r := router()
+	huntID := seedHunt(t, authedEmail, "no settings")
+
+	w := postRounds(t, r, huntID, `{"terms":["sleep stories app"],"competitor_apps":[]}`)
+	require.Equal(t, http.StatusAccepted, w.Code)
+
+	// Absent settings → the NOT NULL column defaults to '{}'.
+	var stored string
+	require.NoError(t, db.DB().Raw(
+		`SELECT settings::text FROM frontend.hunt_rounds WHERE hunt_id = ?`, huntID).Scan(&stored).Error)
+	require.Equal(t, "{}", stored)
+
+	gw := httptest.NewRecorder()
+	r.ServeHTTP(gw, authed(httptest.NewRequest(http.MethodGet, "/api/hunts/"+strconv.Itoa(huntID), nil)))
+	require.Equal(t, http.StatusOK, gw.Code)
+	var resp struct {
+		Rounds []struct {
+			Settings json.RawMessage `json:"settings"`
+		} `json:"rounds"`
+	}
+	require.NoError(t, json.Unmarshal(gw.Body.Bytes(), &resp))
+	require.Len(t, resp.Rounds, 1)
+	require.Equal(t, "{}", strings.TrimSpace(string(resp.Rounds[0].Settings)))
+}
+
+func TestHuntGetReturnsToolLog(t *testing.T) {
+	r := router()
+	huntID := seedHunt(t, authedEmail, "tool log thread")
+
+	// An assistant turn that read round telemetry carries a tool_log jsonb array.
+	require.NoError(t, db.DB().Exec(
+		`INSERT INTO frontend.hunt_messages (hunt_id, role, content, tool_log)
+		 VALUES (?, 'assistant', 'checked the last round', CAST(? AS jsonb))`,
+		huntID, `["checked round 1's report","looked at round 1's results"]`).Error)
+
+	gw := httptest.NewRecorder()
+	r.ServeHTTP(gw, authed(httptest.NewRequest(http.MethodGet, "/api/hunts/"+strconv.Itoa(huntID), nil)))
+	require.Equal(t, http.StatusOK, gw.Code)
+	var resp struct {
+		Messages []struct {
+			Role    string          `json:"role"`
+			ToolLog json.RawMessage `json:"tool_log"`
+		} `json:"messages"`
+	}
+	require.NoError(t, json.Unmarshal(gw.Body.Bytes(), &resp))
+	require.Len(t, resp.Messages, 1)
+	require.Equal(t, "assistant", resp.Messages[0].Role)
+	var log []string
+	require.NoError(t, json.Unmarshal(resp.Messages[0].ToolLog, &log))
+	require.Equal(t, []string{"checked round 1's report", "looked at round 1's results"}, log)
+}
+
 func TestHuntStartRoundNullMessageID(t *testing.T) {
 	t.Setenv(middlewares.APITokenEnv, writeToken)
 	r := router()

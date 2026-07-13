@@ -469,6 +469,11 @@ func (h *GeminiHelper) GenerateHuntTurn(ctx context.Context, in HuntTurnInput, t
 	if h == nil {
 		return HuntTurn{}, fmt.Errorf("gemini helper not initialized")
 	}
+	// A nil executor would panic on the first reader-tool dispatch (nil-interface
+	// call). Fail soft the same way the nil-helper guard does.
+	if tools == nil {
+		return HuntTurn{}, fmt.Errorf("hunt tools are not configured")
+	}
 
 	decls := []*genai.FunctionDeclaration{
 		{

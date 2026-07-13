@@ -209,6 +209,8 @@ func HuntRoundSummaries(ctx context.Context, g *gorm.DB, huntID int) ([]models.H
 		return tx.Raw(
 			`SELECT r.id AS round_id,
 			        r.terms AS terms,
+			        r.settings AS settings,
+			        r.progress AS progress,
 			        COALESCE(jsonb_array_length(r.terms), 0) AS term_count,
 			        (SELECT count(*) FROM frontend.hunt_results hr
 			          WHERE hr.round_id = r.id) AS found_count,

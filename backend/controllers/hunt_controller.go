@@ -3,13 +3,16 @@ package controllers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 
 	"github.com/edaslakavicius/emerging-app-finder/backend/db"
 	"github.com/edaslakavicius/emerging-app-finder/backend/helpers"
@@ -17,6 +20,50 @@ import (
 	"github.com/edaslakavicius/emerging-app-finder/backend/models"
 	"github.com/edaslakavicius/emerging-app-finder/backend/repositories"
 )
+
+// huntTools is the per-request read side the Peon agent loop calls into for round
+// telemetry. It is scoped to a single hunt: a round id that belongs to another
+// hunt comes back as an error string the model sees ("no such round in this
+// hunt"), never another user's data.
+type huntTools struct {
+	ctx    context.Context
+	g      *gorm.DB
+	huntID int
+}
+
+// GetRoundReport returns the compact-JSON status digest for one round, or an
+// error when the round does not belong to this hunt.
+func (t huntTools) GetRoundReport(roundID int) (string, error) {
+	rep, err := repositories.RoundReport(t.ctx, t.g, t.huntID, roundID)
+	if err != nil {
+		return "", err
+	}
+	if rep == nil {
+		return "", errors.New("no such round in this hunt")
+	}
+	b, err := json.Marshal(rep)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
+// GetRoundResults returns up to 50 result rows for one round as a compact-JSON
+// array string, optionally filtered by triage (kept|vetoed|pending; "" for all).
+func (t huntTools) GetRoundResults(roundID int, triage string) (string, error) {
+	rows, err := repositories.RoundResults(t.ctx, t.g, t.huntID, roundID, triage, 50)
+	if err != nil {
+		return "", err
+	}
+	if rows == nil {
+		rows = []models.HuntResultRow{}
+	}
+	b, err := json.Marshal(rows)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
 
 // huntProposalTimeout bounds the Peon (Gemini) turn. It is deliberately longer
 // than reqCtx's 15s DB budget: a proposal round-trips the model with 3-attempt
@@ -136,10 +183,11 @@ func (c *HuntController) Create(ctx *gin.Context) {
 	}
 
 	// New thread → no history, no prior rounds.
-	if !c.proposeAndAppend(ctx, huntID, message, nil, nil, nil) {
+	round, ok := c.runTurn(ctx, huntID, helpers.HuntTurnInput{Message: message})
+	if !ok {
 		return
 	}
-	c.writeThread(ctx, huntID, http.StatusCreated)
+	c.writeThread(ctx, huntID, http.StatusCreated, round)
 }
 
 // Message handles POST /api/hunts/:hunt_id/messages — the same flow as Create on
@@ -190,52 +238,92 @@ func (c *HuntController) Message(ctx *gin.Context) {
 		history = append(history, helpers.HuntHistoryTurn{Role: m.Role, Content: m.Content})
 	}
 	tried, roundLines := summarizeRounds(summaries)
-	if !c.proposeAndAppend(ctx, huntID, message, history, tried, roundLines) {
-		return
-	}
-	c.writeThread(ctx, huntID, http.StatusCreated)
-}
-
-// proposeAndAppend runs the Gemini turn under a 30s budget and appends the
-// assistant message. It writes the error response (502) and returns false on
-// failure — leaving the already-persisted user message intact. The stored
-// proposal jsonb carries only {terms, competitor_apps}; the reply is the message
-// content.
-func (c *HuntController) proposeAndAppend(ctx *gin.Context, huntID int, message string,
-	history []helpers.HuntHistoryTurn, tried, roundLines []string) bool {
-	gctx, cancel := context.WithTimeout(ctx.Request.Context(), huntProposalTimeout)
-	defer cancel()
-	prop, err := c.gemini.GenerateHuntProposal(gctx, helpers.HuntProposalInput{
+	round, ok := c.runTurn(ctx, huntID, helpers.HuntTurnInput{
 		Message:        message,
 		History:        history,
 		TriedTerms:     tried,
 		RoundSummaries: roundLines,
 	})
+	if !ok {
+		return
+	}
+	c.writeThread(ctx, huntID, http.StatusCreated, round)
+}
+
+// runTurn runs one Peon agent turn under a 30s budget and appends the assistant
+// message. It writes the error response (502) and returns ok=false on a Gemini
+// failure — leaving the already-persisted user message intact. The assistant
+// message carries the reply as content, a {terms, competitor_apps, settings}
+// proposal jsonb when the model proposed a round, and a tool_log jsonb when the
+// loop read any round telemetry. When the model started a round (founder said
+// "run"), the round is inserted with message_id = this assistant message and
+// returned so the caller can echo it in the response.
+func (c *HuntController) runTurn(ctx *gin.Context, huntID int, input helpers.HuntTurnInput) (*models.HuntRoundRow, bool) {
+	gctx, cancel := context.WithTimeout(ctx.Request.Context(), huntProposalTimeout)
+	defer cancel()
+
+	tools := huntTools{ctx: gctx, g: db.DB(), huntID: huntID}
+	turn, err := c.gemini.GenerateHuntTurn(gctx, input, tools)
 	if err != nil {
 		helpers.Detail(ctx, http.StatusBadGateway, "Peon could not answer. Try again.")
-		return false
+		return nil, false
 	}
 
-	proposalJSON, err := json.Marshal(struct {
-		Terms          []string `json:"terms"`
-		CompetitorApps []string `json:"competitor_apps"`
-	}{Terms: emptyIfNil(prop.Terms), CompetitorApps: emptyIfNil(prop.CompetitorApps)})
-	if err != nil {
-		helpers.Detail(ctx, http.StatusInternalServerError, "something went wrong.")
-		return false
+	var proposalJSON json.RawMessage
+	if turn.Proposal != nil {
+		proposalJSON, err = marshalHuntPlan(*turn.Proposal)
+		if err != nil {
+			helpers.Detail(ctx, http.StatusInternalServerError, "something went wrong.")
+			return nil, false
+		}
+	}
+	var toolLogJSON json.RawMessage
+	if len(turn.ToolLog) > 0 {
+		toolLogJSON, err = json.Marshal(turn.ToolLog)
+		if err != nil {
+			helpers.Detail(ctx, http.StatusInternalServerError, "something went wrong.")
+			return nil, false
+		}
 	}
 
 	rctx, cancel2 := reqCtx(ctx)
 	defer cancel2()
-	if _, err := repositories.InsertHuntMessage(rctx, db.DB(), huntID, "assistant", prop.Reply, proposalJSON, nil); err != nil {
+	msgID, err := repositories.InsertHuntMessage(rctx, db.DB(), huntID, "assistant", turn.Reply, proposalJSON, toolLogJSON)
+	if err != nil {
 		helpers.Detail(ctx, http.StatusInternalServerError, "could not save reply.")
-		return false
+		return nil, false
 	}
-	return true
+
+	if turn.Start == nil {
+		return nil, true
+	}
+
+	// Founder said "run": start the round now, linked to this assistant message.
+	termsJSON, _ := json.Marshal(emptyIfNil(turn.Start.Terms))
+	compsJSON, _ := json.Marshal(emptyIfNil(turn.Start.CompetitorApps))
+	settingsJSON, _ := json.Marshal(clampedOrEmpty(turn.Start.Settings))
+	roundID, err := repositories.InsertHuntRound(rctx, db.DB(), huntID, &msgID, termsJSON, compsJSON, settingsJSON)
+	if err != nil {
+		helpers.Detail(ctx, http.StatusInternalServerError, "could not start round.")
+		return nil, false
+	}
+	rounds, err := repositories.ListHuntRounds(rctx, db.DB(), huntID)
+	if err != nil {
+		helpers.Detail(ctx, http.StatusInternalServerError, "something went wrong.")
+		return nil, false
+	}
+	for i := range rounds {
+		if rounds[i].ID == roundID {
+			return &rounds[i], true
+		}
+	}
+	helpers.Detail(ctx, http.StatusInternalServerError, "round not found after insert.")
+	return nil, false
 }
 
-// writeThread returns {hunt_id, messages} after a chat turn.
-func (c *HuntController) writeThread(ctx *gin.Context, huntID, status int) {
+// writeThread returns {hunt_id, messages} after a chat turn, plus an optional
+// "round" when the turn started one. The GET /hunts/:id shape is untouched.
+func (c *HuntController) writeThread(ctx *gin.Context, huntID, status int, round *models.HuntRoundRow) {
 	rctx, cancel := reqCtx(ctx)
 	defer cancel()
 	msgs, err := repositories.ListHuntMessages(rctx, db.DB(), huntID)
@@ -246,7 +334,35 @@ func (c *HuntController) writeThread(ctx *gin.Context, huntID, status int) {
 	if msgs == nil {
 		msgs = []models.HuntMessageRow{}
 	}
-	ctx.JSON(status, gin.H{"hunt_id": huntID, "messages": msgs})
+	resp := gin.H{"hunt_id": huntID, "messages": msgs}
+	if round != nil {
+		resp["round"] = round
+	}
+	ctx.JSON(status, resp)
+}
+
+// marshalHuntPlan renders a proposed plan as the {terms, competitor_apps,
+// settings} proposal jsonb the assistant message stores. The settings key is
+// always present (an empty object when nothing was set).
+func marshalHuntPlan(p helpers.HuntPlan) (json.RawMessage, error) {
+	return json.Marshal(struct {
+		Terms          []string       `json:"terms"`
+		CompetitorApps []string       `json:"competitor_apps"`
+		Settings       map[string]int `json:"settings"`
+	}{
+		Terms:          emptyIfNil(p.Terms),
+		CompetitorApps: emptyIfNil(p.CompetitorApps),
+		Settings:       clampedOrEmpty(p.Settings),
+	})
+}
+
+// clampedOrEmpty returns a non-nil settings map so it marshals to "{}" rather
+// than "null".
+func clampedOrEmpty(s map[string]int) map[string]int {
+	if s == nil {
+		return map[string]int{}
+	}
+	return s
 }
 
 // Get handles GET /api/hunts/:hunt_id → {hunt, messages, rounds, results}.
@@ -310,10 +426,17 @@ func (c *HuntController) Get(ctx *gin.Context) {
 	})
 }
 
+type huntSettingsBody struct {
+	PageCap      *int `json:"page_cap"`
+	Patience     *int `json:"patience"`
+	ListingPages *int `json:"listing_pages"`
+}
+
 type startRoundBody struct {
-	MessageID      *int     `json:"message_id"`
-	Terms          []string `json:"terms"`
-	CompetitorApps []string `json:"competitor_apps"`
+	MessageID      *int              `json:"message_id"`
+	Terms          []string          `json:"terms"`
+	CompetitorApps []string          `json:"competitor_apps"`
+	Settings       *huntSettingsBody `json:"settings"`
 }
 
 // StartRound handles POST /api/hunts/:hunt_id/rounds. It normalizes and validates
@@ -346,9 +469,21 @@ func (c *HuntController) StartRound(ctx *gin.Context) {
 	termsJSON, _ := json.Marshal(terms)
 	compsJSON, _ := json.Marshal(competitors)
 
+	// Optional founder-set knobs, clamped to their server-side bounds. Absent
+	// settings marshal to a nil json.RawMessage → the repo defaults '{}'.
+	var settingsJSON json.RawMessage
+	if body.Settings != nil {
+		clamped := helpers.ClampHuntSettings(helpers.HuntSettings{
+			PageCap:      body.Settings.PageCap,
+			Patience:     body.Settings.Patience,
+			ListingPages: body.Settings.ListingPages,
+		})
+		settingsJSON, _ = json.Marshal(clamped)
+	}
+
 	rctx, cancel := reqCtx(ctx)
 	defer cancel()
-	roundID, err := repositories.InsertHuntRound(rctx, db.DB(), huntID, body.MessageID, termsJSON, compsJSON, nil)
+	roundID, err := repositories.InsertHuntRound(rctx, db.DB(), huntID, body.MessageID, termsJSON, compsJSON, settingsJSON)
 	if err != nil {
 		helpers.Detail(ctx, http.StatusInternalServerError, "could not start round.")
 		return
@@ -414,7 +549,11 @@ func trimNonEmpty(in []string) []string {
 }
 
 // summarizeRounds flattens prior-round terms into the never-repeat list and
-// renders one compact line per round for the model context.
+// renders one compact line per round for the model context, e.g.
+// "round 2: 3 terms, depth 40, 7 found, 2 kept; stops: dry x2, exhausted x1".
+// The depth segment comes from the round's page_cap setting and the stops
+// segment aggregates per-term stop reasons from the progress jsonb; both are
+// omitted when absent.
 func summarizeRounds(summaries []models.HuntRoundSummary) (tried, lines []string) {
 	for i, s := range summaries {
 		var terms []string
@@ -422,10 +561,68 @@ func summarizeRounds(summaries []models.HuntRoundSummary) (tried, lines []string
 			_ = json.Unmarshal(s.Terms, &terms)
 		}
 		tried = append(tried, terms...)
-		lines = append(lines, fmt.Sprintf("round %d: %d terms, %d found, %d kept",
-			i+1, s.TermCount, s.FoundCount, s.KeptCount))
+
+		var b strings.Builder
+		fmt.Fprintf(&b, "round %d: %d terms", i+1, s.TermCount)
+		if depth := settingInt(s.Settings, "page_cap"); depth > 0 {
+			fmt.Fprintf(&b, ", depth %d", depth)
+		}
+		fmt.Fprintf(&b, ", %d found, %d kept", s.FoundCount, s.KeptCount)
+		if stops := stopSummary(s.Progress); stops != "" {
+			fmt.Fprintf(&b, "; stops: %s", stops)
+		}
+		lines = append(lines, b.String())
 	}
 	return tried, lines
+}
+
+// settingInt reads one integer key from a settings jsonb object, 0 when absent
+// or unparseable.
+func settingInt(raw json.RawMessage, key string) int {
+	if len(raw) == 0 {
+		return 0
+	}
+	var m map[string]int
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return 0
+	}
+	return m[key]
+}
+
+// stopSummary aggregates the per-term stop reasons in a round's progress jsonb
+// into a compact "dry x2, exhausted x1" string (reasons sorted for stability).
+// Returns "" when there is no per-term progress to report.
+func stopSummary(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var p struct {
+		Terms map[string]struct {
+			Stop string `json:"stop"`
+		} `json:"terms"`
+	}
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return ""
+	}
+	counts := map[string]int{}
+	for _, t := range p.Terms {
+		if t.Stop != "" {
+			counts[t.Stop]++
+		}
+	}
+	if len(counts) == 0 {
+		return ""
+	}
+	reasons := make([]string, 0, len(counts))
+	for r := range counts {
+		reasons = append(reasons, r)
+	}
+	sort.Strings(reasons)
+	segs := make([]string, 0, len(reasons))
+	for _, r := range reasons {
+		segs = append(segs, fmt.Sprintf("%s x%d", r, counts[r]))
+	}
+	return strings.Join(segs, ", ")
 }
 
 func emptyIfNil(in []string) []string {

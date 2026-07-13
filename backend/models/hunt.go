@@ -75,6 +75,8 @@ type HuntResultRow struct {
 type HuntRoundSummary struct {
 	RoundID    int             `json:"round_id" gorm:"column:round_id"`
 	Terms      json.RawMessage `json:"terms" gorm:"column:terms"`
+	Settings   json.RawMessage `json:"settings" gorm:"column:settings"`
+	Progress   json.RawMessage `json:"progress" gorm:"column:progress"`
 	TermCount  int             `json:"term_count" gorm:"column:term_count"`
 	FoundCount int             `json:"found_count" gorm:"column:found_count"`
 	KeptCount  int             `json:"kept_count" gorm:"column:kept_count"`
