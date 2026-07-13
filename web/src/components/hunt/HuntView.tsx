@@ -152,7 +152,15 @@ export function HuntView() {
   const startRound = useCallback(
     async (messageId: number, terms: string[], competitorApps: string[]) => {
       if (activeId == null) return;
-      await postHuntRound(activeId, { message_id: messageId, terms, competitor_apps: competitorApps });
+      const round = await postHuntRound(activeId, { message_id: messageId, terms, competitor_apps: competitorApps });
+      // Optimistic render: drop the 202-returned round into local state right
+      // away so RoundBlock shows it (queued) and ProposalCard's started-round
+      // gating reacts, without waiting for the loadThread round-trip below.
+      // Guard on hunt.id so a stale in-flight response can't land on another
+      // thread; the subsequent loadThread reconciles/replaces local state.
+      setThread((prev) =>
+        prev && prev.hunt.id === activeId ? { ...prev, rounds: [...prev.rounds, round] } : prev,
+      );
       await loadThread(activeId);
       refreshHunts();
     },
