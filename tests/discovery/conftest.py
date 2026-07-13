@@ -2,14 +2,19 @@ from dataclasses import dataclass, field
 from agf.parse import AdRecord
 from agf.classify import classify_url
 from agf.extract.deeplink import ResolvedLink
+from agf.extract.errors import ExtractError
 
 # epoch helpers for deterministic longevity in tests
 NOW_EPOCH = 1_749_000_000           # ~2026-06-04
 DAY = 86_400
 
 
-def make_ad(archive, page_id, page_name, link_url, *, days_old=30, active=True):
-    """An AdRecord whose start_date is `days_old` days before NOW_EPOCH."""
+def make_ad(archive="fake-ad", page_id="", page_name="", link_url="",
+            *, days_old=30, active=True):
+    """An AdRecord whose start_date is `days_old` days before NOW_EPOCH.
+
+    All positional args are keyword-defaulted so callers may pass only the
+    fields they care about (the hunt tests build ads by page_id/link_url)."""
     return AdRecord(archive, page_id, page_name, active, NOW_EPOCH - days_old * DAY,
                     None, 1, "INSTALL_MOBILE_APP", "Install", link_url, "body")
 
@@ -24,10 +29,13 @@ class FakeExtractor:
     links: dict = field(default_factory=dict)         # url -> ResolvedLink
     default_ads: list = field(default_factory=list)
     page_scripts: dict = field(default_factory=dict)  # query -> [[AdRecord], ...] (search_page)
+    error_queries: set = field(default_factory=set)   # queries that raise ExtractError
 
     async def search(self, *, query="", countries=("US",), active_status="ACTIVE",
                      sort_by_impressions=False, search_type="KEYWORD_UNORDERED",
                      view_all_page_id=None, max_pages=10, stats=None):
+        if query in self.error_queries:
+            raise ExtractError(f"fake search failure for {query!r}")
         if stats is not None:
             stats.update(pages=1, has_next=False)
         if view_all_page_id is not None:
@@ -50,6 +58,8 @@ class FakeExtractor:
         (script_pages) win; otherwise fall back to keyword_ads/default_ads as ONE page
         (has_next False) so the existing single-SERP fold tests still pass. Cursor is an
         opaque "p<idx>" token for the NEXT page index (None => page 0, None at exhaustion)."""
+        if query in self.error_queries:
+            raise ExtractError(f"fake search failure for {query!r}")
         if query in self.page_scripts:
             pages = self.page_scripts[query]
             idx = 0 if cursor is None else int(str(cursor)[1:])
