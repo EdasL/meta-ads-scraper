@@ -5,9 +5,10 @@
 
 ## What this is
 
-A new **Hunt** page where the founder chats with an AI to hunt a specific niche
-or a competitor's ads on demand. The AI brainstorms Ad Library search terms,
-the founder edits/approves them, the worker sweeps them against Meta
+A new **Hunt** page where the founder chats with **Peon** — the product's
+in-app agent — to hunt a specific niche or a competitor's ads on demand.
+Peon brainstorms Ad Library search terms and suggests a list, the founder
+edits it and presses **Start hunt**, the worker sweeps the terms against Meta
 immediately (deep, adaptive paging), pulls named competitors' own ad pages,
 and streams results back live. Everything found flows into the normal
 system-wide pipeline (candidates → triage → enrich → score), and the terms
@@ -19,7 +20,8 @@ Founder-locked scope decisions:
 - Result = **fast raw list** (streamed as found), not wait-for-full-scores.
   Kept finds continue into enrich/scoring and the hunt view links to gem
   pages as they land.
-- AI **shows terms first**; founder edits, then fires the run.
+- Peon **suggests the term list first**; founder edits, then presses
+  **Start hunt** (exact button label).
 - **Hunts page with history** — each hunt is a persistent thread.
 - **Conversational rounds** — follow-up messages in the same thread spawn new
   term batches (AI knows what was tried/found) and new runs.
@@ -30,8 +32,11 @@ Founder-locked scope decisions:
 
 Standing product constraints restated: US-only sweeps, apps are the target
 (web-funnel rejects still fold into `funnel_candidates` automatically via the
-shared sweep classifier). Product nouns: this surface is called **Hunt**; all
-copy plain and grounded in real data per CLAUDE.md.
+shared sweep classifier). Product nouns: the surface is called **Hunt**, the
+in-app agent is named **Peon** (assistant messages are attributed to Peon in
+the UI; the name appears nowhere in schema or code identifiers — tables and
+symbols stay `hunt*`); all copy plain and grounded in real data per
+CLAUDE.md.
 
 ## Architecture (approved fork)
 
@@ -179,9 +184,10 @@ New page `/hunt` (added to the protected-routes list — verify the cookieless
 
 - **Left rail:** hunt history (title, date, last-round status). New hunt
   button.
-- **Thread view:** chat messages; assistant proposal renders as an editable
-  term-chip list (remove/add/edit) + competitor apps with checkboxes + a
-  **Run** button that posts the edited set to `/rounds`.
+- **Thread view:** chat with Peon (assistant messages labeled "Peon");
+  Peon's proposal renders as an editable term-chip list (remove/add/edit) +
+  competitor apps with checkboxes + a **Start hunt** button that posts the
+  edited set to `/rounds`.
 - **Round block** (appears under its proposal): activity feed (the
   `progress.events` sentences, newest on top, auto-scrolling), lane status
   line ("3 lanes · term 6/12 · page 23"), and the streaming results list.
