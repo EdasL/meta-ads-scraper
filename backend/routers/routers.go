@@ -10,6 +10,7 @@ import (
 
 	"github.com/edaslakavicius/emerging-app-finder/backend/controllers"
 	"github.com/edaslakavicius/emerging-app-finder/backend/db"
+	"github.com/edaslakavicius/emerging-app-finder/backend/helpers"
 	"github.com/edaslakavicius/emerging-app-finder/backend/mcpserver"
 	"github.com/edaslakavicius/emerging-app-finder/backend/middlewares"
 	"github.com/edaslakavicius/emerging-app-finder/backend/monitoring"
@@ -29,6 +30,7 @@ func Init(r *gin.Engine) {
 	health := controllers.NewHealthController()
 	media := controllers.NewMediaController()
 	users := controllers.NewUsersController()
+	hunt := controllers.NewHuntController(helpers.NewGeminiHelper())
 
 	// Every /api route requires auth: a personal fd_ key OR the static internal
 	// token with a resolvable X-User-Email (KeyAuth(true)). This closes the
@@ -66,6 +68,14 @@ func Init(r *gin.Engine) {
 		// The caller's own account (identity from KeyAuth, never a query param).
 		api.GET("/me", users.Me)
 		api.POST("/me/onboarded", middlewares.RequireToken(), users.MarkOnboarded)
+		// On-demand AI-assisted discovery (Hunt). Reads are open to the owner;
+		// the chat turns and round-start are token-guarded writes. Every :hunt_id
+		// route 404s on an ownership miss (never 403 — existence stays hidden).
+		api.GET("/hunts", hunt.List)
+		api.POST("/hunts", middlewares.RequireToken(), hunt.Create)
+		api.GET("/hunts/:hunt_id", hunt.Get)
+		api.POST("/hunts/:hunt_id/messages", middlewares.RequireToken(), hunt.Message)
+		api.POST("/hunts/:hunt_id/rounds", middlewares.RequireToken(), hunt.StartRound)
 		api.GET("/health/metrics", health.Metrics)
 		api.GET("/health/coverage", health.Coverage)
 		api.GET("/media/*key", media.Get)
