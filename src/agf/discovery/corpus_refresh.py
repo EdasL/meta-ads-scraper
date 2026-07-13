@@ -31,9 +31,12 @@ def corpus_due_for_refresh(conn, *, stale_hours: int = 48, err_ttl_hours: int = 
     """The queue-producer slice of the refresh target set: advertisers_with_page
     whose freshest ad is older than stale_hours (the re-enqueue floor — a small
     corpus never hot-loops), minus advertisers with a logging.crawl_log row of
-    entity_type='corpus_refresh' fresher than err_ttl_hours (failure suppression,
-    same starvation-hot-loop defense as keepers_due_for_history). Stalest first,
-    bounded by limit; enqueue_jobs' active-unique index dedups queued/running."""
+    entity_type='corpus_refresh' that is either fresher than stale_hours (ANY
+    outcome — the 'ok' stamp is the only progress a DEAD advertiser makes, since an
+    empty listing bumps no ads.last_seen) or an error fresher than err_ttl_hours
+    (failure suppression, same starvation-hot-loop defense as
+    keepers_due_for_history). Stalest first, bounded by limit; enqueue_jobs'
+    active-unique index dedups queued/running."""
     return [(r[0], r[1]) for r in conn.execute(text("""
         SELECT a.id, a.page_id
         FROM public.advertisers a
@@ -42,7 +45,9 @@ def corpus_due_for_refresh(conn, *, stale_hours: int = 48, err_ttl_hours: int = 
           AND NOT EXISTS (SELECT 1 FROM logging.crawl_log l
                           WHERE l.entity_type = 'corpus_refresh'
                             AND l.entity_id = a.id
-                            AND l.crawled_at > now() - make_interval(hours => :ttl))
+                            AND (l.crawled_at > now() - make_interval(hours => :stale)
+                                 OR (left(l.crawl_result, 6) = 'error:'
+                                     AND l.crawled_at > now() - make_interval(hours => :ttl))))
         GROUP BY a.id, a.page_id
         HAVING MAX(ad.last_seen) < now() - make_interval(hours => :stale)
         ORDER BY MAX(ad.last_seen) ASC, a.id

@@ -116,6 +116,58 @@ def test_run_kind_corpus_refresh_passes_flip_and_marks_done(db_engine, seeded_ke
         assert status == "done"
 
 
+def test_run_kind_corpus_refresh_success_writes_ok_marker(db_engine, seeded_keeper_no_history):
+    """Corpus success must stamp crawl_log 'ok' — a dead advertiser (empty listing)
+    bumps nothing in public.ads, so without the marker corpus_due_for_refresh
+    re-enqueues it every tick (hot-loop caught live 2026-07-13). Keeper success
+    stays marker-free (a pulled keeper gains metrics rows and leaves the base query)."""
+    adv = seeded_keeper_no_history
+    with begin(db_engine) as conn:
+        conn.execute(text(
+            "DELETE FROM logging.crawl_log WHERE entity_type='corpus_refresh' "
+            "AND entity_id=:a"), {"a": adv})
+        enqueue_jobs(conn, "corpus_refresh", [adv])
+        job = conn.execute(text(
+            "SELECT id FROM public.pipeline_jobs WHERE kind='corpus_refresh' "
+            "AND advertiser_id=:a ORDER BY id DESC LIMIT 1"), {"a": adv}).scalar_one()
+
+    async def fake_refresh(engine, extractor, advertiser_id, page_id, **kw):
+        return {"ads_stored": 0, "truncated": False, "flipped": 0}  # dead page
+
+    from agf.discovery.keeper_one import run
+    try:
+        assert run(db_engine, adv, job, kind="corpus_refresh", flip_vanished=True,
+                   refresh=fake_refresh, extractor=object()) == 0
+        with db_engine.connect() as conn:
+            marked = conn.execute(text(
+                "SELECT crawl_result FROM logging.crawl_log "
+                "WHERE entity_type='corpus_refresh' AND entity_id=:a "
+                "ORDER BY crawled_at DESC LIMIT 1"), {"a": adv}).scalar()
+            assert marked == "ok"
+    finally:
+        with db_engine.begin() as conn:
+            conn.execute(text(
+                "DELETE FROM logging.crawl_log WHERE entity_type='corpus_refresh' "
+                "AND entity_id=:a"), {"a": adv})
+
+
+def test_run_keeper_success_writes_no_marker(db_engine, seeded_keeper_no_history):
+    adv = seeded_keeper_no_history
+    with begin(db_engine) as conn:
+        job = _seed_job(conn, adv)
+
+    async def fake_refresh(engine, extractor, advertiser_id, page_id, **kw):
+        return {"ads_stored": 3, "truncated": False, "flipped": 0}
+
+    from agf.discovery.keeper_one import run
+    assert run(db_engine, adv, job, refresh=fake_refresh, extractor=object()) == 0
+    with db_engine.connect() as conn:
+        marked = conn.execute(text(
+            "SELECT 1 FROM logging.crawl_log WHERE entity_type='keeper_history' "
+            "AND entity_id=:a"), {"a": adv}).first()
+    assert marked is None
+
+
 def test_run_kind_corpus_refresh_error_marks_kind_crawl_log(db_engine, seeded_keeper_no_history):
     """Failure marker lands under the JOB's kind — corpus_due_for_refresh TTL-
     suppresses on entity_type='corpus_refresh', never on the keeper kind."""

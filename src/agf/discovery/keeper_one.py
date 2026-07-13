@@ -62,6 +62,14 @@ def run(engine, advertiser_id: int, job_id: int, *, kind: str = "keeper_history"
                          f"error:{type(e).__name__}"[:64])
         return 1
     set_status(engine, job_id, "done", finished=True, status_table="pipeline_jobs")
+    if kind == "corpus_refresh":
+        # Success progress stamp: a DEAD advertiser (empty listing) bumps nothing in
+        # public.ads, so without this marker corpus_due_for_refresh keeps it at the
+        # front of the stalest-first queue and re-enqueues it EVERY tick (hot-loop
+        # caught live 2026-07-13). Keepers need no success marker — a pulled keeper
+        # gains metrics rows and drops out of its base query.
+        with begin(engine) as conn:
+            mark_crawled(conn, kind, advertiser_id, "ok")
     return 0
 
 

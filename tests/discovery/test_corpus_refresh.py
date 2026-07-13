@@ -216,6 +216,30 @@ def test_corpus_due_suppresses_recent_error_marker(pg_conn):
     assert b in due_ids
 
 
+def test_corpus_due_suppresses_recent_success_marker(pg_conn):
+    """A DEAD advertiser (no live ads in the listing) never bumps ads.last_seen, so
+    the 'ok' crawl_log marker is the only progress stamp — without this suppression
+    the stalest-first queue hot-loops the same dead advertisers every tick
+    (caught live 2026-07-13: 16 done jobs, freshest_ad still a month old)."""
+    _clean_corpus(pg_conn)
+    a = repo.upsert_advertiser(pg_conn, SimpleNamespace(page_id="CORPUSREFA", page_name="A", page_like_count=10))
+    b = repo.upsert_advertiser(pg_conn, SimpleNamespace(page_id="CORPUSREFB", page_name="B", page_like_count=10))
+    repo.upsert_ad(pg_conn, make_ad("cr-A1", "CORPUSREFA", "A", "https://x/app"), a, None)
+    repo.upsert_ad(pg_conn, make_ad("cr-B1", "CORPUSREFB", "B", "https://x/app"), b, None)
+    pg_conn.execute(text("UPDATE public.ads SET last_seen = now() - interval '30 days' WHERE advertiser_id = ANY(:i)"), {"i": [a, b]})
+    # A refreshed OK just now (dead page — ads unchanged); B refreshed OK 3 days ago
+    mark_crawled(pg_conn, "corpus_refresh", a, "ok")
+    mark_crawled(pg_conn, "corpus_refresh", b, "ok")
+    pg_conn.execute(text(
+        "UPDATE logging.crawl_log SET crawled_at = now() - interval '3 days' "
+        "WHERE entity_type = 'corpus_refresh' AND entity_id = :i"), {"i": b})
+
+    due_ids = [aid for aid, pid in corpus_due_for_refresh(pg_conn, stale_hours=48, err_ttl_hours=168, limit=100)
+               if pid.startswith("CORPUSREF")]
+    assert a not in due_ids                          # fresh 'ok' marker suppresses
+    assert b in due_ids                              # marker older than the floor: due again
+
+
 def test_refresh_corpus_beats_heartbeat_per_advertiser(pg_conn, _migrated_engine):
     # The nightly corpus refresh runs longer than the watchdog's staleness budget
     # (2026-07-11 crash-loop after the tick halved to 1800s shrank the budget to
