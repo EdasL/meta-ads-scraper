@@ -229,3 +229,119 @@ export async function getPreferenceQueue(
 export async function completeOnboarding(): Promise<void> {
   await live(`/me/onboarded`, { method: "POST", body: "{}" });
 }
+
+// --- Hunt (Peon-guided term search) ---
+// Field names are the exact backend JSON (backend/models/hunt.go +
+// hunt_controller.go); the Go /api group serves these under /hunts. All calls
+// ride the same session-checked `/backend/*` proxy (hunts is allowlisted there).
+
+/** One hunt thread in the list. `last_round_status` is null until a round runs. */
+export interface HuntSummary {
+  id: number;
+  title: string;
+  created_at: string;
+  last_round_status: string | null;
+}
+
+/** The assistant's structured suggestion. Stored jsonb carries ONLY these two
+ *  arrays — the conversational reply is the message content, not part of this. */
+export interface HuntProposal {
+  terms: string[];
+  competitor_apps: string[];
+}
+
+/** One transcript entry. `proposal` is null for user messages. */
+export interface HuntMessage {
+  id: number;
+  role: "user" | "assistant";
+  content: string;
+  proposal: HuntProposal | null;
+  created_at: string;
+}
+
+/** Live counters + append-only event log a running round writes to `progress`.
+ *  Every field is optional: a freshly-queued round has `{}`. */
+export interface HuntRoundProgress {
+  lanes?: number;
+  terms_done?: number;
+  terms_total?: number;
+  found?: number;
+  new?: number;
+  events?: { t: string; msg: string }[];
+}
+
+/** One approved run of founder-blessed terms. */
+export interface HuntRound {
+  id: number;
+  message_id: number | null;
+  terms: string[];
+  competitor_apps: string[];
+  status: "queued" | "running" | "done" | "error";
+  progress: HuntRoundProgress;
+  error_text: string | null;
+  created_at: string;
+  finished_at: string | null;
+}
+
+/** One (round, found page) row. `gem_score` is null until the page is kept + scored. */
+export interface HuntResult {
+  id: number;
+  round_id: number;
+  page_id: string;
+  page_name: string | null;
+  store: string;
+  store_id: string;
+  link_url: string | null;
+  source_term: string;
+  was_new: boolean;
+  triage: "pending" | "kept" | "vetoed";
+  kept_advertiser_id: number | null;
+  gem_score: number | null;
+}
+
+/** Full thread payload from GET /hunts/:id. */
+export interface HuntThread {
+  hunt: HuntSummary;
+  messages: HuntMessage[];
+  rounds: HuntRound[];
+  results: HuntResult[];
+}
+
+/** Response of the chat POSTs (create hunt / append message). The backend's
+ *  `writeThread` returns only the refreshed transcript, not rounds/results —
+ *  the caller re-fetches the full thread via `getHunt` for those. */
+export interface HuntChatTurn {
+  hunt_id: number;
+  messages: HuntMessage[];
+}
+
+/** All hunt threads for the signed-in user, newest first. */
+export async function getHunts(): Promise<HuntSummary[]> {
+  return live<HuntSummary[]>(`/hunts`);
+}
+
+/** Full thread (hunt + transcript + rounds + results). */
+export async function getHunt(id: number): Promise<HuntThread> {
+  return live<HuntThread>(`/hunts/${id}`);
+}
+
+/** Open a new thread with the founder's first message; returns the transcript. */
+export async function postHunt(message: string): Promise<HuntChatTurn> {
+  return live<HuntChatTurn>(`/hunts`, { method: "POST", body: JSON.stringify({ message }) });
+}
+
+/** Append a message to an existing thread; returns the refreshed transcript. */
+export async function postHuntMessage(id: number, message: string): Promise<HuntChatTurn> {
+  return live<HuntChatTurn>(`/hunts/${id}/messages`, {
+    method: "POST",
+    body: JSON.stringify({ message }),
+  });
+}
+
+/** Enqueue an approved round (202). Returns the newly-queued round row. */
+export async function postHuntRound(
+  id: number,
+  body: { message_id: number | null; terms: string[]; competitor_apps: string[] },
+): Promise<HuntRound> {
+  return live<HuntRound>(`/hunts/${id}/rounds`, { method: "POST", body: JSON.stringify(body) });
+}

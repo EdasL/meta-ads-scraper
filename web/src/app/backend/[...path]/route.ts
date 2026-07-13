@@ -33,6 +33,7 @@ const ALLOWED_RESOURCES = new Set([
   "health", // /health/metrics, /health/coverage
   "media", // /media/*key
   "me", // /me (profile), /me/onboarded
+  "hunts", // /hunts (+ /:id, /:id/messages, /:id/rounds)
 ]);
 
 function notFound() {
