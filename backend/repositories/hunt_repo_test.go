@@ -169,6 +169,30 @@ func TestInsertHuntRoundEnqueuesJob(t *testing.T) {
 	require.EqualValues(t, 1, jobCount)
 }
 
+func TestInsertHuntRoundNilCompetitorsStoresEmptyArray(t *testing.T) {
+	if ratingsDB == nil {
+		t.Skip("AGF_IT_DB_URL not set")
+	}
+	g := ratingsDB
+	ctx := context.Background()
+	cleanHunts(g)
+	t.Cleanup(func() { cleanHunts(g) })
+
+	huntID, err := repositories.CreateHunt(ctx, g, huntTestEmail, "nil competitors")
+	require.NoError(t, err)
+	terms, _ := json.Marshal([]string{"sleep stories app"})
+	// nil competitors must NOT violate the NOT NULL column; it defaults to '[]'.
+	roundID, err := repositories.InsertHuntRound(ctx, g, huntID, nil, terms, nil)
+	require.NoError(t, err)
+
+	var termsText, compsText string
+	require.NoError(t, g.Raw(
+		`SELECT terms::text, competitor_apps::text FROM frontend.hunt_rounds WHERE id = ?`,
+		roundID).Row().Scan(&termsText, &compsText))
+	require.Equal(t, "[]", compsText)
+	require.JSONEq(t, `["sleep stories app"]`, termsText)
+}
+
 func TestListHuntResultsJoinsGemScore(t *testing.T) {
 	if ratingsDB == nil {
 		t.Skip("AGF_IT_DB_URL not set")

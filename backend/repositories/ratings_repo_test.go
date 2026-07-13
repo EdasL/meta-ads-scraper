@@ -17,7 +17,13 @@ import (
 var ratingsDB *gorm.DB
 
 func TestMain(m *testing.M) {
+	// Prefer AGF_IT_DB_URL; fall back to the project's canonical test-DB var so
+	// a runner that only sets AGF_TEST_DB_URL still RUNS the DB-backed repo tests
+	// instead of silently skipping them (a false green).
 	dsn := os.Getenv("AGF_IT_DB_URL")
+	if dsn == "" {
+		dsn = os.Getenv("AGF_TEST_DB_URL")
+	}
 	if dsn != "" {
 		g, err := db.Init(dsn)
 		if err != nil {

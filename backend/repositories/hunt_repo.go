@@ -132,7 +132,9 @@ func InsertHuntRound(ctx context.Context, g *gorm.DB, huntID int, messageID *int
 		if err := tx.Raw(
 			`INSERT INTO frontend.hunt_rounds (hunt_id, message_id, terms, competitor_apps)
 			 VALUES (?, ?, CAST(? AS jsonb), CAST(? AS jsonb)) RETURNING id`,
-			huntID, messageID, jsonbArg(terms), jsonbArg(competitors),
+			// terms and competitor_apps are NOT NULL: default nil/empty to an
+			// empty JSON array rather than the SQL NULL jsonbArg would produce.
+			huntID, messageID, jsonbArgDefault(terms), jsonbArgDefault(competitors),
 		).Scan(&roundID).Error; err != nil {
 			return err
 		}
@@ -174,6 +176,15 @@ func HuntRoundSummaries(ctx context.Context, g *gorm.DB, huntID int) ([]models.H
 func jsonbArg(raw json.RawMessage) any {
 	if len(raw) == 0 {
 		return nil
+	}
+	return string(raw)
+}
+
+// jsonbArgDefault is jsonbArg for NOT NULL jsonb columns: a nil/empty
+// json.RawMessage becomes an empty JSON array ("[]") rather than SQL NULL.
+func jsonbArgDefault(raw json.RawMessage) any {
+	if len(raw) == 0 {
+		return "[]"
 	}
 	return string(raw)
 }
