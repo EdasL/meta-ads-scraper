@@ -347,13 +347,24 @@ def test_inline_corpus_stage_opt_in(monkeypatch, _migrated_engine):
             release_mint_enabled=False, media_repair_per_cycle=0,
             funnel_repair_per_cycle=0, enrich_budget=600)
 
-    monkeypatch.delenv("AGF_CORPUS_REFRESH_INLINE", raising=False)
-    _run()
-    assert inline_calls == []                          # default: queue only
+    with eng.connect() as conn:
+        prev_max = conn.execute(text(
+            "SELECT COALESCE(MAX(id), 0) FROM discovery.corpus_refresh_runs")).scalar()
+    try:
+        monkeypatch.delenv("AGF_CORPUS_REFRESH_INLINE", raising=False)
+        _run()
+        assert inline_calls == []                      # default: queue only
 
-    monkeypatch.setenv("AGF_CORPUS_REFRESH_INLINE", "1")
-    _run()
-    assert len(inline_calls) == 1                      # opt-in fallback runs
+        monkeypatch.setenv("AGF_CORPUS_REFRESH_INLINE", "1")
+        _run()
+        assert len(inline_calls) == 1                  # opt-in fallback runs
+    finally:
+        # the inline spy run COMMITS a corpus_refresh_runs row — don't leak it to
+        # the shared DB (the ran_within throttle test reads recency globally)
+        with begin(eng) as conn:
+            conn.execute(text(
+                "DELETE FROM discovery.corpus_refresh_runs WHERE id > :m"),
+                {"m": prev_max})
 
 
 def test_inline_keeper_pull_off_by_default(monkeypatch, _migrated_engine):

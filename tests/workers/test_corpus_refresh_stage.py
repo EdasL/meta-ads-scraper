@@ -1,8 +1,10 @@
-"""The worker's recurring corpus-refresh stage — the cadence gate (one finished
-corpus_refresh_runs row per day, or a within-seconds interval), the run-log helpers, and
-the run_once slot end-to-end with refresh_corpus stubbed (zero Meta traffic). The stage
-re-scrapes found advertisers' live listings on its OWN budget, isolated so a failure
-lands on the run row and never aborts the tick. Skips cleanly without AGF_TEST_DB_URL."""
+"""The worker's INLINE corpus-refresh fallback (AGF_CORPUS_REFRESH_INLINE=1) — the
+cadence gate (one finished corpus_refresh_runs row per day, or a within-seconds
+interval), the run-log helpers, and the run_once slot end-to-end with refresh_corpus
+stubbed (zero Meta traffic). Since spec 2026-07-13 the production default is the
+QUEUE producer (see test_main.py); this file covers the opt-in blocking fallback,
+which still runs on its OWN budget, isolated so a failure lands on the run row and
+never aborts the tick. Skips cleanly without AGF_TEST_DB_URL."""
 from datetime import date
 
 from sqlalchemy import text
@@ -39,6 +41,9 @@ def test_corpus_gate_one_finished_run_per_day(pg_conn):
 
 def test_corpus_due_every_sec_throttles_a_recent_run(pg_conn, monkeypatch):
     monkeypatch.setenv("AGF_CORPUS_REFRESH_EVERY_SEC", "3600")
+    # hermetic: other tests COMMIT finished runs to the shared DB (e.g. the inline
+    # opt-in tick test); ran_within(now) would see them. pg_conn rolls back.
+    pg_conn.execute(text("DELETE FROM discovery.corpus_refresh_runs"))
     run_id = open_corpus_refresh_run(pg_conn)
     close_corpus_refresh_run(pg_conn, run_id, stats={})       # finished just now
     assert corpus_refresh_ran_within(pg_conn, 3600) is True
@@ -74,8 +79,10 @@ def _neutralize_neighbors(monkeypatch):
 
 
 def _run_corpus_tick(engine, monkeypatch, *, refresh, budget):
-    """Drive one run_once with only the corpus stage active; return the id-set of
-    corpus_refresh_runs rows created during the tick (for isolated assertions)."""
+    """Drive one run_once with only the corpus stage active — in INLINE fallback
+    mode (the queue producer is the default; these tests cover the opt-in blocking
+    path). Returns the id-set of corpus_refresh_runs rows created during the tick."""
+    monkeypatch.setenv("AGF_CORPUS_REFRESH_INLINE", "1")
     _neutralize_neighbors(monkeypatch)
     monkeypatch.setattr(wm, "refresh_corpus", refresh)
     with engine.connect() as conn:
