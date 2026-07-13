@@ -3,7 +3,7 @@
 import { useState, type KeyboardEvent } from "react";
 import { IconX } from "@tabler/icons-react";
 import { Button } from "@/components/ui";
-import { editTerms } from "@/lib/hunt";
+import { editTerms, formatSettings } from "@/lib/hunt";
 import type { HuntProposal } from "@/lib/api";
 
 /** Mirror of the server's competitor-app cap (hunt_controller.go). */
@@ -75,6 +75,8 @@ export function ProposalCard({
   }
 
   const disabled = submitting || roundActive || terms.length === 0;
+  // Read-only: Peon sets scrape knobs; the founder tunes them via chat, not here.
+  const settingsLabel = formatSettings(proposal.settings);
 
   return (
     <div
@@ -174,6 +176,11 @@ export function ProposalCard({
         <Button onClick={start} disabled={disabled}>
           Start hunt
         </Button>
+        {settingsLabel && (
+          <span className="t-xs font-mono" style={{ color: "var(--muted)" }}>
+            {settingsLabel}
+          </span>
+        )}
         {roundActive && !error && (
           <span className="t-xs" style={{ color: "var(--muted)" }}>
             A round is already running.

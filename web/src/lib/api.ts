@@ -243,19 +243,32 @@ export interface HuntSummary {
   last_round_status: string | null;
 }
 
-/** The assistant's structured suggestion. Stored jsonb carries ONLY these two
- *  arrays — the conversational reply is the message content, not part of this. */
+/** Optional per-round scrape-tuning knobs (backend clamps each on write:
+ *  page_cap 1-100, patience 1-10, listing_pages 1-30). Absent keys fall back to
+ *  the server defaults (40 / 3 / 10). The wire shape is this object or `{}`. */
+export interface HuntSettings {
+  page_cap?: number;
+  patience?: number;
+  listing_pages?: number;
+}
+
+/** The assistant's structured suggestion. Stored jsonb carries the two term
+ *  arrays plus an optional `settings` object — the conversational reply is the
+ *  message content, not part of this. `settings` is absent on older messages. */
 export interface HuntProposal {
   terms: string[];
   competitor_apps: string[];
+  settings?: HuntSettings;
 }
 
-/** One transcript entry. `proposal` is null for user messages. */
+/** One transcript entry. `proposal` is null for user messages. `tool_log` is the
+ *  Peon tool trace (null / absent on messages that ran no tools). */
 export interface HuntMessage {
   id: number;
   role: "user" | "assistant";
   content: string;
   proposal: HuntProposal | null;
+  tool_log: string[] | null;
   created_at: string;
 }
 
@@ -281,6 +294,8 @@ export interface HuntRound {
   competitor_apps: string[];
   status: "queued" | "running" | "done" | "error";
   progress: HuntRoundProgress;
+  /** The scrape settings this round ran with; `{}` when all defaults. */
+  settings: HuntSettings;
   error_text: string | null;
   created_at: string;
   finished_at: string | null;
@@ -316,6 +331,9 @@ export interface HuntThread {
 export interface HuntChatTurn {
   hunt_id: number;
   messages: HuntMessage[];
+  /** Present only when Peon started a round on this turn (the model called the
+   *  start tool). The caller merges it into thread state to begin polling. */
+  round?: HuntRound;
 }
 
 /** All hunt threads for the signed-in user, newest first. */
@@ -344,7 +362,12 @@ export async function postHuntMessage(id: number, message: string): Promise<Hunt
 /** Enqueue an approved round (202). Returns the newly-queued round row. */
 export async function postHuntRound(
   id: number,
-  body: { message_id: number | null; terms: string[]; competitor_apps: string[] },
+  body: {
+    message_id: number | null;
+    terms: string[];
+    competitor_apps: string[];
+    settings?: HuntSettings;
+  },
 ): Promise<HuntRound> {
   return live<HuntRound>(`/hunts/${id}/rounds`, { method: "POST", body: JSON.stringify(body) });
 }

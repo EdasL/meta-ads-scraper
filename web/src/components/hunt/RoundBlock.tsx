@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { ScoreBadge } from "@/components/ui";
-import { latestEvents } from "@/lib/hunt";
+import { formatSettings, latestEvents } from "@/lib/hunt";
 import type { HuntResult, HuntRound } from "@/lib/api";
 
 /** Human label for a result's store. Unknown stores fall back to the raw value. */
@@ -87,6 +87,10 @@ export function RoundBlock({ round, results }: { round: HuntRound; results: Hunt
     if (p.terms_total != null) parts.push(`${p.terms_done ?? 0} of ${p.terms_total} terms`);
     statusLine = parts.length ? parts.join(" · ") : round.status === "running" ? "Running" : "Done";
   }
+
+  // Append the round's non-default scrape settings (plain, real stored values).
+  const settingsLabel = formatSettings(round.settings);
+  if (settingsLabel) statusLine += ` · ${settingsLabel}`;
 
   const showCounters = p.found != null || p.new != null;
 

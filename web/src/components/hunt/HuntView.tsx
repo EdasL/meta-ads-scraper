@@ -12,6 +12,7 @@ import {
   postHuntRound,
   type HuntMessage,
   type HuntRound,
+  type HuntSettings,
   type HuntSummary,
   type HuntThread,
 } from "@/lib/api";
@@ -149,22 +150,34 @@ export function HuntView() {
     [thread],
   );
 
+  // Optimistic render: drop a fresh round into local state right away so
+  // RoundBlock shows it (queued) and polling starts, without waiting for the
+  // loadThread round-trip. Guard on hunt.id so a stale in-flight response can't
+  // land on another thread, and dedupe by id so a later loadThread that already
+  // carries the round doesn't double it. Used by both the founder-approved
+  // Start hunt and a Peon-started round returned on a chat turn.
+  const mergeRound = useCallback((huntId: number, round: HuntRound) => {
+    setThread((prev) =>
+      prev && prev.hunt.id === huntId && !prev.rounds.some((r) => r.id === round.id)
+        ? { ...prev, rounds: [...prev.rounds, round] }
+        : prev,
+    );
+  }, []);
+
   const startRound = useCallback(
-    async (messageId: number, terms: string[], competitorApps: string[]) => {
+    async (messageId: number, terms: string[], competitorApps: string[], settings?: HuntSettings) => {
       if (activeId == null) return;
-      const round = await postHuntRound(activeId, { message_id: messageId, terms, competitor_apps: competitorApps });
-      // Optimistic render: drop the 202-returned round into local state right
-      // away so RoundBlock shows it (queued) and ProposalCard's started-round
-      // gating reacts, without waiting for the loadThread round-trip below.
-      // Guard on hunt.id so a stale in-flight response can't land on another
-      // thread; the subsequent loadThread reconciles/replaces local state.
-      setThread((prev) =>
-        prev && prev.hunt.id === activeId ? { ...prev, rounds: [...prev.rounds, round] } : prev,
-      );
+      const round = await postHuntRound(activeId, {
+        message_id: messageId,
+        terms,
+        competitor_apps: competitorApps,
+        settings,
+      });
+      mergeRound(activeId, round);
       await loadThread(activeId);
       refreshHunts();
     },
-    [activeId, loadThread, refreshHunts],
+    [activeId, loadThread, refreshHunts, mergeRound],
   );
 
   const send = useCallback(async () => {
@@ -177,9 +190,15 @@ export function HuntView() {
         const turn = await postHunt(message);
         setActiveId(turn.hunt_id);
         await loadThread(turn.hunt_id);
+        // A first turn can start a round; loadThread already fetched it, so this
+        // dedupes to a no-op — kept for parity with the existing-thread path.
+        if (turn.round) mergeRound(turn.hunt_id, turn.round);
         refreshHunts();
       } else {
-        await postHuntMessage(activeId, message);
+        const turn = await postHuntMessage(activeId, message);
+        // Peon may start a round on this turn — merge it so polling begins now,
+        // before the loadThread round-trip below reconciles the full thread.
+        if (turn.round) mergeRound(activeId, turn.round);
         await loadThread(activeId);
       }
     } catch {
@@ -188,7 +207,7 @@ export function HuntView() {
     } finally {
       setSending(false);
     }
-  }, [draft, sending, activeId, loadThread, refreshHunts]);
+  }, [draft, sending, activeId, loadThread, refreshHunts, mergeRound]);
 
   function onComposerKey(e: KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -266,7 +285,7 @@ export function HuntView() {
                 <ProposalCard
                   proposal={m.proposal}
                   roundActive={roundActive}
-                  onStart={(terms, competitors) => startRound(m.id, terms, competitors)}
+                  onStart={(terms, competitors) => startRound(m.id, terms, competitors, m.proposal?.settings)}
                 />
               )}
               {(roundsByMsg.map.get(m.id) ?? []).map((r) => (
@@ -309,9 +328,11 @@ export function HuntView() {
   );
 }
 
-/** One transcript entry. Assistant messages are labelled Peon. */
+/** One transcript entry. Assistant messages are labelled Peon and, when the
+ *  turn ran tools, carry a muted mono trace line under the reply. */
 function MessageBubble({ message }: { message: HuntMessage }) {
   const isUser = message.role === "user";
+  const toolLog = Array.isArray(message.tool_log) ? message.tool_log : [];
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 4, alignItems: isUser ? "flex-end" : "flex-start" }}>
       {!isUser && <span className="eyebrow">Peon</span>}
@@ -328,6 +349,11 @@ function MessageBubble({ message }: { message: HuntMessage }) {
       >
         {message.content}
       </div>
+      {toolLog.length > 0 && (
+        <div className="t-xs font-mono" style={{ maxWidth: "82%", color: "var(--muted)" }}>
+          {toolLog.join(" · ")}
+        </div>
+      )}
     </div>
   );
 }

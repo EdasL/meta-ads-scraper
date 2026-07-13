@@ -11,7 +11,37 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseProposal, editTerms, huntIsActive, latestEvents } from "./hunt.ts";
+import { parseProposal, editTerms, huntIsActive, latestEvents, formatSettings } from "./hunt.ts";
+
+// --- formatSettings ----------------------------------------------------------
+// Server defaults are page_cap 40 / patience 3 / listing_pages 10; formatSettings
+// shows only keys that differ from those, labelled depth/patience/listing.
+
+test("formatSettings hides keys equal to the defaults", () => {
+  assert.equal(formatSettings({ page_cap: 40, patience: 3, listing_pages: 10 }), "");
+});
+
+test("formatSettings is empty for an empty object or undefined", () => {
+  assert.equal(formatSettings({}), "");
+  assert.equal(formatSettings(undefined), "");
+});
+
+test("formatSettings shows a single non-default override", () => {
+  assert.equal(formatSettings({ patience: 8 }), "patience 8");
+  assert.equal(formatSettings({ page_cap: 40, patience: 8, listing_pages: 10 }), "patience 8");
+});
+
+test("formatSettings shows all three non-default keys in depth·patience·listing order", () => {
+  assert.equal(
+    formatSettings({ page_cap: 50, patience: 8, listing_pages: 20 }),
+    "depth 50 · patience 8 · listing 20",
+  );
+});
+
+test("formatSettings shows out-of-range values as-is (server already clamped)", () => {
+  assert.equal(formatSettings({ page_cap: 200 }), "depth 200");
+  assert.equal(formatSettings({ patience: 99, listing_pages: 99 }), "patience 99 · listing 99");
+});
 
 // --- parseProposal -----------------------------------------------------------
 
@@ -55,6 +85,31 @@ test("parseProposal drops non-string array elements", () => {
   assert.deepEqual(parseProposal({ terms: ["ok", 5, null, "two"], competitor_apps: [true, "App"] }), {
     terms: ["ok", "two"],
     competitor_apps: ["App"],
+  });
+});
+
+test("parseProposal passes a settings object through", () => {
+  assert.deepEqual(
+    parseProposal({ terms: ["a"], competitor_apps: [], settings: { page_cap: 50, patience: 8 } }),
+    { terms: ["a"], competitor_apps: [], settings: { page_cap: 50, patience: 8 } },
+  );
+});
+
+test("parseProposal omits settings for the legacy shape without it", () => {
+  assert.deepEqual(parseProposal({ terms: ["a"], competitor_apps: ["App"] }), {
+    terms: ["a"],
+    competitor_apps: ["App"],
+  });
+});
+
+test("parseProposal omits an empty / non-object settings", () => {
+  assert.deepEqual(parseProposal({ terms: ["a"], competitor_apps: [], settings: {} }), {
+    terms: ["a"],
+    competitor_apps: [],
+  });
+  assert.deepEqual(parseProposal({ terms: ["a"], competitor_apps: [], settings: "nope" }), {
+    terms: ["a"],
+    competitor_apps: [],
   });
 });
 
