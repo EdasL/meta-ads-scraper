@@ -56,6 +56,18 @@ def test_round_sweeps_terms_and_records_results(engine):
                for r in rows)
 
 
+def test_non_candidate_dispositions_counted_in_drops(engine):
+    # One store-linked ad (candidate) + one web-landing ad (non_app). The
+    # non_app ad isn't persisted here, but it must be counted in stats["drops"].
+    non_app = make_ad(page_id=PAGE, page_name="Landing",
+                      link_url="https://example.com/landing")
+    ext = FakeExtractor()
+    ext.script_pages("sleep app", [[_ios_ad("900050"), non_app], []])
+    stats = run_hunt_round(engine, [ext], _mk_round(engine, ["sleep app"]))
+    assert stats["found"] == 1
+    assert stats["drops"] == {"non_app": 1}
+
+
 def test_known_candidate_marked_not_new(engine):
     ext = FakeExtractor()
     ext.script_pages("sleep app", [[_ios_ad("900010")]])

@@ -79,10 +79,14 @@ class _Progress:
 def _persist_page(engine, round_id: int, term: str, records, depth: int,
                   stats: dict, lock: threading.Lock) -> tuple[int, int]:
     """Classify + upsert one SERP page. Returns (found, new) for the page."""
-    rows, seen = [], set()
+    rows, seen, drops = [], set(), []
     for ad in records:
         disposition, row = classify_candidate(ad, keyword=term, technique="hunt")
         if disposition != "candidate":
+            # Non-candidate dispositions ('no_link'/'social'/'non_app'/
+            # 'no_store_id') aren't persisted here (the nightly sweep owns
+            # funnel capture), but they must show up in the round stats.
+            drops.append(disposition)
             continue
         key = (row["page_id"], row["store"], row["store_id"])
         if key in seen:
@@ -106,6 +110,8 @@ def _persist_page(engine, round_id: int, term: str, records, depth: int,
     with lock:
         stats["found"] += found
         stats["new"] += new
+        for disposition in drops:
+            stats["drops"][disposition] = stats["drops"].get(disposition, 0) + 1
     return found, new
 
 
@@ -154,7 +160,8 @@ def run_hunt_round(engine, extractors, round_id: int, *,
         mark_round_running(conn, round_id)
     terms = list(rnd.terms)
     stats = {"terms_swept": 0, "pages": 0, "found": 0, "new": 0, "errors": 0,
-             "kept": 0, "vetoed": 0, "pending": 0, "keywords_minted": 0}
+             "kept": 0, "vetoed": 0, "pending": 0, "keywords_minted": 0,
+             "drops": {}}
     lock = threading.Lock()
     progress = _Progress(engine, round_id, terms_total=len(terms))
     progress.event(f"Hunt started — {len(terms)} terms, deep paging")
