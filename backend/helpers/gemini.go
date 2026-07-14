@@ -18,8 +18,10 @@ import (
 
 // GeminiHelper wraps a genai client bound to a single model.
 type GeminiHelper struct {
-	client *genai.Client
-	model  string
+	client       *genai.Client
+	model        string
+	huntModel    string
+	huntWebTools bool
 }
 
 // NewGeminiHelper builds a helper from GEMINI_API_KEY. It returns nil when the
@@ -46,9 +48,19 @@ func NewGeminiHelper() *GeminiHelper {
 	if model == "" {
 		model = "gemini-2.5-flash" // gemini-2.0-flash was retired; override via GEMINI_MODEL
 	}
+	huntModel := os.Getenv("GEMINI_HUNT_MODEL")
+	if huntModel == "" {
+		// gemini-2.5-flash rejects built-in tools combined with function
+		// calling; the hunt agent needs a Gemini 3 model.
+		huntModel = "gemini-3.5-flash"
+	}
+	wt := strings.ToLower(strings.TrimSpace(os.Getenv("AGF_HUNT_WEB_TOOLS")))
+	huntWebTools := wt != "0" && wt != "false"
 	return &GeminiHelper{
-		client: client,
-		model:  model,
+		client:       client,
+		model:        model,
+		huntModel:    huntModel,
+		huntWebTools: huntWebTools,
 	}
 }
 
@@ -522,7 +534,7 @@ func (h *GeminiHelper) GenerateHuntTurn(ctx context.Context, in HuntTurnInput, t
 
 	const maxIterations = 6
 	for iter := 0; iter < maxIterations; iter++ {
-		resp, err := h.generateWithRetry(ctx, contents, config)
+		resp, err := h.generateWithRetry(ctx, h.model, contents, config)
 		if err != nil {
 			return HuntTurn{}, err
 		}
@@ -587,12 +599,12 @@ func (h *GeminiHelper) GenerateHuntTurn(ctx context.Context, in HuntTurnInput, t
 
 // generateWithRetry runs one model call with the same 3-attempt exponential
 // backoff as GenerateExplainer.
-func (h *GeminiHelper) generateWithRetry(ctx context.Context, contents []*genai.Content, config *genai.GenerateContentConfig) (*genai.GenerateContentResponse, error) {
+func (h *GeminiHelper) generateWithRetry(ctx context.Context, model string, contents []*genai.Content, config *genai.GenerateContentConfig) (*genai.GenerateContentResponse, error) {
 	var result *genai.GenerateContentResponse
 	var err error
 	maxRetries := 3
 	for attempt := 0; attempt < maxRetries; attempt++ {
-		result, err = h.client.Models.GenerateContent(ctx, h.model, contents, config)
+		result, err = h.client.Models.GenerateContent(ctx, model, contents, config)
 		if err == nil {
 			return result, nil
 		}

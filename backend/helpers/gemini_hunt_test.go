@@ -187,3 +187,36 @@ func TestBuildHuntTurnContents(t *testing.T) {
 		t.Errorf("final turn missing round summary: %q", last)
 	}
 }
+
+func TestNewGeminiHelperHuntModelDefaults(t *testing.T) {
+	t.Setenv("GEMINI_API_KEY", "test-key")
+	t.Setenv("GEMINI_MODEL", "")
+	t.Setenv("GEMINI_HUNT_MODEL", "")
+	t.Setenv("AGF_HUNT_WEB_TOOLS", "")
+	h := NewGeminiHelper()
+	if h == nil {
+		t.Fatal("helper nil with API key set")
+	}
+	if h.huntModel != "gemini-3.5-flash" {
+		t.Fatalf("huntModel = %q, want gemini-3.5-flash", h.huntModel)
+	}
+	if !h.huntWebTools {
+		t.Fatal("huntWebTools should default on")
+	}
+	if h.model != "gemini-2.5-flash" {
+		t.Fatalf("model = %q, want gemini-2.5-flash (unchanged)", h.model)
+	}
+}
+
+func TestNewGeminiHelperHuntOverrides(t *testing.T) {
+	t.Setenv("GEMINI_API_KEY", "test-key")
+	t.Setenv("GEMINI_HUNT_MODEL", "gemini-9-test")
+	t.Setenv("AGF_HUNT_WEB_TOOLS", "0")
+	h := NewGeminiHelper()
+	if h.huntModel != "gemini-9-test" {
+		t.Fatalf("huntModel = %q", h.huntModel)
+	}
+	if h.huntWebTools {
+		t.Fatal("AGF_HUNT_WEB_TOOLS=0 must disable web tools")
+	}
+}
