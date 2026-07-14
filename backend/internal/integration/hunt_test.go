@@ -300,6 +300,60 @@ func TestHuntForeignEmail404(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, w.Code)
 }
 
+// seedRoundWithResults inserts one round plus two results (one kept, one
+// pending) under a hunt, so PriorHuntLines has something to summarize. The
+// round + results cascade-delete with the hunt seedHunt already registered.
+func seedRoundWithResults(t *testing.T, huntID int) int {
+	t.Helper()
+	var roundID int
+	require.NoError(t, db.DB().Raw(
+		`INSERT INTO frontend.hunt_rounds (hunt_id, terms, competitor_apps)
+		 VALUES (?, '["sleep stories app"]'::jsonb, '[]'::jsonb) RETURNING id`,
+		huntID).Scan(&roundID).Error)
+	require.NoError(t, db.DB().Exec(
+		`INSERT INTO frontend.hunt_results
+		 (round_id, page_id, page_name, store, store_id, source_term, was_new, triage)
+		 VALUES (?, 'PG1', 'Kept Co', 'play', 'com.kept', 'sleep stories app', true, 'kept'),
+		        (?, 'PG2', 'Pending Co', 'play', 'com.pending', 'sleep stories app', true, 'pending')`,
+		roundID, roundID).Error)
+	return roundID
+}
+
+func TestHuntStartRoundStoresIntent(t *testing.T) {
+	t.Setenv(middlewares.APITokenEnv, writeToken)
+	r := router()
+	huntID := seedHunt(t, authedEmail, "intent hunt")
+
+	body := `{"message_id":null,"terms":["sleep stories app"],"competitor_apps":[],` +
+		`"intent":"sleep apps aimed at new parents"}`
+	w := postRounds(t, r, huntID, body)
+	require.Equal(t, http.StatusAccepted, w.Code, w.Body.String())
+
+	var got *string
+	require.NoError(t, db.DB().Raw(
+		`SELECT intent FROM frontend.hunt_rounds WHERE hunt_id = ?`, huntID).Scan(&got).Error)
+	require.NotNil(t, got)
+	require.Equal(t, "sleep apps aimed at new parents", *got)
+}
+
+func TestPriorHuntLinesScopedToOwner(t *testing.T) {
+	const ownerEmail = "hunt-prior@test.local"
+	otherID := seedHunt(t, ownerEmail, "other hunt")
+	currentID := seedHunt(t, ownerEmail, "current hunt")
+	foreignID := seedHunt(t, huntForeignEmail, "foreign hunt")
+	seedRoundWithResults(t, otherID)
+	seedRoundWithResults(t, currentID)
+	seedRoundWithResults(t, foreignID)
+
+	lines, err := repositories.PriorHuntLines(context.Background(), db.DB(), ownerEmail, currentID)
+	require.NoError(t, err)
+	require.NotEmpty(t, lines, "expected at least one prior-hunt line")
+	for _, l := range lines {
+		require.NotContains(t, l, "foreign hunt", "foreign hunt must not leak")
+		require.NotContains(t, l, "current hunt", "current hunt must be excluded")
+	}
+}
+
 func TestHuntGetReturnsThread(t *testing.T) {
 	r := router()
 	huntID := seedHunt(t, authedEmail, "full thread")

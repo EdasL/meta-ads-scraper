@@ -67,8 +67,9 @@ func (t huntTools) GetRoundResults(roundID int, triage string) (string, error) {
 
 // huntProposalTimeout bounds the Peon (Gemini) turn. It is deliberately longer
 // than reqCtx's 15s DB budget: a proposal round-trips the model with 3-attempt
-// backoff, so 30s covers a slow-but-succeeding call without hanging the client.
-const huntProposalTimeout = 30 * time.Second
+// backoff and may browse the web mid-turn, so 90s covers a slow-but-succeeding
+// call without hanging the client.
+const huntProposalTimeout = 90 * time.Second
 
 // maxHuntTerms / maxHuntCompetitors / maxHuntTermLen bound a round the founder
 // approves before it hits the scraper. maxHuntTitleLen truncates the first user
@@ -142,8 +143,16 @@ func (c *HuntController) List(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, rows)
 }
 
+// huntCardState is the founder's live proposal card — the terms/competitors the
+// chips currently show, which may differ from the last proposal if they edited.
+type huntCardState struct {
+	Terms          []string `json:"terms"`
+	CompetitorApps []string `json:"competitor_apps"`
+}
+
 type huntMessageBody struct {
-	Message string `json:"message"`
+	Message   string         `json:"message"`
+	CardState *huntCardState `json:"card_state"`
 }
 
 // Create handles POST /api/hunts. It opens a new thread, persists the user
@@ -186,13 +195,13 @@ func (c *HuntController) Create(ctx *gin.Context) {
 	if !c.runTurn(ctx, huntID, helpers.HuntTurnInput{Message: message}) {
 		return
 	}
-	c.writeThread(ctx, huntID, http.StatusCreated, nil)
+	c.writeThread(ctx, huntID, http.StatusCreated)
 }
 
 // Message handles POST /api/hunts/:hunt_id/messages — the same flow as Create on
 // an existing, owned thread.
 func (c *HuntController) Message(ctx *gin.Context) {
-	huntID, _, ok := c.requireOwner(ctx)
+	huntID, email, ok := c.requireOwner(ctx)
 	if !ok {
 		return
 	}
@@ -225,6 +234,18 @@ func (c *HuntController) Message(ctx *gin.Context) {
 		helpers.Detail(ctx, http.StatusInternalServerError, "something went wrong.")
 		return
 	}
+	rounds, err := repositories.ListHuntRounds(rctx, db.DB(), huntID)
+	if err != nil {
+		cancel()
+		helpers.Detail(ctx, http.StatusInternalServerError, "something went wrong.")
+		return
+	}
+	priorHunts, err := repositories.PriorHuntLines(rctx, db.DB(), email, huntID)
+	if err != nil {
+		cancel()
+		helpers.Detail(ctx, http.StatusInternalServerError, "something went wrong.")
+		return
+	}
 	if _, err := repositories.InsertHuntMessage(rctx, db.DB(), huntID, "user", message, nil, nil); err != nil {
 		cancel()
 		helpers.Detail(ctx, http.StatusInternalServerError, "could not save message.")
@@ -238,14 +259,17 @@ func (c *HuntController) Message(ctx *gin.Context) {
 	}
 	tried, roundLines := summarizeRounds(summaries)
 	if !c.runTurn(ctx, huntID, helpers.HuntTurnInput{
-		Message:        message,
-		History:        history,
-		TriedTerms:     tried,
-		RoundSummaries: roundLines,
+		Message:         message,
+		History:         history,
+		TriedTerms:      tried,
+		RoundSummaries:  roundLines,
+		PendingProposal: pendingProposalText(prior, rounds),
+		CardState:       cardStateText(body.CardState),
+		PriorHunts:      priorHunts,
 	}) {
 		return
 	}
-	c.writeThread(ctx, huntID, http.StatusCreated, nil)
+	c.writeThread(ctx, huntID, http.StatusCreated)
 }
 
 // runTurn runs one Peon agent turn under a 30s budget and appends the assistant
@@ -302,9 +326,11 @@ func (c *HuntController) runTurn(ctx *gin.Context, huntID int, input helpers.Hun
 	return true
 }
 
-// writeThread returns {hunt_id, messages} after a chat turn, plus an optional
-// "round" when the turn started one. The GET /hunts/:id shape is untouched.
-func (c *HuntController) writeThread(ctx *gin.Context, huntID, status int, round *models.HuntRoundRow) {
+// writeThread returns {hunt_id, messages} after a chat turn. Rounds start only
+// from the founder's Start hunt button, never from a chat turn, so no round is
+// carried here (the web's HuntChatTurn.round is optional). The GET /hunts/:id
+// shape is untouched.
+func (c *HuntController) writeThread(ctx *gin.Context, huntID, status int) {
 	rctx, cancel := reqCtx(ctx)
 	defer cancel()
 	msgs, err := repositories.ListHuntMessages(rctx, db.DB(), huntID)
@@ -315,25 +341,24 @@ func (c *HuntController) writeThread(ctx *gin.Context, huntID, status int, round
 	if msgs == nil {
 		msgs = []models.HuntMessageRow{}
 	}
-	resp := gin.H{"hunt_id": huntID, "messages": msgs}
-	if round != nil {
-		resp["round"] = round
-	}
-	ctx.JSON(status, resp)
+	ctx.JSON(status, gin.H{"hunt_id": huntID, "messages": msgs})
 }
 
 // marshalHuntPlan renders a proposed plan as the {terms, competitor_apps,
-// settings} proposal jsonb the assistant message stores. The settings key is
-// always present (an empty object when nothing was set).
+// settings, intent} proposal jsonb the assistant message stores. The settings
+// key is always present (an empty object when nothing was set); intent is
+// omitted when empty.
 func marshalHuntPlan(p helpers.HuntPlan) (json.RawMessage, error) {
 	return json.Marshal(struct {
 		Terms          []string       `json:"terms"`
 		CompetitorApps []string       `json:"competitor_apps"`
 		Settings       map[string]int `json:"settings"`
+		Intent         string         `json:"intent,omitempty"`
 	}{
 		Terms:          emptyIfNil(p.Terms),
 		CompetitorApps: emptyIfNil(p.CompetitorApps),
 		Settings:       clampedOrEmpty(p.Settings),
+		Intent:         p.Intent,
 	})
 }
 
@@ -418,6 +443,7 @@ type startRoundBody struct {
 	Terms          []string          `json:"terms"`
 	CompetitorApps []string          `json:"competitor_apps"`
 	Settings       *huntSettingsBody `json:"settings"`
+	Intent         *string           `json:"intent"`
 }
 
 // StartRound handles POST /api/hunts/:hunt_id/rounds. It normalizes and validates
@@ -447,6 +473,19 @@ func (c *HuntController) StartRound(ctx *gin.Context) {
 		return
 	}
 
+	// Optional plain-sentence intent the founder is hunting for, trimmed and
+	// capped; empty/whitespace becomes SQL NULL.
+	var intent *string
+	if body.Intent != nil {
+		v := strings.TrimSpace(*body.Intent)
+		if len(v) > 200 {
+			v = v[:200]
+		}
+		if v != "" {
+			intent = &v
+		}
+	}
+
 	termsJSON, _ := json.Marshal(terms)
 	compsJSON, _ := json.Marshal(competitors)
 
@@ -464,7 +503,7 @@ func (c *HuntController) StartRound(ctx *gin.Context) {
 
 	rctx, cancel := reqCtx(ctx)
 	defer cancel()
-	roundID, err := repositories.InsertHuntRound(rctx, db.DB(), huntID, body.MessageID, termsJSON, compsJSON, settingsJSON, nil)
+	roundID, err := repositories.InsertHuntRound(rctx, db.DB(), huntID, body.MessageID, termsJSON, compsJSON, settingsJSON, intent)
 	if err != nil {
 		helpers.Detail(ctx, http.StatusInternalServerError, "could not start round.")
 		return
@@ -607,6 +646,69 @@ func stopSummary(raw json.RawMessage) string {
 		segs = append(segs, fmt.Sprintf("%s x%d", r, counts[r]))
 	}
 	return strings.Join(segs, ", ")
+}
+
+// pendingProposalText formats the newest assistant proposal that no round has
+// consumed — the same rule the web uses to decide which proposal card renders.
+// Returns "" when every proposal already started a round (or there are none).
+func pendingProposalText(msgs []models.HuntMessageRow, rounds []models.HuntRoundRow) string {
+	started := map[int]bool{}
+	for _, r := range rounds {
+		if r.MessageID != nil {
+			started[*r.MessageID] = true
+		}
+	}
+	for i := len(msgs) - 1; i >= 0; i-- {
+		m := msgs[i]
+		if m.Role != "assistant" || len(m.Proposal) == 0 || started[m.ID] {
+			continue
+		}
+		var p struct {
+			Terms          []string       `json:"terms"`
+			CompetitorApps []string       `json:"competitor_apps"`
+			Settings       map[string]int `json:"settings"`
+			Intent         string         `json:"intent"`
+		}
+		if err := json.Unmarshal(m.Proposal, &p); err != nil {
+			return ""
+		}
+		out := "terms: " + strings.Join(p.Terms, ", ")
+		if len(p.CompetitorApps) > 0 {
+			out += " · competitors: " + strings.Join(p.CompetitorApps, ", ")
+		}
+		if len(p.Settings) > 0 {
+			out += " · settings: " + settingsLabel(p.Settings)
+		}
+		if p.Intent != "" {
+			out += " · intent: " + p.Intent
+		}
+		return out
+	}
+	return ""
+}
+
+// settingsLabel renders a proposal's settings map in a stable key order.
+func settingsLabel(s map[string]int) string {
+	var parts []string
+	for _, k := range []string{"page_cap", "patience", "listing_pages"} {
+		if v, ok := s[k]; ok {
+			parts = append(parts, fmt.Sprintf("%s %d", k, v))
+		}
+	}
+	return strings.Join(parts, ", ")
+}
+
+// cardStateText renders the founder's live proposal card for the model context;
+// "" when the card is empty or absent.
+func cardStateText(cs *huntCardState) string {
+	if cs == nil || len(cs.Terms) == 0 {
+		return ""
+	}
+	out := "terms: " + strings.Join(cs.Terms, ", ")
+	if len(cs.CompetitorApps) > 0 {
+		out += " (competitors: " + strings.Join(cs.CompetitorApps, ", ") + ")"
+	}
+	return out
 }
 
 func emptyIfNil(in []string) []string {

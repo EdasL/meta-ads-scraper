@@ -3,6 +3,8 @@ package repositories
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"strings"
 
 	"gorm.io/gorm"
 
@@ -253,6 +255,50 @@ func HuntRoundSummaries(ctx context.Context, g *gorm.DB, huntID int) ([]models.H
 		).Scan(&rows).Error
 	})
 	return rows, err
+}
+
+// PriorHuntLines summarizes the owner's OTHER hunts for Peon's context: newest
+// rounds first, one compact line each, capped so the prompt stays small. It is
+// scoped to h.user_email (case-insensitive, matching the rest of the hunt reads)
+// and excludes the current hunt so the model does not echo its own thread back.
+func PriorHuntLines(ctx context.Context, g *gorm.DB, email string, excludeHuntID int) ([]string, error) {
+	var rows []struct {
+		HuntID  int             `gorm:"column:hunt_id"`
+		Title   string          `gorm:"column:title"`
+		RoundID int             `gorm:"column:round_id"`
+		Terms   json.RawMessage `gorm:"column:terms"`
+		Status  string          `gorm:"column:status"`
+		Found   int             `gorm:"column:found"`
+		Kept    int             `gorm:"column:kept"`
+	}
+	err := db.WithReadTx(ctx, g, func(tx *gorm.DB) error {
+		return tx.Raw(
+			`SELECT h.id AS hunt_id, h.title, r.id AS round_id, r.terms, r.status,
+			        (SELECT count(*) FROM frontend.hunt_results hr WHERE hr.round_id = r.id) AS found,
+			        (SELECT count(*) FROM frontend.hunt_results hr
+			          WHERE hr.round_id = r.id AND hr.triage = 'kept') AS kept
+			 FROM frontend.hunt_rounds r
+			 JOIN frontend.hunts h ON h.id = r.hunt_id
+			 WHERE lower(h.user_email) = lower(?) AND h.id <> ?
+			 ORDER BY r.id DESC
+			 LIMIT 50`,
+			email, excludeHuntID,
+		).Scan(&rows).Error
+	})
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, r := range rows {
+		var terms []string
+		if len(r.Terms) > 0 {
+			_ = json.Unmarshal(r.Terms, &terms)
+		}
+		out = append(out, fmt.Sprintf(
+			"hunt %d (%s) round %d [%s]: terms: %s — %d found, %d kept",
+			r.HuntID, r.Title, r.RoundID, r.Status, strings.Join(terms, ", "), r.Found, r.Kept))
+	}
+	return out, nil
 }
 
 // jsonbArg maps a nil json.RawMessage to a typed nil so CAST(? AS jsonb)
