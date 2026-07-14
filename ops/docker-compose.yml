@@ -115,6 +115,9 @@ services:
       # sweep caps so a real run can't hammer Meta (all have in-code defaults)
       AGF_DRY_RUN: ${AGF_DRY_RUN:-}
       AGF_SWEEP_PAGES: ${AGF_SWEEP_PAGES:-2}
+      # deep-pass ceiling raised 150->500 (2026-07-14): depth-yield is flat and
+      # phrases hit the old cap (ceiling_hit) — drain the 19 phrases fully
+      AGF_GENERIC_DEEP_PAGES: ${AGF_GENERIC_DEEP_PAGES:-500}
       AGF_KW_DELAY: ${AGF_KW_DELAY:-3.0}
       AGF_DISCOVERY_ENRICH_BUDGET: ${AGF_DISCOVERY_ENRICH_BUDGET:-600}
       AGF_ENRICH_TTL_HOURS: ${AGF_ENRICH_TTL_HOURS:-168}
