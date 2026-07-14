@@ -442,7 +442,9 @@ const huntAgentInstruction = "You are Peon, Field Desk's discovery agent. You he
 	"Search terms are generic niche queries a user would type (e.g. 'sleep stories app', " +
 	"'ai bedtime audio') — short, plain, and never brand or app names. Any brand or app the " +
 	"founder names belongs in competitor_apps, never in terms. Propose at most 15 terms and at " +
-	"most 3 competitor apps, and never repeat a term already tried.\n" +
+	"most 3 competitor apps. In propose_round, never repeat a term already tried — but when the " +
+	"founder explicitly asks to RE-RUN previous terms, pass those exact terms to start_round: " +
+	"already-tried terms are allowed there and must not be refused.\n" +
 	"\n" +
 	"Before answering any question about what a prior round did or why terms stopped, call " +
 	"get_round_report (per-term pages/found/new, stop reasons, triage counts) and/or " +
