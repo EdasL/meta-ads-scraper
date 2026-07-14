@@ -327,9 +327,8 @@ func (c *HuntController) runTurn(ctx *gin.Context, huntID int, input helpers.Hun
 }
 
 // writeThread returns {hunt_id, messages} after a chat turn. Rounds start only
-// from the founder's Start hunt button, never from a chat turn, so no round is
-// carried here (the web's HuntChatTurn.round is optional). The GET /hunts/:id
-// shape is untouched.
+// from the founder's Start hunt button, never from a chat turn. The GET
+// /hunts/:id shape is untouched.
 func (c *HuntController) writeThread(ctx *gin.Context, huntID, status int) {
 	rctx, cancel := reqCtx(ctx)
 	defer cancel()
@@ -478,8 +477,8 @@ func (c *HuntController) StartRound(ctx *gin.Context) {
 	var intent *string
 	if body.Intent != nil {
 		v := strings.TrimSpace(*body.Intent)
-		if len(v) > 200 {
-			v = v[:200]
+		if r := []rune(v); len(r) > 200 {
+			v = string(r[:200])
 		}
 		if v != "" {
 			intent = &v

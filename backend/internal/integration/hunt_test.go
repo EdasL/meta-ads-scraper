@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/bcrypt"
@@ -334,6 +335,36 @@ func TestHuntStartRoundStoresIntent(t *testing.T) {
 		`SELECT intent FROM frontend.hunt_rounds WHERE hunt_id = ?`, huntID).Scan(&got).Error)
 	require.NotNil(t, got)
 	require.Equal(t, "sleep apps aimed at new parents", *got)
+}
+
+// A >200-byte intent full of multibyte runes must be truncated on rune
+// boundaries, not bytes — a mid-rune byte cut yields invalid UTF-8 that
+// Postgres rejects, turning Start hunt into a deterministic 500.
+func TestHuntStartRoundTruncatesIntentOnRunes(t *testing.T) {
+	t.Setenv(middlewares.APITokenEnv, writeToken)
+	r := router()
+	huntID := seedHunt(t, authedEmail, "multibyte intent hunt")
+
+	// 300 runes of multibyte characters (é = 2 bytes, — = 3 bytes).
+	longIntent := strings.Repeat("é—", 150)
+	require.Greater(t, len(longIntent), 200, "fixture must exceed the 200-byte cap")
+	body, err := json.Marshal(map[string]any{
+		"message_id":      nil,
+		"terms":           []string{"sleep stories app"},
+		"competitor_apps": []string{},
+		"intent":          longIntent,
+	})
+	require.NoError(t, err)
+
+	w := postRounds(t, r, huntID, string(body))
+	require.Equal(t, http.StatusAccepted, w.Code, w.Body.String())
+
+	var got *string
+	require.NoError(t, db.DB().Raw(
+		`SELECT intent FROM frontend.hunt_rounds WHERE hunt_id = ?`, huntID).Scan(&got).Error)
+	require.NotNil(t, got)
+	require.True(t, utf8.ValidString(*got), "stored intent must be valid UTF-8")
+	require.Equal(t, 200, utf8.RuneCountInString(*got), "stored intent must be exactly 200 runes")
 }
 
 func TestPriorHuntLinesScopedToOwner(t *testing.T) {
