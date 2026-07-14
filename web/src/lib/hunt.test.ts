@@ -11,7 +11,8 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseProposal, editTerms, huntIsActive, latestEvents, formatSettings } from "./hunt.ts";
+import { parseProposal, editTerms, huntIsActive, latestEvents, formatSettings, splitByRelevance } from "./hunt.ts";
+import type { HuntResult } from "./api.ts";
 
 // --- formatSettings ----------------------------------------------------------
 // Server defaults are page_cap 40 / patience 3 / listing_pages 10; formatSettings
@@ -205,4 +206,16 @@ test("latestEvents returns [] for empty progress", () => {
   const r = round("running");
   r.progress = { found: 0 };
   assert.deepEqual(latestEvents(r), []);
+});
+
+// --- splitByRelevance --------------------------------------------------------
+// Server tags each result relevant / off_target / null; null (unjudged) and
+// relevant stay on target, only off_target moves to the collapsed group.
+
+test("splitByRelevance keeps null/relevant on target, moves off_target", () => {
+  const mk = (id: number, relevance: "relevant" | "off_target" | null) =>
+    ({ id, relevance } as unknown as HuntResult);
+  const { onTarget, offTarget } = splitByRelevance([mk(1, null), mk(2, "relevant"), mk(3, "off_target")]);
+  assert.deepEqual(onTarget.map((r) => r.id), [1, 2]);
+  assert.deepEqual(offTarget.map((r) => r.id), [3]);
 });

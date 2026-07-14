@@ -8,7 +8,7 @@
  * over-`MAX_TERM_LEN`, dedupe first-seen, cap at `MAX_TERMS`. Keeping the UI in
  * lockstep means the founder can't assemble a round the API would 422.
  */
-import type { HuntProposal, HuntRound, HuntSettings } from "./api";
+import type { HuntProposal, HuntResult, HuntRound, HuntSettings } from "./api";
 
 /** Mirror of the server bounds (maxHuntTerms / maxHuntTermLen). */
 const MAX_TERMS = 15;
@@ -109,6 +109,22 @@ export function editTerms(terms: string[], op: { add?: string; remove?: string }
   }
 
   return out;
+}
+
+/**
+ * Partition a round's results into on-target and off-target groups by Peon's
+ * `relevance` judgement. Only an explicit "off_target" moves to `offTarget`;
+ * "relevant" and null (unjudged — the round carried no intent) stay `onTarget`.
+ * Order is preserved within each group so the caller renders rows in place.
+ */
+export function splitByRelevance(results: HuntResult[]): {
+  onTarget: HuntResult[];
+  offTarget: HuntResult[];
+} {
+  const onTarget: HuntResult[] = [];
+  const offTarget: HuntResult[] = [];
+  for (const r of results) (r.relevance === "off_target" ? offTarget : onTarget).push(r);
+  return { onTarget, offTarget };
 }
 
 /** True while any round is still queued or running (drives live polling). */

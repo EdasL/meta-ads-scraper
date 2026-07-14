@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { ScoreBadge } from "@/components/ui";
-import { formatSettings, latestEvents } from "@/lib/hunt";
+import { formatSettings, latestEvents, splitByRelevance } from "@/lib/hunt";
 import type { HuntResult, HuntRound } from "@/lib/api";
 
 /** Human label for a result's store. Unknown stores fall back to the raw value. */
@@ -67,10 +67,75 @@ function TriageState({ triage }: { triage: HuntResult["triage"] }) {
 }
 
 /**
+ * One found-app row: name (linked to its gem page once kept + scored), store
+ * badge, Ad Library link, source term, new flag, triage state, and GemScore.
+ * Reused for both the on-target list and the collapsed off-target group.
+ */
+function ResultRow({ result: r }: { result: HuntResult }) {
+  const scored = r.gem_score != null && r.kept_advertiser_id != null;
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 10,
+        padding: "7px 0",
+        borderTop: "1px solid var(--line)",
+        flexWrap: "wrap",
+      }}
+    >
+      {scored ? (
+        <Link
+          className="t-sm w-strong"
+          href={`/gems/${r.kept_advertiser_id}`}
+          style={{ flex: "1 1 180px", minWidth: 0, color: "var(--ink)", textDecoration: "underline" }}
+          title="Open the gem page"
+        >
+          {r.page_name ?? r.store_id}
+        </Link>
+      ) : (
+        <span className="t-sm w-strong" style={{ flex: "1 1 180px", minWidth: 0 }}>
+          {r.page_name ?? r.store_id}
+        </span>
+      )}
+      <StoreBadge store={r.store} href={r.link_url} />
+      <a
+        className="t-xs"
+        href={adLibraryUrl(r.page_id)}
+        target="_blank"
+        rel="noreferrer"
+        style={{ color: "var(--ink-soft)", textDecoration: "underline" }}
+        title="Open this page's ads in the Meta Ad Library"
+      >
+        Ads
+      </a>
+      <span className="t-xs" style={{ color: "var(--muted)" }} title="Search term that surfaced this app">
+        {r.source_term}
+      </span>
+      {r.was_new && (
+        <span className="t-xs w-strong" style={{ color: "var(--up)" }}>
+          New
+        </span>
+      )}
+      <TriageState triage={r.triage} />
+      {scored && (
+        <Link href={`/gems/${r.kept_advertiser_id}`} title={`GemScore ${Math.round(r.gem_score!)} / 100`} style={{ textDecoration: "none" }}>
+          <ScoreBadge score={r.gem_score!} variant="card" />
+        </Link>
+      )}
+    </div>
+  );
+}
+
+/**
  * One approved round: a derived status line, a scrollable newest-first activity
  * feed, and the streaming results list. Every number is read straight from
  * `round.progress` (never restated with a derived label). An `error` round shows
  * its `error_text` plainly with no retry — a fresh round is started from chat.
+ *
+ * Results split by Peon's relevance judgement: on-target rows render inline,
+ * off-target rows collapse into an "Off target (N)" group at the bottom, each
+ * keeping the same row markup plus a muted reason line.
  */
 export function RoundBlock({ round, results }: { round: HuntRound; results: HuntResult[] }) {
   const p = round.progress;
@@ -93,6 +158,7 @@ export function RoundBlock({ round, results }: { round: HuntRound; results: Hunt
   if (settingsLabel) statusLine += ` · ${settingsLabel}`;
 
   const showCounters = p.found != null || p.new != null;
+  const { onTarget, offTarget } = splitByRelevance(results);
 
   return (
     <div
@@ -143,65 +209,32 @@ export function RoundBlock({ round, results }: { round: HuntRound; results: Hunt
         </div>
       )}
 
-      {results.length > 0 && (
+      {onTarget.length > 0 && (
         <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
-          {results.map((r) => {
-            const scored = r.gem_score != null && r.kept_advertiser_id != null;
-            return (
-              <div
-                key={r.id}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 10,
-                  padding: "7px 0",
-                  borderTop: "1px solid var(--line)",
-                  flexWrap: "wrap",
-                }}
-              >
-                {scored ? (
-                  <Link
-                    className="t-sm w-strong"
-                    href={`/gems/${r.kept_advertiser_id}`}
-                    style={{ flex: "1 1 180px", minWidth: 0, color: "var(--ink)", textDecoration: "underline" }}
-                    title="Open the gem page"
-                  >
-                    {r.page_name ?? r.store_id}
-                  </Link>
-                ) : (
-                  <span className="t-sm w-strong" style={{ flex: "1 1 180px", minWidth: 0 }}>
-                    {r.page_name ?? r.store_id}
-                  </span>
-                )}
-                <StoreBadge store={r.store} href={r.link_url} />
-                <a
-                  className="t-xs"
-                  href={adLibraryUrl(r.page_id)}
-                  target="_blank"
-                  rel="noreferrer"
-                  style={{ color: "var(--ink-soft)", textDecoration: "underline" }}
-                  title="Open this page's ads in the Meta Ad Library"
-                >
-                  Ads
-                </a>
-                <span className="t-xs" style={{ color: "var(--muted)" }} title="Search term that surfaced this app">
-                  {r.source_term}
-                </span>
-                {r.was_new && (
-                  <span className="t-xs w-strong" style={{ color: "var(--up)" }}>
-                    New
-                  </span>
-                )}
-                <TriageState triage={r.triage} />
-                {scored && (
-                  <Link href={`/gems/${r.kept_advertiser_id}`} title={`GemScore ${Math.round(r.gem_score!)} / 100`} style={{ textDecoration: "none" }}>
-                    <ScoreBadge score={r.gem_score!} variant="card" />
-                  </Link>
+          {onTarget.map((r) => (
+            <ResultRow key={r.id} result={r} />
+          ))}
+        </div>
+      )}
+
+      {offTarget.length > 0 && (
+        <details style={{ display: "flex", flexDirection: "column" }}>
+          <summary className="t-xs w-strong" style={{ color: "var(--muted)", cursor: "pointer", padding: "6px 0" }}>
+            Off target ({offTarget.length})
+          </summary>
+          <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+            {offTarget.map((r) => (
+              <div key={r.id}>
+                <ResultRow result={r} />
+                {r.relevance_note && (
+                  <p className="t-xs" style={{ color: "var(--muted)", margin: "2px 0 0" }}>
+                    {r.relevance_note}
+                  </p>
                 )}
               </div>
-            );
-          })}
-        </div>
+            ))}
+          </div>
+        </details>
       )}
     </div>
   );

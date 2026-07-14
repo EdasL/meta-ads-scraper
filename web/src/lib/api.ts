@@ -259,6 +259,10 @@ export interface HuntProposal {
   terms: string[];
   competitor_apps: string[];
   settings?: HuntSettings;
+  /** The niche Peon is aiming at, in the founder's words — carried onto the
+   *  round so triage can judge each found app as on- or off-target. Absent on
+   *  older messages. */
+  intent?: string;
 }
 
 /** One transcript entry. `proposal` is null for user messages. `tool_log` is the
@@ -315,6 +319,11 @@ export interface HuntResult {
   triage: "pending" | "kept" | "vetoed";
   kept_advertiser_id: number | null;
   gem_score: number | null;
+  /** Peon's on-target judgement against the round's intent: "relevant" or
+   *  "off_target", or null when the round carried no intent (nothing to judge). */
+  relevance: "relevant" | "off_target" | null;
+  /** One-line reason for an off-target call; null when relevant / unjudged. */
+  relevance_note: string | null;
 }
 
 /** Full thread payload from GET /hunts/:id. */
@@ -331,9 +340,6 @@ export interface HuntThread {
 export interface HuntChatTurn {
   hunt_id: number;
   messages: HuntMessage[];
-  /** Present only when Peon started a round on this turn (the model called the
-   *  start tool). The caller merges it into thread state to begin polling. */
-  round?: HuntRound;
 }
 
 /** All hunt threads for the signed-in user, newest first. */
@@ -351,11 +357,21 @@ export async function postHunt(message: string): Promise<HuntChatTurn> {
   return live<HuntChatTurn>(`/hunts`, { method: "POST", body: JSON.stringify({ message }) });
 }
 
-/** Append a message to an existing thread; returns the refreshed transcript. */
-export async function postHuntMessage(id: number, message: string): Promise<HuntChatTurn> {
+/** The founder's live edits to the open proposal card, sent alongside a chat
+ *  message so Peon reasons about the terms/competitors actually on screen. */
+export type HuntCardState = { terms: string[]; competitor_apps: string[] };
+
+/** Append a message to an existing thread; returns the refreshed transcript.
+ *  When the founder has edited the open proposal card, pass its live state so
+ *  the API hands Peon the on-screen terms rather than its own last suggestion. */
+export async function postHuntMessage(
+  id: number,
+  message: string,
+  cardState?: HuntCardState,
+): Promise<HuntChatTurn> {
   return live<HuntChatTurn>(`/hunts/${id}/messages`, {
     method: "POST",
-    body: JSON.stringify({ message }),
+    body: JSON.stringify(cardState ? { message, card_state: cardState } : { message }),
   });
 }
 
@@ -367,6 +383,7 @@ export async function postHuntRound(
     terms: string[];
     competitor_apps: string[];
     settings?: HuntSettings;
+    intent?: string;
   },
 ): Promise<HuntRound> {
   return live<HuntRound>(`/hunts/${id}/rounds`, { method: "POST", body: JSON.stringify(body) });

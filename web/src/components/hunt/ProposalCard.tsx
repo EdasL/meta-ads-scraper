@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type KeyboardEvent } from "react";
+import { useEffect, useState, type KeyboardEvent } from "react";
 import { IconX } from "@tabler/icons-react";
 import { Button } from "@/components/ui";
 import { editTerms, formatSettings } from "@/lib/hunt";
@@ -25,10 +25,14 @@ export function ProposalCard({
   proposal,
   roundActive,
   onStart,
+  onChange,
 }: {
   proposal: HuntProposal;
   roundActive: boolean;
   onStart: (terms: string[], competitorApps: string[]) => Promise<void>;
+  /** Fires whenever the founder edits the card, so the parent can carry the
+   *  live terms/competitors onto the next chat message (see HuntView). */
+  onChange?: (terms: string[], competitorApps: string[]) => void;
 }) {
   const [terms, setTerms] = useState<string[]>(() => editTerms(proposal.terms, {}));
   // Server caps a round at MAX_COMPETITORS competitor apps (422 beyond it), so
@@ -37,6 +41,19 @@ export function ProposalCard({
   const [draft, setDraft] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Publish the live card state (terms + checked competitors, in proposal order)
+  // up to the parent on every edit — including the initial mount — so a chat
+  // message sent without touching Start hunt still carries what's on screen.
+  useEffect(() => {
+    onChange?.(
+      terms,
+      proposal.competitor_apps.filter((a) => checked.has(a)),
+    );
+    // onChange is a stable ref-setter in the parent; excluded to avoid re-firing
+    // on identity churn. proposal.competitor_apps is stable for a given message.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [terms, checked]);
 
   function addDraft() {
     const next = editTerms(terms, { add: draft });

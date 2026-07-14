@@ -10,6 +10,7 @@ import {
   postHunt,
   postHuntMessage,
   postHuntRound,
+  type HuntCardState,
   type HuntMessage,
   type HuntRound,
   type HuntSettings,
@@ -43,6 +44,10 @@ export function HuntView() {
   const [pendingText, setPendingText] = useState<string | null>(null);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
   const scroller = useRef<HTMLDivElement | null>(null);
+  // The open proposal card's live edits, mirrored here so the next chat message
+  // can carry them to Peon. Reset whenever the editable proposal changes so a
+  // stale card's terms never ride along with a message under a newer proposal.
+  const cardStateRef = useRef<HuntCardState | null>(null);
 
   const refreshHunts = useCallback(async () => {
     try {
@@ -133,6 +138,12 @@ export function HuntView() {
     return id;
   }, [thread]);
 
+  // Drop the mirrored card state when the editable proposal changes (or clears):
+  // ProposalCard re-publishes on mount, so a fresh card immediately refills it.
+  useEffect(() => {
+    cardStateRef.current = null;
+  }, [proposalMsgId]);
+
   const roundsByMsg = useMemo(() => {
     const map = new Map<number, HuntRound[]>();
     const orphans: HuntRound[] = [];
@@ -169,13 +180,20 @@ export function HuntView() {
   }, []);
 
   const startRound = useCallback(
-    async (messageId: number, terms: string[], competitorApps: string[], settings?: HuntSettings) => {
+    async (
+      messageId: number,
+      terms: string[],
+      competitorApps: string[],
+      settings?: HuntSettings,
+      intent?: string,
+    ) => {
       if (activeId == null) return;
       const round = await postHuntRound(activeId, {
         message_id: messageId,
         terms,
         competitor_apps: competitorApps,
         settings,
+        intent,
       });
       mergeRound(activeId, round);
       await loadThread(activeId);
@@ -195,15 +213,12 @@ export function HuntView() {
         const turn = await postHunt(message);
         setActiveId(turn.hunt_id);
         await loadThread(turn.hunt_id);
-        // A first turn can start a round; loadThread already fetched it, so this
-        // dedupes to a no-op — kept for parity with the existing-thread path.
-        if (turn.round) mergeRound(turn.hunt_id, turn.round);
         refreshHunts();
       } else {
-        const turn = await postHuntMessage(activeId, message);
-        // Peon may start a round on this turn — merge it so polling begins now,
-        // before the loadThread round-trip below reconciles the full thread.
-        if (turn.round) mergeRound(activeId, turn.round);
+        // Carry the open proposal card's live edits so Peon reasons about the
+        // on-screen terms; only when a proposal is actually open and edited.
+        const cardState = proposalMsgId != null && cardStateRef.current ? cardStateRef.current : undefined;
+        await postHuntMessage(activeId, message, cardState);
         await loadThread(activeId);
       }
     } catch {
@@ -213,7 +228,7 @@ export function HuntView() {
       setPendingText(null);
       setSending(false);
     }
-  }, [draft, sending, activeId, loadThread, refreshHunts, mergeRound]);
+  }, [draft, sending, activeId, loadThread, refreshHunts, proposalMsgId]);
 
   // Keep the transcript pinned to the newest message: jump on thread switch and
   // whenever a message lands or a send starts. Round polling refreshes don't
@@ -323,7 +338,12 @@ export function HuntView() {
                 <ProposalCard
                   proposal={m.proposal}
                   roundActive={roundActive}
-                  onStart={(terms, competitors) => startRound(m.id, terms, competitors, m.proposal?.settings)}
+                  onStart={(terms, competitors) =>
+                    startRound(m.id, terms, competitors, m.proposal?.settings, m.proposal?.intent)
+                  }
+                  onChange={(terms, competitors) => {
+                    cardStateRef.current = { terms, competitor_apps: competitors };
+                  }}
                 />
               )}
               {(roundsByMsg.map.get(m.id) ?? []).map((r) => (
