@@ -27,7 +27,7 @@ def clamp_hunt_settings(raw: dict | None) -> dict:
 def load_round(conn, round_id: int):
     """One hunt_rounds row (terms/competitor_apps as Python lists) or None."""
     return conn.execute(text(
-        "SELECT id, hunt_id, terms, competitor_apps, status, settings "
+        "SELECT id, hunt_id, terms, competitor_apps, status, settings, intent "
         "FROM frontend.hunt_rounds WHERE id = :i"), {"i": round_id}).first()
 
 

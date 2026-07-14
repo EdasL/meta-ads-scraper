@@ -23,6 +23,7 @@ from agf.db.hunts import (apply_triage_to_results, clamp_hunt_settings,
                           round_new_candidate_ids, update_round_progress,
                           upsert_hunt_result)
 from agf.db.pipeline_jobs import enqueue_enrich
+from agf.discovery.hunt_judge import judge_round
 from agf.discovery.sweep import classify_candidate
 from agf.discovery.triage import run_triage
 from agf.extract.errors import ExtractError
@@ -264,9 +265,16 @@ def run_hunt_round(engine, extractors, round_id: int, *,
         with begin(engine) as conn:
             counts = apply_triage_to_results(conn, round_id)
             stats.update(counts)
+        # Relevance judge runs BETWEEN triage and enqueue: it makes network calls,
+        # so it must hold no txn (prod incident: network-inside-txn). Fail-open —
+        # NULL relevance is treated as relevant, so a judge outage hides nothing.
+        progress.event("Judging relevance against the hunt intent")
+        stats.update(judge_round(engine, round_id, getattr(rnd, "intent", None)))
+        with begin(engine) as conn:
             kept_ids = [r.kept_advertiser_id for r in conn.execute(text(
                 "SELECT DISTINCT kept_advertiser_id FROM frontend.hunt_results "
-                "WHERE round_id = :r AND kept_advertiser_id IS NOT NULL"),
+                "WHERE round_id = :r AND kept_advertiser_id IS NOT NULL "
+                "AND COALESCE(relevance, 'relevant') <> 'off_target'"),
                 {"r": round_id})]
             stats["enrich_enqueued"] = enqueue_enrich(conn, kept_ids)
         progress.event(f"Triage done — {stats['kept']} kept, "
