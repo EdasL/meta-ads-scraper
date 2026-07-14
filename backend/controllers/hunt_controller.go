@@ -574,7 +574,7 @@ func trimNonEmpty(in []string) []string {
 // segment aggregates per-term stop reasons from the progress jsonb; both are
 // omitted when absent.
 func summarizeRounds(summaries []models.HuntRoundSummary) (tried, lines []string) {
-	for i, s := range summaries {
+	for _, s := range summaries {
 		var terms []string
 		if len(s.Terms) > 0 {
 			_ = json.Unmarshal(s.Terms, &terms)
@@ -582,7 +582,10 @@ func summarizeRounds(summaries []models.HuntRoundSummary) (tried, lines []string
 		tried = append(tried, terms...)
 
 		var b strings.Builder
-		fmt.Fprintf(&b, "round %d: %d terms", i+1, s.TermCount)
+		// The label carries the REAL round id — it is what the report/results
+		// tools take, and an ordinal here sent the model chasing "round 1"
+		// when the actual id was 4 (live-gate finding, 2026-07-14).
+		fmt.Fprintf(&b, "round id %d: %d terms", s.RoundID, s.TermCount)
 		if depth := settingInt(s.Settings, "page_cap"); depth > 0 {
 			fmt.Fprintf(&b, ", depth %d", depth)
 		}
