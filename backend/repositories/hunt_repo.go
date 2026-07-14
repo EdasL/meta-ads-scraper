@@ -62,12 +62,23 @@ func ListHunts(ctx context.Context, g *gorm.DB, email string) ([]models.HuntRow,
 func InsertHuntMessage(ctx context.Context, g *gorm.DB, huntID int, role, content string, proposal, toolLog json.RawMessage) (int, error) {
 	var id int
 	err := db.WithWriteTx(ctx, g, func(tx *gorm.DB) error {
-		return tx.Raw(
-			`INSERT INTO frontend.hunt_messages (hunt_id, role, content, proposal, tool_log)
-			 VALUES (?, ?, ?, CAST(? AS jsonb), CAST(? AS jsonb)) RETURNING id`,
-			huntID, role, content, jsonbArg(proposal), jsonbArg(toolLog),
-		).Scan(&id).Error
+		var e error
+		id, e = InsertHuntMessageTx(tx, huntID, role, content, proposal, toolLog)
+		return e
 	})
+	return id, err
+}
+
+// InsertHuntMessageTx is InsertHuntMessage's body against a caller-supplied
+// transaction handle, so an assistant message and its round can commit atomically
+// in one outer WithWriteTx. tx already carries the request context.
+func InsertHuntMessageTx(tx *gorm.DB, huntID int, role, content string, proposal, toolLog json.RawMessage) (int, error) {
+	var id int
+	err := tx.Raw(
+		`INSERT INTO frontend.hunt_messages (hunt_id, role, content, proposal, tool_log)
+		 VALUES (?, ?, ?, CAST(? AS jsonb), CAST(? AS jsonb)) RETURNING id`,
+		huntID, role, content, jsonbArg(proposal), jsonbArg(toolLog),
+	).Scan(&id).Error
 	return id, err
 }
 
@@ -130,8 +141,10 @@ func RoundReport(ctx context.Context, g *gorm.DB, huntID, roundID int) (*models.
 	var rows []models.HuntRoundReport
 	err := db.WithReadTx(ctx, g, func(tx *gorm.DB) error {
 		return tx.Raw(
+			// progress ships to the model as a compact digest: strip the verbose
+			// 'events' log and 'lanes' map (I1), keeping 'terms' and any counters.
 			`SELECT r.status, r.error_text, r.started_at, r.finished_at,
-			        r.settings, r.progress,
+			        r.settings, (r.progress - 'events' - 'lanes') AS progress,
 			        count(hr.id) FILTER (WHERE hr.triage = 'kept')    AS kept_count,
 			        count(hr.id) FILTER (WHERE hr.triage = 'vetoed')  AS vetoed_count,
 			        count(hr.id) FILTER (WHERE hr.triage = 'pending') AS pending_count
@@ -180,25 +193,39 @@ func RoundResults(ctx context.Context, g *gorm.DB, huntID, roundID int, triage s
 func InsertHuntRound(ctx context.Context, g *gorm.DB, huntID int, messageID *int, terms, competitors, settings json.RawMessage) (int, error) {
 	var roundID int
 	err := db.WithWriteTx(ctx, g, func(tx *gorm.DB) error {
-		if err := tx.Raw(
-			`INSERT INTO frontend.hunt_rounds (hunt_id, message_id, terms, competitor_apps, settings)
-			 VALUES (?, ?, CAST(? AS jsonb), CAST(? AS jsonb), CAST(? AS jsonb)) RETURNING id`,
-			// terms and competitor_apps are NOT NULL: default nil/empty to an
-			// empty JSON array. settings is NOT NULL DEFAULT '{}': default
-			// nil/empty to an empty JSON object.
-			huntID, messageID, jsonbArgDefault(terms), jsonbArgDefault(competitors), jsonbArgDefaultObj(settings),
-		).Scan(&roundID).Error; err != nil {
-			return err
-		}
-		return tx.Exec(
-			`INSERT INTO public.pipeline_jobs (kind, advertiser_id)
-			 VALUES ('hunt', ?)
-			 ON CONFLICT (kind, advertiser_id) WHERE status IN ('queued','running')
-			 DO NOTHING`,
-			roundID,
-		).Error
+		var e error
+		roundID, e = InsertHuntRoundTx(tx, huntID, messageID, terms, competitors, settings)
+		return e
 	})
 	return roundID, err
+}
+
+// InsertHuntRoundTx is InsertHuntRound's body against a caller-supplied
+// transaction handle, so the round insert + pipeline-job enqueue share the outer
+// txn that also wrote the assistant message. tx already carries the request
+// context.
+func InsertHuntRoundTx(tx *gorm.DB, huntID int, messageID *int, terms, competitors, settings json.RawMessage) (int, error) {
+	var roundID int
+	if err := tx.Raw(
+		`INSERT INTO frontend.hunt_rounds (hunt_id, message_id, terms, competitor_apps, settings)
+		 VALUES (?, ?, CAST(? AS jsonb), CAST(? AS jsonb), CAST(? AS jsonb)) RETURNING id`,
+		// terms and competitor_apps are NOT NULL: default nil/empty to an
+		// empty JSON array. settings is NOT NULL DEFAULT '{}': default
+		// nil/empty to an empty JSON object.
+		huntID, messageID, jsonbArgDefault(terms), jsonbArgDefault(competitors), jsonbArgDefaultObj(settings),
+	).Scan(&roundID).Error; err != nil {
+		return 0, err
+	}
+	if err := tx.Exec(
+		`INSERT INTO public.pipeline_jobs (kind, advertiser_id)
+		 VALUES ('hunt', ?)
+		 ON CONFLICT (kind, advertiser_id) WHERE status IN ('queued','running')
+		 DO NOTHING`,
+		roundID,
+	).Error; err != nil {
+		return 0, err
+	}
+	return roundID, nil
 }
 
 // HuntRoundSummaries returns per-round term/found/kept counts (oldest-first) for

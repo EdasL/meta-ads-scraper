@@ -402,6 +402,13 @@ func TestRoundReportTriageCounts(t *testing.T) {
 		       (?, 'P3', 'play', 'com.p3', 'sleep stories app', true, 'pending')`,
 		roundID, roundID, roundID, roundID, roundID, roundID).Error)
 
+	// Seed a realistic progress blob: the compact digest (terms + counters) plus
+	// the verbose 'events' log and 'lanes' map the report must strip (I1).
+	must(g.Exec(`UPDATE frontend.hunt_rounds SET progress = CAST(? AS jsonb) WHERE id = ?`,
+		`{"terms":[{"term":"sleep stories app","found":5}],"pages":10,`+
+			`"events":[{"t":"start"},{"t":"page"}],"lanes":{"a":1,"b":2}}`,
+		roundID).Error)
+
 	rep, err := repositories.RoundReport(ctx, g, huntID, roundID)
 	require.NoError(t, err)
 	require.NotNil(t, rep)
@@ -410,6 +417,12 @@ func TestRoundReportTriageCounts(t *testing.T) {
 	require.Equal(t, 2, rep.KeptCount)
 	require.Equal(t, 1, rep.VetoedCount)
 	require.Equal(t, 3, rep.PendingCount)
+
+	// The digest keeps terms + counters but drops the events log and lanes map.
+	require.Contains(t, string(rep.Progress), "terms")
+	require.Contains(t, string(rep.Progress), "pages")
+	require.NotContains(t, string(rep.Progress), "events")
+	require.NotContains(t, string(rep.Progress), "lanes")
 }
 
 func TestRoundResultsTriageFilterAndLimit(t *testing.T) {

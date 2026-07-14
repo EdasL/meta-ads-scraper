@@ -540,15 +540,21 @@ func (h *GeminiHelper) GenerateHuntTurn(ctx context.Context, in HuntTurnInput, t
 		for _, call := range calls {
 			switch call.Name {
 			case "propose_round", "start_round":
+				if call.Name == "start_round" {
+					// Explicit founder command ("run those again") = re-run
+					// allowed: pass an empty tried list so re-emitted prior terms
+					// are NOT stripped to zero. buildStartTurn only logs a started
+					// round when the plan is runnable, so an empty request never
+					// claims one.
+					plan := planFromArgs(call.Args, nil)
+					return buildStartTurn(firstText(resp), toolLog, plan), nil
+				}
+				// propose_round keeps the tried-term strip (avoid re-proposing
+				// terms already run).
 				plan := planFromArgs(call.Args, in.TriedTerms)
 				turn := HuntTurn{Reply: firstText(resp), ToolLog: toolLog}
-				if call.Name == "start_round" {
-					turn.ToolLog = append(turn.ToolLog, describePlan("started a round", plan))
-					turn.Start = &plan
-				} else {
-					turn.ToolLog = append(turn.ToolLog, describePlan("proposed a round", plan))
-					turn.Proposal = &plan
-				}
+				turn.ToolLog = append(turn.ToolLog, describePlan("proposed a round", plan))
+				turn.Proposal = &plan
 				return turn, nil // terminal tools end the turn
 			case "get_round_report":
 				id := intArg(call.Args, "round_id")
@@ -656,6 +662,26 @@ func describePlan(verb string, plan HuntPlan) string {
 		segs = append(segs, fmt.Sprintf("listing %d", l))
 	}
 	return verb + " — " + strings.Join(segs, " · ")
+}
+
+// PlanIsRunnable reports whether a plan has anything to run — at least one term
+// or competitor app after cleaning. An empty plan (e.g. a "re-run those terms"
+// request where every re-emitted term was stripped) must not create a round or
+// claim one in the tool_log.
+func PlanIsRunnable(p HuntPlan) bool {
+	return len(p.Terms) > 0 || len(p.CompetitorApps) > 0
+}
+
+// buildStartTurn assembles the terminal start_round HuntTurn. It always sets
+// Start (the controller guards the actual insert), but appends the
+// "started a round" tool_log line ONLY when the plan is runnable — so an empty
+// re-emitted plan never claims a round started.
+func buildStartTurn(reply string, toolLog []string, plan HuntPlan) HuntTurn {
+	turn := HuntTurn{Reply: reply, ToolLog: toolLog, Start: &plan}
+	if PlanIsRunnable(plan) {
+		turn.ToolLog = append(turn.ToolLog, describePlan("started a round", plan))
+	}
+	return turn
 }
 
 // buildHuntTurnContents renders the chat history as alternating user/model

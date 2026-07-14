@@ -286,27 +286,46 @@ func (c *HuntController) runTurn(ctx *gin.Context, huntID int, input helpers.Hun
 		}
 	}
 
+	// A "run those again" request whose terms all collapsed to zero (or a bare
+	// start with no competitors) is not runnable: persist the reply, but do NOT
+	// insert a 0-term round. The loop already withheld the "started a round"
+	// tool_log line for such a plan.
+	startRound := turn.Start != nil && helpers.PlanIsRunnable(*turn.Start)
+	reply := turn.Reply
+	if turn.Start != nil && !startRound && strings.TrimSpace(reply) == "" {
+		reply = "Nothing runnable in that request — name terms or competitors."
+	}
+
 	rctx, cancel2 := reqCtx(ctx)
 	defer cancel2()
-	msgID, err := repositories.InsertHuntMessage(rctx, db.DB(), huntID, "assistant", turn.Reply, proposalJSON, toolLogJSON)
+
+	// Commit the assistant message and (when runnable) the round in ONE write
+	// txn, so an assistant reply can never claim "started a round" that failed to
+	// persist. Gemini FAILURES are handled above and leave the user message intact.
+	var msgID, roundID int
+	err = db.WithWriteTx(rctx, db.DB(), func(tx *gorm.DB) error {
+		var e error
+		msgID, e = repositories.InsertHuntMessageTx(tx, huntID, "assistant", reply, proposalJSON, toolLogJSON)
+		if e != nil {
+			return e
+		}
+		if startRound {
+			termsJSON, _ := json.Marshal(emptyIfNil(turn.Start.Terms))
+			compsJSON, _ := json.Marshal(emptyIfNil(turn.Start.CompetitorApps))
+			settingsJSON, _ := json.Marshal(clampedOrEmpty(turn.Start.Settings))
+			roundID, e = repositories.InsertHuntRoundTx(tx, huntID, &msgID, termsJSON, compsJSON, settingsJSON)
+		}
+		return e
+	})
 	if err != nil {
 		helpers.Detail(ctx, http.StatusInternalServerError, "could not save reply.")
 		return nil, false
 	}
 
-	if turn.Start == nil {
+	if !startRound {
 		return nil, true
 	}
 
-	// Founder said "run": start the round now, linked to this assistant message.
-	termsJSON, _ := json.Marshal(emptyIfNil(turn.Start.Terms))
-	compsJSON, _ := json.Marshal(emptyIfNil(turn.Start.CompetitorApps))
-	settingsJSON, _ := json.Marshal(clampedOrEmpty(turn.Start.Settings))
-	roundID, err := repositories.InsertHuntRound(rctx, db.DB(), huntID, &msgID, termsJSON, compsJSON, settingsJSON)
-	if err != nil {
-		helpers.Detail(ctx, http.StatusInternalServerError, "could not start round.")
-		return nil, false
-	}
 	rounds, err := repositories.ListHuntRounds(rctx, db.DB(), huntID)
 	if err != nil {
 		helpers.Detail(ctx, http.StatusInternalServerError, "something went wrong.")

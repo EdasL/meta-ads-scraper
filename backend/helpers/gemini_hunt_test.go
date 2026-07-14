@@ -84,6 +84,50 @@ func TestPlanFromArgs(t *testing.T) {
 	}
 }
 
+// TestPlanFromArgsProposeVsStartStrip pins the C1 fix: propose_round strips
+// already-tried terms (nil tried is the start path, which keeps them so a
+// "run those again" command isn't stripped to zero).
+func TestPlanFromArgsProposeVsStartStrip(t *testing.T) {
+	args := map[string]any{"terms": []any{"sleep stories app", "calm competitor"}}
+
+	// propose_round path: tried terms are stripped.
+	propose := planFromArgs(args, []string{"calm competitor"})
+	if !reflect.DeepEqual(propose.Terms, []string{"sleep stories app"}) {
+		t.Errorf("propose terms = %v, want tried stripped", propose.Terms)
+	}
+
+	// start_round path (nil tried): re-run terms are kept.
+	start := planFromArgs(args, nil)
+	if !reflect.DeepEqual(start.Terms, []string{"sleep stories app", "calm competitor"}) {
+		t.Errorf("start terms = %v, want tried kept", start.Terms)
+	}
+}
+
+// TestBuildStartTurnEmptyPlanNoLog pins the C1 tool_log guard: an empty plan
+// must not append a "started a round" entry; a runnable one must.
+func TestBuildStartTurnEmptyPlanNoLog(t *testing.T) {
+	empty := buildStartTurn("", []string{"checked round 1's report"}, HuntPlan{})
+	for _, e := range empty.ToolLog {
+		if strings.Contains(e, "started a round") {
+			t.Errorf("empty plan logged a started round: %v", empty.ToolLog)
+		}
+	}
+	if empty.Start == nil {
+		t.Errorf("start turn must still carry the (empty) plan for the controller guard")
+	}
+
+	runnable := buildStartTurn("", nil, HuntPlan{Terms: []string{"budget app"}})
+	found := false
+	for _, e := range runnable.ToolLog {
+		if strings.Contains(e, "started a round") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("runnable plan did not log a started round: %v", runnable.ToolLog)
+	}
+}
+
 func TestPlanFromArgsNoSettings(t *testing.T) {
 	plan := planFromArgs(map[string]any{"terms": []any{"budget app"}}, nil)
 	if len(plan.Settings) != 0 {
