@@ -77,6 +77,29 @@ def test_judge_round_fails_open(_migrated_engine, monkeypatch):
         conn.execute(text("DELETE FROM frontend.hunts WHERE title = 'judge'"))
 
 
+def test_judge_round_null_verdicts_fails_open(_migrated_engine, monkeypatch):
+    """Valid JSON that violates the schema (verdicts not a list) must not crash the round."""
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    from agf.db.engine import begin
+    with begin(_migrated_engine) as conn:
+        round_id, ids = _seed(conn)
+
+    def null_verdicts_post(url, body):
+        return {"candidates": [{"content": {"parts": [{"text": json.dumps({"verdicts": None})}]}}]}
+
+    stats = judge_round(_migrated_engine, round_id, "sleep apps for new parents", _post=null_verdicts_post)
+    assert stats["judged"] == 0
+    with begin(_migrated_engine) as conn:
+        left = conn.execute(text(
+            "SELECT count(*) FROM frontend.hunt_results WHERE round_id = :r AND relevance IS NOT NULL"),
+            {"r": round_id}).scalar_one()
+    assert left == 0  # nothing written = NULL relevance = treated as relevant
+    with begin(_migrated_engine) as conn:
+        conn.execute(text("DELETE FROM frontend.hunt_results WHERE round_id = :r"), {"r": round_id})
+        conn.execute(text("DELETE FROM frontend.hunt_rounds WHERE id = :r"), {"r": round_id})
+        conn.execute(text("DELETE FROM frontend.hunts WHERE title = 'judge'"))
+
+
 def test_judge_round_no_intent_skips(_migrated_engine):
     stats = judge_round(_migrated_engine, 999999, "")
     assert stats["judged"] == 0 and "skipped" in stats

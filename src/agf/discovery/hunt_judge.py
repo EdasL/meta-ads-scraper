@@ -112,6 +112,12 @@ def judge_round(engine, round_id: int, intent, *, model: str = _MODEL,
         except (HttpBackoffError, KeyError, IndexError, TypeError, ValueError) as exc:
             log.warning("hunt judge batch failed (fail open): %s", exc)
             continue
+        # Fail open: valid JSON can still violate the schema (e.g. verdicts
+        # null or a scalar). Guard the shape so a bad batch is skipped, never
+        # crashes the round.
+        if not isinstance(batch_verdicts, list):
+            log.warning("hunt judge batch verdicts not a list (fail open): %r", type(batch_verdicts))
+            continue
         ids = {r.id for r in batch}
         for v in batch_verdicts:
             if not isinstance(v, dict) or v.get("id") not in ids:
