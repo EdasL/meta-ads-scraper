@@ -184,6 +184,8 @@ services:
     environment:
       AGF_DATABASE_URL: ${AGF_DATABASE_URL}
       AGF_PROXIES: ${AGF_PROXIES}
+      # Relevance judge (hunt_judge.py) — judges kept results against the round intent.
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
       AGF_HUNT_POLL_SEC: ${AGF_HUNT_POLL_SEC:-2}
       AGF_HUNT_ROUND_TIMEOUT_SEC: ${AGF_HUNT_ROUND_TIMEOUT_SEC:-1800}
     depends_on:
