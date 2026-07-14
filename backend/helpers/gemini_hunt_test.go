@@ -84,47 +84,64 @@ func TestPlanFromArgs(t *testing.T) {
 	}
 }
 
-// TestPlanFromArgsProposeVsStartStrip pins the C1 fix: propose_round strips
-// already-tried terms (nil tried is the start path, which keeps them so a
-// "run those again" command isn't stripped to zero).
-func TestPlanFromArgsProposeVsStartStrip(t *testing.T) {
-	args := map[string]any{"terms": []any{"sleep stories app", "calm competitor"}}
-
-	// propose_round path: tried terms are stripped.
-	propose := planFromArgs(args, []string{"calm competitor"})
-	if !reflect.DeepEqual(propose.Terms, []string{"sleep stories app"}) {
-		t.Errorf("propose terms = %v, want tried stripped", propose.Terms)
+func TestPlanFromArgsIntentAndAllowTried(t *testing.T) {
+	args := map[string]any{
+		"terms":       []any{"sleep stories app", "already tried"},
+		"intent":      "sleep apps aimed at new parents",
+		"allow_tried": true,
 	}
-
-	// start_round path (nil tried): re-run terms are kept.
-	start := planFromArgs(args, nil)
-	if !reflect.DeepEqual(start.Terms, []string{"sleep stories app", "calm competitor"}) {
-		t.Errorf("start terms = %v, want tried kept", start.Terms)
+	plan := planFromArgs(args, []string{"already tried"})
+	if plan.Intent != "sleep apps aimed at new parents" {
+		t.Fatalf("intent = %q", plan.Intent)
+	}
+	if !reflect.DeepEqual(plan.Terms, []string{"sleep stories app", "already tried"}) {
+		t.Fatalf("allow_tried must keep tried terms, got %v", plan.Terms)
+	}
+	args["allow_tried"] = false
+	plan = planFromArgs(args, []string{"already tried"})
+	if !reflect.DeepEqual(plan.Terms, []string{"sleep stories app"}) {
+		t.Fatalf("without allow_tried the strip must apply, got %v", plan.Terms)
 	}
 }
 
-// TestBuildStartTurnEmptyPlanNoLog pins the C1 tool_log guard: an empty plan
-// must not append a "started a round" entry; a runnable one must.
-func TestBuildStartTurnEmptyPlanNoLog(t *testing.T) {
-	empty := buildStartTurn("", []string{"checked round 1's report"}, HuntPlan{})
-	for _, e := range empty.ToolLog {
-		if strings.Contains(e, "started a round") {
-			t.Errorf("empty plan logged a started round: %v", empty.ToolLog)
-		}
+func TestHuntToolDeclsHasNoStartRound(t *testing.T) {
+	var names []string
+	for _, d := range huntToolDecls() {
+		names = append(names, d.Name)
 	}
-	if empty.Start == nil {
-		t.Errorf("start turn must still carry the (empty) plan for the controller guard")
+	want := []string{"get_round_report", "get_round_results", "propose_round"}
+	if !reflect.DeepEqual(names, want) {
+		t.Fatalf("tool decls = %v, want %v", names, want)
 	}
+}
 
-	runnable := buildStartTurn("", nil, HuntPlan{Terms: []string{"budget app"}})
-	found := false
-	for _, e := range runnable.ToolLog {
-		if strings.Contains(e, "started a round") {
-			found = true
-		}
+func TestServerToolLines(t *testing.T) {
+	parts := []*genai.Part{
+		{Text: "thinking"},
+		{ToolCall: &genai.ToolCall{ToolType: genai.ToolTypeGoogleSearchWeb}},
+		{ToolCall: &genai.ToolCall{ToolType: genai.ToolTypeURLContext}},
+		nil,
 	}
-	if !found {
-		t.Errorf("runnable plan did not log a started round: %v", runnable.ToolLog)
+	got := serverToolLines(parts)
+	want := []string{"searched the web", "read a page"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("serverToolLines = %v, want %v", got, want)
+	}
+}
+
+func TestBuildHuntTurnContentsRicherContext(t *testing.T) {
+	in := HuntTurnInput{
+		Message:         "drop the second term",
+		PendingProposal: "terms: a, b · intent: sleep apps",
+		CardState:       "terms: a, b (competitors: calm)",
+		PriorHunts:      []string{"hunt 3 round 9: 4 terms, 12 found, 3 kept"},
+	}
+	contents := buildHuntTurnContents(in)
+	last := contents[len(contents)-1].Parts[0].Text
+	for _, want := range []string{"Current proposal awaiting approval", "sleep apps", "The proposal card currently shows", "Prior hunts", "hunt 3 round 9"} {
+		if !strings.Contains(last, want) {
+			t.Fatalf("final turn missing %q:\n%s", want, last)
+		}
 	}
 }
 

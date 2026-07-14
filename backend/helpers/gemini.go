@@ -421,21 +421,21 @@ type HuntToolExecutor interface {
 	GetRoundResults(roundID int, triage string) (string, error)
 }
 
-// HuntPlan is the terms + competitor apps + clamped settings for a round, shared
-// by the propose and start paths.
+// HuntPlan is the terms + competitor apps + clamped settings for a round, plus
+// the plain-sentence intent the founder is hunting for.
 type HuntPlan struct {
 	Terms          []string
 	CompetitorApps []string
 	Settings       map[string]int
+	Intent         string
 }
 
-// HuntTurn is the result of one Peon agent turn. Exactly one of Proposal/Start
-// is non-nil when the model called a terminal tool; both are nil for a plain
-// chat reply. ToolLog is the plain-sentence trace the loop wrote.
+// HuntTurn is the result of one Peon agent turn. Proposal is non-nil when the
+// model called propose_round (the only terminal tool); nil for a plain chat
+// reply. ToolLog is the plain-sentence trace the loop wrote.
 type HuntTurn struct {
 	Reply    string
 	Proposal *HuntPlan
-	Start    *HuntPlan
 	ToolLog  []string
 }
 
@@ -446,50 +446,55 @@ type HuntTurnInput struct {
 	History        []HuntHistoryTurn
 	TriedTerms     []string
 	RoundSummaries []string
+
+	// PendingProposal is the latest un-started proposal, formatted for the
+	// model; empty when none is pending. CardState is what the founder's
+	// proposal card currently shows (they may have edited chips). PriorHunts
+	// are compact one-line summaries from the founder's other hunts.
+	PendingProposal string
+	CardState       string
+	PriorHunts      []string
 }
 
 const huntAgentInstruction = "You are Peon, Field Desk's discovery agent. You help the founder find " +
-	"emerging mobile apps by running Meta Ad Library search rounds.\n" +
+	"emerging mobile apps by running Meta Ad Library search rounds and researching niches on the web.\n" +
 	"\n" +
 	"Search terms are generic niche queries a user would type (e.g. 'sleep stories app', " +
 	"'ai bedtime audio') — short, plain, and never brand or app names. Any brand or app the " +
-	"founder names belongs in competitor_apps, never in terms. Propose at most 15 terms and at " +
-	"most 3 competitor apps. In propose_round, never repeat a term already tried — but when the " +
-	"founder explicitly asks to RE-RUN previous terms, pass those exact terms to start_round: " +
-	"already-tried terms are allowed there and must not be refused.\n" +
+	"founder names belongs in competitor_apps, never in terms. At most 15 terms and at most " +
+	"3 competitor apps.\n" +
 	"\n" +
-	"Before answering any question about what a prior round did or why terms stopped, call " +
-	"get_round_report (per-term pages/found/new, stop reasons, triage counts) and/or " +
-	"get_round_results (the actual result rows). Do not guess round outcomes from memory.\n" +
+	"You cannot start a round. propose_round suggests a plan the founder approves with the " +
+	"Start hunt button — that button is the only way a round starts. When the founder asks to " +
+	"run or re-run something, reply with a propose_round call (set allow_tried true for " +
+	"re-runs so previously tried terms are kept) and note they can press Start hunt. Never " +
+	"say a round is running unless round telemetry says so.\n" +
 	"\n" +
-	"To seed a round, call propose_round — this suggests a round the founder approves with the " +
-	"Start hunt button. Call start_round instead ONLY when the founder's LATEST message explicitly " +
-	"tells you to run/start/go now; otherwise always use propose_round.\n" +
+	"When a proposal is awaiting approval, a new propose_round is a refinement: keep " +
+	"everything the founder did not ask to change, starting from the proposal card state " +
+	"when it is provided.\n" +
+	"\n" +
+	"Every propose_round includes intent: one plain sentence saying what the founder is " +
+	"hunting, from the conversation (e.g. 'sleep apps aimed at new parents'). Results are " +
+	"judged against it after the round runs.\n" +
+	"\n" +
+	"Use web search and page reading when they help: niche research, a link the founder " +
+	"pastes, a store listing. Before answering about a prior round, call get_round_report " +
+	"and/or get_round_results — do not guess round outcomes.\n" +
 	"\n" +
 	"Optional round settings and their bounds: page_cap (Ad Library pages per term, 1-100), " +
-	"patience (empty pages tolerated before stopping a term, 1-10), listing_pages (store listing " +
-	"pages per app, 1-30). Set only the ones the founder asked for.\n" +
+	"patience (empty pages tolerated before stopping a term, 1-10), listing_pages (store " +
+	"listing pages per app, 1-30). Set only the ones the founder asked for; when asked what " +
+	"a setting means, just explain it.\n" +
 	"\n" +
-	"Your reply text is 1-3 plain, professional sentences. The name Peon appears only in prose, " +
-	"never inside terms or competitor apps."
+	"Your reply text is 1-3 plain, professional sentences. The name Peon appears only in " +
+	"prose, never inside terms or competitor apps."
 
-// GenerateHuntTurn runs Peon as a Gemini function-calling agent: it can read
-// round telemetry via the tool executor, then finish with a plain reply or a
-// terminal propose_round/start_round. It mirrors GenerateExplainer's 3-attempt
-// backoff (per model call) and caps the loop at 6 iterations. Returns an error
-// (callers respond 502) when the helper is nil or a model call fails after
-// retries.
-func (h *GeminiHelper) GenerateHuntTurn(ctx context.Context, in HuntTurnInput, tools HuntToolExecutor) (HuntTurn, error) {
-	if h == nil {
-		return HuntTurn{}, fmt.Errorf("gemini helper not initialized")
-	}
-	// A nil executor would panic on the first reader-tool dispatch (nil-interface
-	// call). Fail soft the same way the nil-helper guard does.
-	if tools == nil {
-		return HuntTurn{}, fmt.Errorf("hunt tools are not configured")
-	}
-
-	decls := []*genai.FunctionDeclaration{
+// huntToolDecls is the fixed tool surface of the hunt agent. There is
+// deliberately no tool that starts a round — rounds start only from the
+// founder's Start hunt button (POST /hunts/:id/rounds).
+func huntToolDecls() []*genai.FunctionDeclaration {
+	return []*genai.FunctionDeclaration{
 		{
 			Name:        "get_round_report",
 			Description: "Telemetry for one prior round: settings used, per-term pages/found/new and why each term stopped, triage counts.",
@@ -501,7 +506,7 @@ func (h *GeminiHelper) GenerateHuntTurn(ctx context.Context, in HuntTurnInput, t
 		},
 		{
 			Name:        "get_round_results",
-			Description: "Result rows for one prior round (page name, store, source term, was_new, triage, gem score); optional triage filter kept|vetoed|pending.",
+			Description: "Result rows for one prior round (page name, store, source term, was_new, triage, relevance, gem score); optional triage filter kept|vetoed|pending.",
 			Parameters: &genai.Schema{
 				Type: genai.TypeObject,
 				Properties: map[string]*genai.Schema{
@@ -513,20 +518,61 @@ func (h *GeminiHelper) GenerateHuntTurn(ctx context.Context, in HuntTurnInput, t
 		},
 		{
 			Name:        "propose_round",
-			Description: "Suggest a new round for the founder to approve with the Start hunt button. Use this unless the founder explicitly told you to run.",
+			Description: "Suggest a round for the founder to approve with the Start hunt button. The only terminal action; you cannot start rounds yourself.",
 			Parameters:  planSchema(),
 		},
-		{
-			Name:        "start_round",
-			Description: "Start a round NOW. Only when the founder's latest message explicitly says to run/start/go.",
-			Parameters:  planSchema(),
-		},
+	}
+}
+
+// serverToolLines maps server-side built-in tool invocations (Gemini runs
+// google_search/url_context itself) to the plain tool_log sentences the chat
+// shows under Peon's reply.
+func serverToolLines(parts []*genai.Part) []string {
+	var out []string
+	for _, p := range parts {
+		if p == nil || p.ToolCall == nil {
+			continue
+		}
+		switch p.ToolCall.ToolType {
+		case genai.ToolTypeGoogleSearchWeb, genai.ToolTypeGoogleSearchImage:
+			out = append(out, "searched the web")
+		case genai.ToolTypeURLContext:
+			out = append(out, "read a page")
+		}
+	}
+	return out
+}
+
+// GenerateHuntTurn runs Peon as a Gemini function-calling agent: it can read
+// round telemetry via the tool executor and research niches with built-in web
+// tools, then finish with a plain reply or a terminal propose_round. It mirrors
+// GenerateExplainer's 3-attempt backoff (per model call) and caps the loop at 6
+// iterations. Returns an error (callers respond 502) when the helper is nil or a
+// model call fails after retries.
+func (h *GeminiHelper) GenerateHuntTurn(ctx context.Context, in HuntTurnInput, tools HuntToolExecutor) (HuntTurn, error) {
+	if h == nil {
+		return HuntTurn{}, fmt.Errorf("gemini helper not initialized")
+	}
+	// A nil executor would panic on the first reader-tool dispatch (nil-interface
+	// call). Fail soft the same way the nil-helper guard does.
+	if tools == nil {
+		return HuntTurn{}, fmt.Errorf("hunt tools are not configured")
 	}
 
 	config := &genai.GenerateContentConfig{
 		SystemInstruction: &genai.Content{Parts: []*genai.Part{{Text: huntAgentInstruction}}},
-		Tools:             []*genai.Tool{{FunctionDeclarations: decls}},
+		Tools:             []*genai.Tool{{FunctionDeclarations: huntToolDecls()}},
 		MaxOutputTokens:   2048,
+	}
+	if h.huntWebTools {
+		// Built-in tools run server-side inside one model call; combining them
+		// with function declarations needs this flag (verified live: rejected
+		// without it, and rejected entirely on gemini-2.5-flash).
+		config.Tools = append(config.Tools,
+			&genai.Tool{GoogleSearch: &genai.GoogleSearch{}},
+			&genai.Tool{URLContext: &genai.URLContext{}},
+		)
+		config.ToolConfig = &genai.ToolConfig{IncludeServerSideToolInvocations: genai.Ptr(true)}
 	}
 
 	contents := buildHuntTurnContents(in)
@@ -534,9 +580,13 @@ func (h *GeminiHelper) GenerateHuntTurn(ctx context.Context, in HuntTurnInput, t
 
 	const maxIterations = 6
 	for iter := 0; iter < maxIterations; iter++ {
-		resp, err := h.generateWithRetry(ctx, h.model, contents, config)
+		resp, err := h.generateWithRetry(ctx, h.huntModel, contents, config)
 		if err != nil {
 			return HuntTurn{}, err
+		}
+
+		if len(resp.Candidates) > 0 && resp.Candidates[0].Content != nil {
+			toolLog = append(toolLog, serverToolLines(resp.Candidates[0].Content.Parts)...)
 		}
 
 		calls := resp.FunctionCalls()
@@ -553,18 +603,9 @@ func (h *GeminiHelper) GenerateHuntTurn(ctx context.Context, in HuntTurnInput, t
 		var responseParts []*genai.Part
 		for _, call := range calls {
 			switch call.Name {
-			case "propose_round", "start_round":
-				if call.Name == "start_round" {
-					// Explicit founder command ("run those again") = re-run
-					// allowed: pass an empty tried list so re-emitted prior terms
-					// are NOT stripped to zero. buildStartTurn only logs a started
-					// round when the plan is runnable, so an empty request never
-					// claims one.
-					plan := planFromArgs(call.Args, nil)
-					return buildStartTurn(firstText(resp), toolLog, plan), nil
-				}
+			case "propose_round":
 				// propose_round keeps the tried-term strip (avoid re-proposing
-				// terms already run).
+				// terms already run) unless the model set allow_tried.
 				plan := planFromArgs(call.Args, in.TriedTerms)
 				turn := HuntTurn{Reply: firstText(resp), ToolLog: toolLog}
 				turn.ToolLog = append(turn.ToolLog, describePlan("proposed a round", plan))
@@ -628,7 +669,7 @@ func settingsSchema() *genai.Schema {
 	}
 }
 
-// planSchema is the shared parameter schema for propose_round and start_round.
+// planSchema is the parameter schema for propose_round.
 func planSchema() *genai.Schema {
 	return &genai.Schema{
 		Type: genai.TypeObject,
@@ -636,8 +677,10 @@ func planSchema() *genai.Schema {
 			"terms":           {Type: genai.TypeArray, Description: "Generic niche search queries. Short, plain, no brand names. At most 15.", Items: &genai.Schema{Type: genai.TypeString}},
 			"competitor_apps": {Type: genai.TypeArray, Description: "Brand or app names the founder named as competitors. At most 3.", Items: &genai.Schema{Type: genai.TypeString}},
 			"settings":        settingsSchema(),
+			"intent":          {Type: genai.TypeString, Description: "One plain sentence: what the founder is hunting."},
+			"allow_tried":     {Type: genai.TypeBoolean, Description: "True only when the founder explicitly asked to re-run previous terms."},
 		},
-		Required: []string{"terms"},
+		Required: []string{"terms", "intent"},
 	}
 }
 
@@ -646,10 +689,15 @@ func planSchema() *genai.Schema {
 // competitors are capped at 3, and settings are clamped. JSON numbers arrive as
 // float64, which intPtrArg narrows to int.
 func planFromArgs(args map[string]any, tried []string) HuntPlan {
+	if b, ok := args["allow_tried"].(bool); ok && b {
+		// Explicit founder re-run: re-emitted prior terms are allowed.
+		tried = nil
+	}
 	plan := HuntPlan{
 		Terms:          cleanHuntTerms(stringSlice(args["terms"]), tried),
 		CompetitorApps: capStrings(stringSlice(args["competitor_apps"]), 3),
 		Settings:       map[string]int{},
+		Intent:         stringArg(args, "intent"),
 	}
 	if raw, ok := args["settings"].(map[string]any); ok {
 		plan.Settings = ClampHuntSettings(HuntSettings{
@@ -676,26 +724,6 @@ func describePlan(verb string, plan HuntPlan) string {
 		segs = append(segs, fmt.Sprintf("listing %d", l))
 	}
 	return verb + " — " + strings.Join(segs, " · ")
-}
-
-// PlanIsRunnable reports whether a plan has anything to run — at least one term
-// or competitor app after cleaning. An empty plan (e.g. a "re-run those terms"
-// request where every re-emitted term was stripped) must not create a round or
-// claim one in the tool_log.
-func PlanIsRunnable(p HuntPlan) bool {
-	return len(p.Terms) > 0 || len(p.CompetitorApps) > 0
-}
-
-// buildStartTurn assembles the terminal start_round HuntTurn. It always sets
-// Start (the controller guards the actual insert), but appends the
-// "started a round" tool_log line ONLY when the plan is runnable — so an empty
-// re-emitted plan never claims a round started.
-func buildStartTurn(reply string, toolLog []string, plan HuntPlan) HuntTurn {
-	turn := HuntTurn{Reply: reply, ToolLog: toolLog, Start: &plan}
-	if PlanIsRunnable(plan) {
-		turn.ToolLog = append(turn.ToolLog, describePlan("started a round", plan))
-	}
-	return turn
 }
 
 // buildHuntTurnContents renders the chat history as alternating user/model
@@ -726,6 +754,20 @@ func buildHuntTurnContents(in HuntTurnInput) []*genai.Content {
 				fmt.Fprintf(&b, "- %s\n", s)
 			}
 		}
+	}
+	if len(in.PriorHunts) > 0 {
+		b.WriteString("Prior hunts (other threads):\n")
+		for _, line := range in.PriorHunts {
+			if line = strings.TrimSpace(line); line != "" {
+				fmt.Fprintf(&b, "  %s\n", line)
+			}
+		}
+	}
+	if in.PendingProposal != "" {
+		fmt.Fprintf(&b, "Current proposal awaiting approval: %s\n", in.PendingProposal)
+	}
+	if in.CardState != "" {
+		fmt.Fprintf(&b, "The proposal card currently shows: %s\n", in.CardState)
 	}
 	if b.Len() > 0 {
 		b.WriteString("\n")

@@ -183,11 +183,10 @@ func (c *HuntController) Create(ctx *gin.Context) {
 	}
 
 	// New thread → no history, no prior rounds.
-	round, ok := c.runTurn(ctx, huntID, helpers.HuntTurnInput{Message: message})
-	if !ok {
+	if !c.runTurn(ctx, huntID, helpers.HuntTurnInput{Message: message}) {
 		return
 	}
-	c.writeThread(ctx, huntID, http.StatusCreated, round)
+	c.writeThread(ctx, huntID, http.StatusCreated, nil)
 }
 
 // Message handles POST /api/hunts/:hunt_id/messages — the same flow as Create on
@@ -238,16 +237,15 @@ func (c *HuntController) Message(ctx *gin.Context) {
 		history = append(history, helpers.HuntHistoryTurn{Role: m.Role, Content: m.Content})
 	}
 	tried, roundLines := summarizeRounds(summaries)
-	round, ok := c.runTurn(ctx, huntID, helpers.HuntTurnInput{
+	if !c.runTurn(ctx, huntID, helpers.HuntTurnInput{
 		Message:        message,
 		History:        history,
 		TriedTerms:     tried,
 		RoundSummaries: roundLines,
-	})
-	if !ok {
+	}) {
 		return
 	}
-	c.writeThread(ctx, huntID, http.StatusCreated, round)
+	c.writeThread(ctx, huntID, http.StatusCreated, nil)
 }
 
 // runTurn runs one Peon agent turn under a 30s budget and appends the assistant
@@ -255,10 +253,9 @@ func (c *HuntController) Message(ctx *gin.Context) {
 // failure — leaving the already-persisted user message intact. The assistant
 // message carries the reply as content, a {terms, competitor_apps, settings}
 // proposal jsonb when the model proposed a round, and a tool_log jsonb when the
-// loop read any round telemetry. When the model started a round (founder said
-// "run"), the round is inserted with message_id = this assistant message and
-// returned so the caller can echo it in the response.
-func (c *HuntController) runTurn(ctx *gin.Context, huntID int, input helpers.HuntTurnInput) (*models.HuntRoundRow, bool) {
+// loop read any round telemetry. Rounds start only from the founder's Start hunt
+// button, never from a chat turn.
+func (c *HuntController) runTurn(ctx *gin.Context, huntID int, input helpers.HuntTurnInput) bool {
 	gctx, cancel := context.WithTimeout(ctx.Request.Context(), huntProposalTimeout)
 	defer cancel()
 
@@ -266,7 +263,7 @@ func (c *HuntController) runTurn(ctx *gin.Context, huntID int, input helpers.Hun
 	turn, err := c.gemini.GenerateHuntTurn(gctx, input, tools)
 	if err != nil {
 		helpers.Detail(ctx, http.StatusBadGateway, "Peon could not answer. Try again.")
-		return nil, false
+		return false
 	}
 
 	var proposalJSON json.RawMessage
@@ -274,7 +271,7 @@ func (c *HuntController) runTurn(ctx *gin.Context, huntID int, input helpers.Hun
 		proposalJSON, err = marshalHuntPlan(*turn.Proposal)
 		if err != nil {
 			helpers.Detail(ctx, http.StatusInternalServerError, "something went wrong.")
-			return nil, false
+			return false
 		}
 	}
 	var toolLogJSON json.RawMessage
@@ -282,62 +279,27 @@ func (c *HuntController) runTurn(ctx *gin.Context, huntID int, input helpers.Hun
 		toolLogJSON, err = json.Marshal(turn.ToolLog)
 		if err != nil {
 			helpers.Detail(ctx, http.StatusInternalServerError, "something went wrong.")
-			return nil, false
+			return false
 		}
 	}
 
-	// A "run those again" request whose terms all collapsed to zero (or a bare
-	// start with no competitors) is not runnable: persist the reply, but do NOT
-	// insert a 0-term round. The loop already withheld the "started a round"
-	// tool_log line for such a plan.
-	startRound := turn.Start != nil && helpers.PlanIsRunnable(*turn.Start)
 	reply := turn.Reply
-	if turn.Start != nil && !startRound && strings.TrimSpace(reply) == "" {
-		reply = "Nothing runnable in that request — name terms or competitors."
-	}
 
 	rctx, cancel2 := reqCtx(ctx)
 	defer cancel2()
 
-	// Commit the assistant message and (when runnable) the round in ONE write
-	// txn, so an assistant reply can never claim "started a round" that failed to
-	// persist. Gemini FAILURES are handled above and leave the user message intact.
-	var msgID, roundID int
+	// Commit the assistant message. Rounds start only from the founder's Start
+	// hunt button (POST /hunts/:id/rounds), never from a chat turn. Gemini
+	// FAILURES are handled above and leave the user message intact.
 	err = db.WithWriteTx(rctx, db.DB(), func(tx *gorm.DB) error {
-		var e error
-		msgID, e = repositories.InsertHuntMessageTx(tx, huntID, "assistant", reply, proposalJSON, toolLogJSON)
-		if e != nil {
-			return e
-		}
-		if startRound {
-			termsJSON, _ := json.Marshal(emptyIfNil(turn.Start.Terms))
-			compsJSON, _ := json.Marshal(emptyIfNil(turn.Start.CompetitorApps))
-			settingsJSON, _ := json.Marshal(clampedOrEmpty(turn.Start.Settings))
-			roundID, e = repositories.InsertHuntRoundTx(tx, huntID, &msgID, termsJSON, compsJSON, settingsJSON)
-		}
+		_, e := repositories.InsertHuntMessageTx(tx, huntID, "assistant", reply, proposalJSON, toolLogJSON)
 		return e
 	})
 	if err != nil {
 		helpers.Detail(ctx, http.StatusInternalServerError, "could not save reply.")
-		return nil, false
+		return false
 	}
-
-	if !startRound {
-		return nil, true
-	}
-
-	rounds, err := repositories.ListHuntRounds(rctx, db.DB(), huntID)
-	if err != nil {
-		helpers.Detail(ctx, http.StatusInternalServerError, "something went wrong.")
-		return nil, false
-	}
-	for i := range rounds {
-		if rounds[i].ID == roundID {
-			return &rounds[i], true
-		}
-	}
-	helpers.Detail(ctx, http.StatusInternalServerError, "round not found after insert.")
-	return nil, false
+	return true
 }
 
 // writeThread returns {hunt_id, messages} after a chat turn, plus an optional
