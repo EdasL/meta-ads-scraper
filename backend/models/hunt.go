@@ -42,15 +42,16 @@ type HuntRoundRow struct {
 // HuntRoundReport is the tool-facing status digest for a single round, scoped to
 // its hunt. Triage counts are aggregated from hunt_results.
 type HuntRoundReport struct {
-	Status       string          `json:"status"`
-	ErrorText    *string         `json:"error_text" gorm:"column:error_text"`
-	StartedAt    *time.Time      `json:"started_at" gorm:"column:started_at"`
-	FinishedAt   *time.Time      `json:"finished_at" gorm:"column:finished_at"`
-	Settings     json.RawMessage `json:"settings" gorm:"column:settings"`
-	Progress     json.RawMessage `json:"progress" gorm:"column:progress"`
-	KeptCount    int             `json:"kept_count" gorm:"column:kept_count"`
-	VetoedCount  int             `json:"vetoed_count" gorm:"column:vetoed_count"`
-	PendingCount int             `json:"pending_count" gorm:"column:pending_count"`
+	Status         string          `json:"status"`
+	ErrorText      *string         `json:"error_text" gorm:"column:error_text"`
+	StartedAt      *time.Time      `json:"started_at" gorm:"column:started_at"`
+	FinishedAt     *time.Time      `json:"finished_at" gorm:"column:finished_at"`
+	Settings       json.RawMessage `json:"settings" gorm:"column:settings"`
+	Progress       json.RawMessage `json:"progress" gorm:"column:progress"`
+	KeptCount      int             `json:"kept_count" gorm:"column:kept_count"`
+	VetoedCount    int             `json:"vetoed_count" gorm:"column:vetoed_count"`
+	PendingCount   int             `json:"pending_count" gorm:"column:pending_count"`
+	OffTargetCount int             `json:"off_target_count" gorm:"column:off_target_count"`
 }
 
 // HuntResultRow is one (round, found page/store listing). GemScore is joined at
@@ -67,6 +68,8 @@ type HuntResultRow struct {
 	WasNew           bool     `json:"was_new" gorm:"column:was_new"`
 	Triage           string   `json:"triage"`
 	KeptAdvertiserID *int     `json:"kept_advertiser_id" gorm:"column:kept_advertiser_id"`
+	Relevance        *string  `json:"relevance" gorm:"column:relevance"`
+	RelevanceNote    *string  `json:"relevance_note" gorm:"column:relevance_note"`
 	GemScore         *float64 `json:"gem_score" gorm:"column:gem_score"`
 }
 

@@ -121,6 +121,7 @@ func ListHuntResults(ctx context.Context, g *gorm.DB, huntID int) ([]models.Hunt
 		return tx.Raw(
 			`SELECT hr.id, hr.round_id, hr.page_id, hr.page_name, hr.store, hr.store_id,
 			        hr.link_url, hr.source_term, hr.was_new, hr.triage, hr.kept_advertiser_id,
+			        hr.relevance, hr.relevance_note,
 			        s.gem_score
 			 FROM frontend.hunt_results hr
 			 JOIN frontend.hunt_rounds r ON r.id = hr.round_id
@@ -147,7 +148,8 @@ func RoundReport(ctx context.Context, g *gorm.DB, huntID, roundID int) (*models.
 			        r.settings, (r.progress - 'events' - 'lanes') AS progress,
 			        count(hr.id) FILTER (WHERE hr.triage = 'kept')    AS kept_count,
 			        count(hr.id) FILTER (WHERE hr.triage = 'vetoed')  AS vetoed_count,
-			        count(hr.id) FILTER (WHERE hr.triage = 'pending') AS pending_count
+			        count(hr.id) FILTER (WHERE hr.triage = 'pending') AS pending_count,
+			        count(hr.id) FILTER (WHERE hr.relevance = 'off_target') AS off_target_count
 			 FROM frontend.hunt_rounds r
 			 LEFT JOIN frontend.hunt_results hr ON hr.round_id = r.id
 			 WHERE r.id = ? AND r.hunt_id = ?
@@ -171,6 +173,7 @@ func RoundResults(ctx context.Context, g *gorm.DB, huntID, roundID int, triage s
 		return tx.Raw(
 			`SELECT hr.id, hr.round_id, hr.page_id, hr.page_name, hr.store, hr.store_id,
 			        hr.link_url, hr.source_term, hr.was_new, hr.triage, hr.kept_advertiser_id,
+			        hr.relevance, hr.relevance_note,
 			        s.gem_score
 			 FROM frontend.hunt_results hr
 			 JOIN frontend.hunt_rounds r ON r.id = hr.round_id
@@ -190,11 +193,11 @@ func RoundResults(ctx context.Context, g *gorm.DB, huntID, roundID int, triage s
 // hunt worker daemon drains kind='hunt' jobs). The partial unique index on
 // (kind, advertiser_id) WHERE status IN ('queued','running') makes the enqueue
 // idempotent. messageID may be nil (SQL NULL).
-func InsertHuntRound(ctx context.Context, g *gorm.DB, huntID int, messageID *int, terms, competitors, settings json.RawMessage) (int, error) {
+func InsertHuntRound(ctx context.Context, g *gorm.DB, huntID int, messageID *int, terms, competitors, settings json.RawMessage, intent *string) (int, error) {
 	var roundID int
 	err := db.WithWriteTx(ctx, g, func(tx *gorm.DB) error {
 		var e error
-		roundID, e = InsertHuntRoundTx(tx, huntID, messageID, terms, competitors, settings)
+		roundID, e = InsertHuntRoundTx(tx, huntID, messageID, terms, competitors, settings, intent)
 		return e
 	})
 	return roundID, err
@@ -204,15 +207,15 @@ func InsertHuntRound(ctx context.Context, g *gorm.DB, huntID int, messageID *int
 // transaction handle, so the round insert + pipeline-job enqueue share the outer
 // txn that also wrote the assistant message. tx already carries the request
 // context.
-func InsertHuntRoundTx(tx *gorm.DB, huntID int, messageID *int, terms, competitors, settings json.RawMessage) (int, error) {
+func InsertHuntRoundTx(tx *gorm.DB, huntID int, messageID *int, terms, competitors, settings json.RawMessage, intent *string) (int, error) {
 	var roundID int
 	if err := tx.Raw(
-		`INSERT INTO frontend.hunt_rounds (hunt_id, message_id, terms, competitor_apps, settings)
-		 VALUES (?, ?, CAST(? AS jsonb), CAST(? AS jsonb), CAST(? AS jsonb)) RETURNING id`,
+		`INSERT INTO frontend.hunt_rounds (hunt_id, message_id, terms, competitor_apps, settings, intent)
+		 VALUES (?, ?, CAST(? AS jsonb), CAST(? AS jsonb), CAST(? AS jsonb), ?) RETURNING id`,
 		// terms and competitor_apps are NOT NULL: default nil/empty to an
 		// empty JSON array. settings is NOT NULL DEFAULT '{}': default
-		// nil/empty to an empty JSON object.
-		huntID, messageID, jsonbArgDefault(terms), jsonbArgDefault(competitors), jsonbArgDefaultObj(settings),
+		// nil/empty to an empty JSON object. intent is nullable (nil → SQL NULL).
+		huntID, messageID, jsonbArgDefault(terms), jsonbArgDefault(competitors), jsonbArgDefaultObj(settings), intent,
 	).Scan(&roundID).Error; err != nil {
 		return 0, err
 	}

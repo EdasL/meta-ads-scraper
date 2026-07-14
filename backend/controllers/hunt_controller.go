@@ -464,7 +464,7 @@ func (c *HuntController) StartRound(ctx *gin.Context) {
 
 	rctx, cancel := reqCtx(ctx)
 	defer cancel()
-	roundID, err := repositories.InsertHuntRound(rctx, db.DB(), huntID, body.MessageID, termsJSON, compsJSON, settingsJSON)
+	roundID, err := repositories.InsertHuntRound(rctx, db.DB(), huntID, body.MessageID, termsJSON, compsJSON, settingsJSON, nil)
 	if err != nil {
 		helpers.Detail(ctx, http.StatusInternalServerError, "could not start round.")
 		return

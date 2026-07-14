@@ -56,7 +56,7 @@ func TestCreateHuntAndListHunts(t *testing.T) {
 	// A round on id1 populates its LastRoundStatus.
 	terms, _ := json.Marshal([]string{"sleep stories app"})
 	comps, _ := json.Marshal([]string{})
-	_, err = repositories.InsertHuntRound(ctx, g, id1, nil, terms, comps, nil)
+	_, err = repositories.InsertHuntRound(ctx, g, id1, nil, terms, comps, nil, nil)
 	require.NoError(t, err)
 	hunts, err = repositories.ListHunts(ctx, g, huntTestEmail)
 	require.NoError(t, err)
@@ -141,7 +141,7 @@ func TestInsertHuntRoundEnqueuesJob(t *testing.T) {
 	require.NoError(t, err)
 	terms, _ := json.Marshal([]string{"sleep stories app"})
 	comps, _ := json.Marshal([]string{"Calm"})
-	roundID, err := repositories.InsertHuntRound(ctx, g, huntID, &msgID, terms, comps, nil)
+	roundID, err := repositories.InsertHuntRound(ctx, g, huntID, &msgID, terms, comps, nil, nil)
 	require.NoError(t, err)
 
 	// The round exists and is queued.
@@ -169,6 +169,59 @@ func TestInsertHuntRoundEnqueuesJob(t *testing.T) {
 	require.EqualValues(t, 1, jobCount)
 }
 
+func TestInsertHuntRoundIntentAndRelevanceColumns(t *testing.T) {
+	if ratingsDB == nil {
+		t.Skip("AGF_IT_DB_URL not set")
+	}
+	g := ratingsDB
+	ctx := context.Background()
+	cleanHunts(g)
+	t.Cleanup(func() { cleanHunts(g) })
+
+	huntID, err := repositories.CreateHunt(ctx, g, huntTestEmail, "intent hunt")
+	require.NoError(t, err)
+	terms, _ := json.Marshal([]string{"sleep stories app"})
+	intent := "sleep apps aimed at new parents"
+	roundID, err := repositories.InsertHuntRound(ctx, g, huntID, nil, terms, nil, nil, &intent)
+	require.NoError(t, err)
+
+	// The intent sentence persists on the round.
+	var got *string
+	require.NoError(t, g.Raw(
+		`SELECT intent FROM frontend.hunt_rounds WHERE id = ?`, roundID).Scan(&got).Error)
+	require.NotNil(t, got)
+	require.Equal(t, intent, *got)
+
+	// A relevance verdict + note round-trips through the result readers.
+	must(g.Exec(`INSERT INTO frontend.hunt_results
+		(round_id, page_id, store, store_id, source_term, was_new, triage, relevance, relevance_note)
+		VALUES (?, 'R1', 'play', 'com.r1', 'sleep stories app', true, 'kept', 'relevant', 'matches new-parent sleep angle'),
+		       (?, 'R2', 'play', 'com.r2', 'sleep stories app', true, 'kept', 'off_target', 'general meditation, not sleep')`,
+		roundID, roundID).Error)
+
+	results, err := repositories.RoundResults(ctx, g, huntID, roundID, "", 100)
+	require.NoError(t, err)
+	require.Len(t, results, 2)
+	byPage := map[string]int{}
+	for i, r := range results {
+		byPage[r.PageID] = i
+	}
+	rel := results[byPage["R1"]]
+	require.NotNil(t, rel.Relevance)
+	require.Equal(t, "relevant", *rel.Relevance)
+	require.NotNil(t, rel.RelevanceNote)
+	require.Equal(t, "matches new-parent sleep angle", *rel.RelevanceNote)
+	off := results[byPage["R2"]]
+	require.NotNil(t, off.Relevance)
+	require.Equal(t, "off_target", *off.Relevance)
+
+	// RoundReport counts the off_target verdict.
+	rep, err := repositories.RoundReport(ctx, g, huntID, roundID)
+	require.NoError(t, err)
+	require.NotNil(t, rep)
+	require.Equal(t, 1, rep.OffTargetCount)
+}
+
 func TestInsertHuntRoundNilCompetitorsStoresEmptyArray(t *testing.T) {
 	if ratingsDB == nil {
 		t.Skip("AGF_IT_DB_URL not set")
@@ -182,7 +235,7 @@ func TestInsertHuntRoundNilCompetitorsStoresEmptyArray(t *testing.T) {
 	require.NoError(t, err)
 	terms, _ := json.Marshal([]string{"sleep stories app"})
 	// nil competitors must NOT violate the NOT NULL column; it defaults to '[]'.
-	roundID, err := repositories.InsertHuntRound(ctx, g, huntID, nil, terms, nil, nil)
+	roundID, err := repositories.InsertHuntRound(ctx, g, huntID, nil, terms, nil, nil, nil)
 	require.NoError(t, err)
 
 	var termsText, compsText string
@@ -206,7 +259,7 @@ func TestListHuntResultsJoinsGemScore(t *testing.T) {
 	require.NoError(t, err)
 	terms, _ := json.Marshal([]string{"sleep stories app"})
 	comps, _ := json.Marshal([]string{})
-	roundID, err := repositories.InsertHuntRound(ctx, g, huntID, nil, terms, comps, nil)
+	roundID, err := repositories.InsertHuntRound(ctx, g, huntID, nil, terms, comps, nil, nil)
 	require.NoError(t, err)
 
 	// One kept result wired to the seeded scored advertiser; one pending result
@@ -253,7 +306,7 @@ func TestHuntRoundSummaries(t *testing.T) {
 	require.NoError(t, err)
 	terms, _ := json.Marshal([]string{"sleep stories app", "ai bedtime audio"})
 	comps, _ := json.Marshal([]string{})
-	roundID, err := repositories.InsertHuntRound(ctx, g, huntID, nil, terms, comps, nil)
+	roundID, err := repositories.InsertHuntRound(ctx, g, huntID, nil, terms, comps, nil, nil)
 	require.NoError(t, err)
 
 	// Two results, one kept.
@@ -287,10 +340,10 @@ func TestInsertHuntRoundSettingsRoundtrip(t *testing.T) {
 
 	// A round WITH settings reads back verbatim via ListHuntRounds.
 	settings := json.RawMessage(`{"page_cap":30}`)
-	withID, err := repositories.InsertHuntRound(ctx, g, huntID, nil, terms, nil, settings)
+	withID, err := repositories.InsertHuntRound(ctx, g, huntID, nil, terms, nil, settings, nil)
 	require.NoError(t, err)
 	// A round with nil settings must default to '{}' (NOT NULL column).
-	nilID, err := repositories.InsertHuntRound(ctx, g, huntID, nil, terms, nil, nil)
+	nilID, err := repositories.InsertHuntRound(ctx, g, huntID, nil, terms, nil, nil, nil)
 	require.NoError(t, err)
 
 	rounds, err := repositories.ListHuntRounds(ctx, g, huntID)
@@ -356,7 +409,7 @@ func TestRoundReportForeignHuntReturnsNil(t *testing.T) {
 	huntB, err := repositories.CreateHunt(ctx, g, huntTestEmail, "hunt B")
 	require.NoError(t, err)
 	terms, _ := json.Marshal([]string{"sleep stories app"})
-	roundA, err := repositories.InsertHuntRound(ctx, g, huntA, nil, terms, nil, nil)
+	roundA, err := repositories.InsertHuntRound(ctx, g, huntA, nil, terms, nil, nil, nil)
 	require.NoError(t, err)
 
 	// The round exists under huntA.
@@ -388,7 +441,7 @@ func TestRoundReportTriageCounts(t *testing.T) {
 	huntID, err := repositories.CreateHunt(ctx, g, huntTestEmail, "triage counts")
 	require.NoError(t, err)
 	terms, _ := json.Marshal([]string{"sleep stories app"})
-	roundID, err := repositories.InsertHuntRound(ctx, g, huntID, nil, terms, nil, nil)
+	roundID, err := repositories.InsertHuntRound(ctx, g, huntID, nil, terms, nil, nil, nil)
 	require.NoError(t, err)
 
 	// 2 kept, 1 vetoed, 3 pending.
@@ -437,7 +490,7 @@ func TestRoundResultsTriageFilterAndLimit(t *testing.T) {
 	huntID, err := repositories.CreateHunt(ctx, g, huntTestEmail, "round results")
 	require.NoError(t, err)
 	terms, _ := json.Marshal([]string{"sleep stories app"})
-	roundID, err := repositories.InsertHuntRound(ctx, g, huntID, nil, terms, nil, nil)
+	roundID, err := repositories.InsertHuntRound(ctx, g, huntID, nil, terms, nil, nil, nil)
 	require.NoError(t, err)
 
 	// 3 kept, 2 pending. One kept is wired to the seeded scored advertiser.
