@@ -38,10 +38,16 @@ export function HuntView() {
   const [activeId, setActiveId] = useState<number | null>(null);
   const [thread, setThread] = useState<HuntThread | null>(null);
   const [draft, setDraft] = useState("");
-  const [sending, setSending] = useState(false);
-  // The just-sent message, rendered as a user bubble immediately (before the
-  // server round-trip finishes) so sending feels instant.
-  const [pendingText, setPendingText] = useState<string | null>(null);
+  // In-flight sends, keyed by the hunt they were sent in ("new" until the first
+  // turn creates the hunt). The optimistic user bubble and the working indicator
+  // render only in the OWNING hunt's transcript — switching hunts mid-turn must
+  // not carry them along, and a turn finishing in another hunt must not touch
+  // the visible thread.
+  const [pendings, setPendings] = useState<Record<string, string>>({});
+  // Which hunt is on screen right now — async completions check this before
+  // writing thread state, so a stale response can never replace another hunt's
+  // transcript.
+  const activeIdRef = useRef<number | null>(null);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
   const scroller = useRef<HTMLDivElement | null>(null);
   // The open proposal card's live edits, mirrored here so the next chat message
@@ -57,9 +63,16 @@ export function HuntView() {
     }
   }, []);
 
+  useEffect(() => {
+    activeIdRef.current = activeId;
+  }, [activeId]);
+
   const loadThread = useCallback(async (id: number) => {
     try {
-      setThread(await getHunt(id));
+      const t = await getHunt(id);
+      // Only land the result if this hunt is still the one on screen — the
+      // founder may have switched (or clicked New hunt) while it was in flight.
+      if (activeIdRef.current === id) setThread(t);
     } catch {
       /* transient — keep the last good thread */
     }
@@ -202,33 +215,57 @@ export function HuntView() {
     [activeId, loadThread, refreshHunts, mergeRound],
   );
 
+  const clearPending = useCallback((key: string) => {
+    setPendings((p) => {
+      if (!(key in p)) return p;
+      const next = { ...p };
+      delete next[key];
+      return next;
+    });
+  }, []);
+
   const send = useCallback(async () => {
     const message = draft.trim();
-    if (!message || sending) return;
-    setSending(true);
+    const key = activeId == null ? "new" : String(activeId);
+    if (!message || pendings[key] != null) return;
     setDraft("");
-    setPendingText(message); // instant user bubble; the reload replaces it
+    setPendings((p) => ({ ...p, [key]: message })); // instant user bubble in THIS hunt
     try {
       if (activeId == null) {
         const turn = await postHunt(message);
+        // The hunt now has a real id: move the pending bubble onto it before
+        // switching, so it stays visible while the thread loads.
+        setPendings((p) => {
+          const next = { ...p, [String(turn.hunt_id)]: message };
+          delete next.new;
+          return next;
+        });
+        activeIdRef.current = turn.hunt_id;
         setActiveId(turn.hunt_id);
         await loadThread(turn.hunt_id);
         refreshHunts();
+        clearPending(String(turn.hunt_id));
       } else {
         // Carry the open proposal card's live edits so Peon reasons about the
         // on-screen terms; only when a proposal is actually open and edited.
         const cardState = proposalMsgId != null && cardStateRef.current ? cardStateRef.current : undefined;
         await postHuntMessage(activeId, message, cardState);
         await loadThread(activeId);
+        clearPending(key);
       }
     } catch {
-      // Restore the draft so the founder can retry.
-      setDraft(message);
-    } finally {
-      setPendingText(null);
-      setSending(false);
+      // Restore the draft so the founder can retry — but only if they're still
+      // on the hunt the message belongs to.
+      if (activeIdRef.current === activeId) setDraft(message);
+      clearPending(key);
     }
-  }, [draft, sending, activeId, loadThread, refreshHunts, proposalMsgId]);
+  }, [draft, pendings, activeId, loadThread, refreshHunts, proposalMsgId, clearPending]);
+
+  // The pending send that belongs to the hunt on screen (if any). Everything
+  // optimistic — bubble, working pulse, composer lock — keys off this, so a
+  // send in another hunt never bleeds into the visible transcript.
+  const pendingHere = pendings[activeId == null ? "new" : String(activeId)] ?? null;
+  const sendingHere = pendingHere != null;
 
   // Keep the transcript pinned to the newest message: jump on thread switch and
   // whenever a message lands or a send starts. Round polling refreshes don't
@@ -237,7 +274,7 @@ export function HuntView() {
   useEffect(() => {
     const el = scroller.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [activeId, messageCount, pendingText, sending]);
+  }, [activeId, messageCount, pendingHere]);
 
   function onComposerKey(e: KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -354,10 +391,10 @@ export function HuntView() {
           {roundsByMsg.orphans.map((r) => (
             <RoundBlock key={r.id} round={r} results={resultsFor(r.id)} />
           ))}
-          {pendingText != null && (
-            <MessageBubble message={{ id: -1, role: "user", content: pendingText, proposal: null, tool_log: null, created_at: "" }} />
+          {pendingHere != null && (
+            <MessageBubble message={{ id: -1, role: "user", content: pendingHere, proposal: null, tool_log: null, created_at: "" }} />
           )}
-          {sending && <PeonWorking />}
+          {sendingHere && <PeonWorking />}
         </div>
 
         <div style={{ flex: "0 0 auto", display: "flex", flexDirection: "column", gap: 8, borderTop: "1px solid var(--line)", paddingTop: 10 }}>
@@ -380,8 +417,8 @@ export function HuntView() {
             }}
           />
           <div style={{ display: "flex", justifyContent: "flex-end" }}>
-            <Button onClick={send} disabled={sending || draft.trim() === ""}>
-              {sending ? "Sending…" : "Send"}
+            <Button onClick={send} disabled={sendingHere || draft.trim() === ""}>
+              {sendingHere ? "Sending…" : "Send"}
             </Button>
           </div>
         </div>
@@ -391,7 +428,7 @@ export function HuntView() {
 }
 
 /** Peon's in-progress state: a labelled bubble that pulses while the agent turn
- *  (Gemini + tool calls, up to ~30s) runs server-side. */
+ *  (Gemini + tool calls, up to ~90s with web browsing) runs server-side. */
 function PeonWorking() {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 4, alignItems: "flex-start" }}>
