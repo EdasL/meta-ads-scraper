@@ -38,7 +38,11 @@ export function HuntView() {
   const [thread, setThread] = useState<HuntThread | null>(null);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
+  // The just-sent message, rendered as a user bubble immediately (before the
+  // server round-trip finishes) so sending feels instant.
+  const [pendingText, setPendingText] = useState<string | null>(null);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const scroller = useRef<HTMLDivElement | null>(null);
 
   const refreshHunts = useCallback(async () => {
     try {
@@ -185,6 +189,7 @@ export function HuntView() {
     if (!message || sending) return;
     setSending(true);
     setDraft("");
+    setPendingText(message); // instant user bubble; the reload replaces it
     try {
       if (activeId == null) {
         const turn = await postHunt(message);
@@ -205,9 +210,19 @@ export function HuntView() {
       // Restore the draft so the founder can retry.
       setDraft(message);
     } finally {
+      setPendingText(null);
       setSending(false);
     }
   }, [draft, sending, activeId, loadThread, refreshHunts, mergeRound]);
+
+  // Keep the transcript pinned to the newest message: jump on thread switch and
+  // whenever a message lands or a send starts. Round polling refreshes don't
+  // change the message count, so they never yank the founder's scroll position.
+  const messageCount = thread?.messages.length ?? 0;
+  useEffect(() => {
+    const el = scroller.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [activeId, messageCount, pendingText, sending]);
 
   function onComposerKey(e: KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -266,9 +281,20 @@ export function HuntView() {
         </div>
       </aside>
 
-      {/* Thread + composer */}
-      <section style={{ flex: "1 1 480px", minWidth: 300, display: "flex", flexDirection: "column", gap: 16 }}>
-        <div>
+      {/* Thread + composer: the transcript is its own scroll container and the
+          composer sits BELOW it — messages can never slide under the input. */}
+      <section
+        style={{
+          flex: "1 1 480px",
+          minWidth: 300,
+          display: "flex",
+          flexDirection: "column",
+          gap: 12,
+          height: "calc(100vh - 170px)",
+          minHeight: 420,
+        }}
+      >
+        <div style={{ flex: "0 0 auto" }}>
           <h1 className="t-2xl w-heavy" style={{ margin: 0 }}>
             Hunt
           </h1>
@@ -277,7 +303,19 @@ export function HuntView() {
           </p>
         </div>
 
-        <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+        <div
+          ref={scroller}
+          style={{
+            flex: "1 1 auto",
+            minHeight: 0,
+            overflowY: "auto",
+            display: "flex",
+            flexDirection: "column",
+            gap: 18,
+            paddingRight: 6,
+            paddingBottom: 8,
+          }}
+        >
           {(thread?.messages ?? []).map((m) => (
             <div key={m.id}>
               <MessageBubble message={m} />
@@ -296,14 +334,18 @@ export function HuntView() {
           {roundsByMsg.orphans.map((r) => (
             <RoundBlock key={r.id} round={r} results={resultsFor(r.id)} />
           ))}
+          {pendingText != null && (
+            <MessageBubble message={{ id: -1, role: "user", content: pendingText, proposal: null, tool_log: null, created_at: "" }} />
+          )}
+          {sending && <PeonWorking />}
         </div>
 
-        <div style={{ display: "flex", flexDirection: "column", gap: 8, position: "sticky", bottom: 16 }}>
+        <div style={{ flex: "0 0 auto", display: "flex", flexDirection: "column", gap: 8, borderTop: "1px solid var(--line)", paddingTop: 10 }}>
           <textarea
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={onComposerKey}
-            rows={3}
+            rows={2}
             placeholder="Describe a niche or a competitor app"
             className="t-sm"
             style={{
@@ -325,6 +367,29 @@ export function HuntView() {
         </div>
       </section>
     </main>
+  );
+}
+
+/** Peon's in-progress state: a labelled bubble that pulses while the agent turn
+ *  (Gemini + tool calls, up to ~30s) runs server-side. */
+function PeonWorking() {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 4, alignItems: "flex-start" }}>
+      <style>{`@keyframes hunt-working-pulse { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }`}</style>
+      <span className="eyebrow">Peon</span>
+      <div
+        className="t-sm"
+        style={{
+          border: "1.5px solid var(--ink)",
+          background: "var(--surface-2)",
+          color: "var(--muted)",
+          padding: "10px 12px",
+          animation: "hunt-working-pulse 1.4s ease-in-out infinite",
+        }}
+      >
+        Peon is working…
+      </div>
+    </div>
   );
 }
 
