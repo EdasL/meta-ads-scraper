@@ -14,7 +14,7 @@ import time
 from sqlalchemy import text
 
 from agf.db.engine import begin, get_engine
-from agf.db.hunts import finish_round
+from agf.db.hunts import compose_round_message, finish_round, insert_round_message
 from agf.db.pipeline_jobs import claim_next, reap_expired, set_job_status
 
 log = logging.getLogger("agf.hunt_daemon")
@@ -57,6 +57,11 @@ def process_once(engine, *, runner=run_hunt_subprocess) -> bool:
             msg = err or "hunt subprocess exited without recording status"
             set_job_status(conn, job_id, "error", error=msg)
             finish_round(conn, round_id, status="error", error=msg)
+            try:
+                insert_round_message(conn, round_id,
+                                     compose_round_message(round_id, "error", {}, error=msg))
+            except Exception:  # message is a convenience; the round row is the truth
+                log.exception("round failure message failed")
     return True
 
 

@@ -8,7 +8,12 @@ import sys
 from functools import partial
 
 from agf.db.engine import begin, get_engine
-from agf.db.hunts import finish_round
+from agf.db.hunts import (
+    compose_round_message,
+    finish_round,
+    insert_round_message,
+    round_summary_counts,
+)
 from agf.db.pipeline_jobs import set_job_status
 from agf.discovery.hunt import HUNT_TERM_LANES, run_hunt_round
 
@@ -62,6 +67,12 @@ def main(argv=None) -> int:
         with begin(engine) as conn:
             finish_round(conn, args.round_id, status="done")
             set_job_status(conn, args.job_id, "done")
+            try:
+                counts = round_summary_counts(conn, args.round_id)
+                insert_round_message(conn, args.round_id,
+                                     compose_round_message(args.round_id, "done", counts))
+            except Exception:  # message is a convenience; the round row is the truth
+                log.exception("round completion message failed")
         log.info("hunt round %d done: %s", args.round_id, stats)
         return 0
     except HuntTimeout as e:
@@ -80,6 +91,11 @@ def _fail(engine, args, msg: str) -> None:
     with begin(engine) as conn:
         finish_round(conn, args.round_id, status="error", error=msg)
         set_job_status(conn, args.job_id, "error", error=msg)
+        try:
+            insert_round_message(conn, args.round_id,
+                                 compose_round_message(args.round_id, "error", {}, error=msg))
+        except Exception:  # message is a convenience; the round row is the truth
+            log.exception("round failure message failed")
 
 
 if __name__ == "__main__":

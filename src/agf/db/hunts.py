@@ -85,6 +85,34 @@ def apply_triage_to_results(conn, round_id: int) -> dict:
     return counts
 
 
+def round_summary_counts(conn, round_id: int) -> dict:
+    """Found / kept / off-target tallies for one finished round's results."""
+    row = conn.execute(text(
+        "SELECT count(*) AS found, "
+        "count(*) FILTER (WHERE triage = 'kept') AS kept, "
+        "count(*) FILTER (WHERE relevance = 'off_target') AS off_target "
+        "FROM frontend.hunt_results WHERE round_id = :r"), {"r": round_id}).one()
+    return {"found": row.found, "kept": row.kept, "off_target": row.off_target}
+
+
+def compose_round_message(round_id: int, status: str, counts: dict, error=None) -> str:
+    """Plain, honest chat copy for a finished round. No marketing voice."""
+    if status != "done":
+        detail = (error or "unknown error").strip()[:160]
+        return f"Round {round_id} failed: {detail}."
+    base = f"Round {round_id} done: {counts.get('kept', 0)} kept of {counts.get('found', 0)} found"
+    off = counts.get("off_target", 0)
+    return f"{base}, {off} off target." if off else f"{base}."
+
+
+def insert_round_message(conn, round_id: int, content: str) -> None:
+    """One assistant message into the round's hunt thread (non-fatal helper)."""
+    conn.execute(text(
+        "INSERT INTO frontend.hunt_messages (hunt_id, role, content) "
+        "SELECT hunt_id, 'assistant', :c FROM frontend.hunt_rounds WHERE id = :r"),
+        {"c": content, "r": round_id})
+
+
 def round_new_candidate_ids(conn, round_id: int) -> list[int]:
     return [r.candidate_id for r in conn.execute(text(
         "SELECT candidate_id FROM frontend.hunt_results "
