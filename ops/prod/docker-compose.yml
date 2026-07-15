@@ -187,7 +187,7 @@ services:
       # Relevance judge (hunt_judge.py) — judges kept results against the round intent.
       GEMINI_API_KEY: ${GEMINI_API_KEY}
       AGF_HUNT_POLL_SEC: ${AGF_HUNT_POLL_SEC:-2}
-      AGF_HUNT_ROUND_TIMEOUT_SEC: ${AGF_HUNT_ROUND_TIMEOUT_SEC:-1800}
+      AGF_HUNT_ROUND_TIMEOUT_SEC: ${AGF_HUNT_ROUND_TIMEOUT_SEC:-5400}
       # Round-completion hook: Peon writes the wrap-up message via the API
       # (design 2026-07-15). Unset/unreachable -> canned fallback message.
       AGF_API_URL: ${AGF_API_URL:-https://api.peon.works}

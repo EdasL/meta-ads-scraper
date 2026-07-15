@@ -21,7 +21,7 @@ log = logging.getLogger("agf.hunt_daemon")
 
 KIND = "hunt"
 POLL_SEC = int(os.environ.get("AGF_HUNT_POLL_SEC", "2"))
-ROUND_TIMEOUT_SEC = int(os.environ.get("AGF_HUNT_ROUND_TIMEOUT_SEC", "1800"))
+ROUND_TIMEOUT_SEC = int(os.environ.get("AGF_HUNT_ROUND_TIMEOUT_SEC", "5400"))
 LEASE_SEC = ROUND_TIMEOUT_SEC + 120
 
 
