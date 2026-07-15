@@ -301,6 +301,29 @@ func PriorHuntLines(ctx context.Context, g *gorm.DB, email string, excludeHuntID
 	return out, nil
 }
 
+// HuntForRound resolves a round to its hunt id and owner email, for the
+// internal round-completion hook. Returns (0, "", nil) when the round does not
+// exist — the caller 404s without leaking existence semantics.
+func HuntForRound(ctx context.Context, g *gorm.DB, roundID int) (int, string, error) {
+	var rows []struct {
+		HuntID int    `gorm:"column:hunt_id"`
+		Email  string `gorm:"column:user_email"`
+	}
+	err := db.WithReadTx(ctx, g, func(tx *gorm.DB) error {
+		return tx.Raw(
+			`SELECT r.hunt_id, h.user_email
+			 FROM frontend.hunt_rounds r
+			 JOIN frontend.hunts h ON h.id = r.hunt_id
+			 WHERE r.id = ?`,
+			roundID,
+		).Scan(&rows).Error
+	})
+	if err != nil || len(rows) == 0 {
+		return 0, "", err
+	}
+	return rows[0].HuntID, rows[0].Email, nil
+}
+
 // jsonbArg maps a nil json.RawMessage to a typed nil so CAST(? AS jsonb)
 // receives SQL NULL rather than an empty string (which is not valid jsonb).
 func jsonbArg(raw json.RawMessage) any {

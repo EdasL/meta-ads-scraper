@@ -85,6 +85,65 @@ func postRounds(t *testing.T, r http.Handler, huntID int, body string) *httptest
 	return w
 }
 
+// postRoundCompleted hits the internal round-completion hook with the internal
+// bearer token (RequireInternalToken accepts the token alone; no user session).
+func postRoundCompleted(t *testing.T, r http.Handler, roundID string) *httptest.ResponseRecorder {
+	t.Helper()
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost,
+		"/api/internal/hunts/rounds/"+roundID+"/completed", nil)
+	req.Header.Set("Authorization", "Bearer "+writeToken)
+	r.ServeHTTP(w, req)
+	return w
+}
+
+// TestRoundCompletedInternalEndpoint exercises POST
+// /api/internal/hunts/rounds/:round_id/completed hermetically. It forces Peon
+// UNCONFIGURED (GEMINI_API_KEY="") so the handler is reached without a live
+// model round-trip: the 503 path proves route + internal-token auth + param
+// handling are wired. The happy path (200 + one assistant message) needs a real
+// Gemini call and is covered by the live gate (Task 7).
+func TestRoundCompletedInternalEndpoint(t *testing.T) {
+	t.Setenv(middlewares.APITokenEnv, writeToken)
+	t.Setenv("GEMINI_API_KEY", "")
+	r := router()
+
+	huntID := seedHunt(t, authedEmail, "round complete hunt")
+	roundID := seedRoundWithResults(t, huntID)
+
+	// Missing internal token → 401 (RequireInternalToken fails closed).
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodPost,
+		"/api/internal/hunts/rounds/"+strconv.Itoa(roundID)+"/completed", nil))
+	require.Equal(t, http.StatusUnauthorized, w.Code, "missing internal token → 401")
+
+	// Wrong internal token → 401.
+	w = httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost,
+		"/api/internal/hunts/rounds/"+strconv.Itoa(roundID)+"/completed", nil)
+	req.Header.Set("Authorization", "Bearer not-the-token")
+	r.ServeHTTP(w, req)
+	require.Equal(t, http.StatusUnauthorized, w.Code, "wrong internal token → 401")
+
+	// An unparseable round id reaches the handler (route is wired) and 404s
+	// before any DB or model work.
+	w = postRoundCompleted(t, r, "not-a-number")
+	require.Equal(t, http.StatusNotFound, w.Code, "unparseable round id → 404")
+
+	// A real, owned round with a valid internal token reaches the handler; Peon
+	// is unconfigured, so it returns 503 and writes NO message row.
+	var before int
+	require.NoError(t, db.DB().Raw(
+		`SELECT count(*) FROM frontend.hunt_messages WHERE hunt_id = ?`, huntID).Scan(&before).Error)
+	w = postRoundCompleted(t, r, strconv.Itoa(roundID))
+	require.Equal(t, http.StatusServiceUnavailable, w.Code,
+		"valid internal token + unconfigured Peon → 503, handler reached")
+	var after int
+	require.NoError(t, db.DB().Raw(
+		`SELECT count(*) FROM frontend.hunt_messages WHERE hunt_id = ?`, huntID).Scan(&after).Error)
+	require.Equal(t, before, after, "a 503 completion writes no message row")
+}
+
 func TestHuntListEmptyForFreshEmail(t *testing.T) {
 	r := router()
 	key := freshHuntKey(t, "hunt-empty@test.local")

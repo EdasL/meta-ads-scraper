@@ -92,6 +92,9 @@ func Init(r *gin.Engine) {
 	internal.GET("/keys", ia.ListKeys)
 	internal.POST("/keys", ia.MintKey)
 	internal.POST("/keys/revoke", ia.RevokeKey)
+	// Hunt round-completion hook: the worker VM's hunt daemon reports a
+	// finished round; Peon writes the wrap-up message. Internal token only.
+	internal.POST("/hunts/rounds/:round_id/completed", hunt.RoundCompleted)
 
 	// Hosted multi-user MCP. Personal fd_ key auth (KeyAuth(false) — the internal
 	// static token is NOT accepted here), then a per-key rate limit. The limiter
