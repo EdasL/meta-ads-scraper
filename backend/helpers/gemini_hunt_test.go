@@ -1,6 +1,7 @@
 package helpers
 
 import (
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -72,13 +73,13 @@ func TestClampHuntSettingsMinPages(t *testing.T) {
 func TestPlanFromArgs(t *testing.T) {
 	args := map[string]any{
 		"terms": []any{
-			"Sleep Stories App", // will lowercase
+			"Sleep Stories Nightly", // will lowercase
 			"ai bedtime audio",
-			"  ", // junk / empty
-			"sleep stories app", // dup after normalize
-			"calm competitor",   // tried
+			"  ",                    // junk / empty
+			"sleep stories nightly", // dup after normalize
+			"calm competitor",       // tried
 		},
-		"competitor_apps": []any{"Calm", "Headspace", "BetterSleep", "Slumber"}, // cap 3
+		"competitor_apps": []any{"Calm", "Headspace", "BetterSleep", "Slumber"}, // under cap 10
 		"settings": map[string]any{
 			"page_cap":      float64(40), // JSON number
 			"patience":      float64(20), // above bound -> 10
@@ -87,12 +88,12 @@ func TestPlanFromArgs(t *testing.T) {
 	}
 	plan := planFromArgs(args, []string{"calm competitor"})
 
-	wantTerms := []string{"sleep stories app", "ai bedtime audio"}
+	wantTerms := []string{"sleep stories nightly", "ai bedtime audio"}
 	if !reflect.DeepEqual(plan.Terms, wantTerms) {
 		t.Errorf("terms = %v, want %v", plan.Terms, wantTerms)
 	}
-	if len(plan.CompetitorApps) != 3 {
-		t.Errorf("competitor_apps = %v, want 3", plan.CompetitorApps)
+	if len(plan.CompetitorApps) != 4 {
+		t.Errorf("competitor_apps = %v, want 4", plan.CompetitorApps)
 	}
 	wantSettings := map[string]int{"page_cap": 40, "patience": 10, "listing_pages": 12}
 	if !reflect.DeepEqual(plan.Settings, wantSettings) {
@@ -102,7 +103,7 @@ func TestPlanFromArgs(t *testing.T) {
 
 func TestPlanFromArgsIntentAndAllowTried(t *testing.T) {
 	args := map[string]any{
-		"terms":       []any{"sleep stories app", "already tried"},
+		"terms":       []any{"sleep stories nightly", "already tried"},
 		"intent":      "sleep apps aimed at new parents",
 		"allow_tried": true,
 	}
@@ -110,12 +111,12 @@ func TestPlanFromArgsIntentAndAllowTried(t *testing.T) {
 	if plan.Intent != "sleep apps aimed at new parents" {
 		t.Fatalf("intent = %q", plan.Intent)
 	}
-	if !reflect.DeepEqual(plan.Terms, []string{"sleep stories app", "already tried"}) {
+	if !reflect.DeepEqual(plan.Terms, []string{"sleep stories nightly", "already tried"}) {
 		t.Fatalf("allow_tried must keep tried terms, got %v", plan.Terms)
 	}
 	args["allow_tried"] = false
 	plan = planFromArgs(args, []string{"already tried"})
-	if !reflect.DeepEqual(plan.Terms, []string{"sleep stories app"}) {
+	if !reflect.DeepEqual(plan.Terms, []string{"sleep stories nightly"}) {
 		t.Fatalf("without allow_tried the strip must apply, got %v", plan.Terms)
 	}
 }
@@ -162,11 +163,11 @@ func TestBuildHuntTurnContentsRicherContext(t *testing.T) {
 }
 
 func TestPlanFromArgsNoSettings(t *testing.T) {
-	plan := planFromArgs(map[string]any{"terms": []any{"budget app"}}, nil)
+	plan := planFromArgs(map[string]any{"terms": []any{"budget planner"}}, nil)
 	if len(plan.Settings) != 0 {
 		t.Errorf("settings = %v, want empty", plan.Settings)
 	}
-	if !reflect.DeepEqual(plan.Terms, []string{"budget app"}) {
+	if !reflect.DeepEqual(plan.Terms, []string{"budget planner"}) {
 		t.Errorf("terms = %v", plan.Terms)
 	}
 }
@@ -218,6 +219,41 @@ func TestBuildHuntTurnContents(t *testing.T) {
 	}
 	if !strings.Contains(last, "round 1: 12 terms") {
 		t.Errorf("final turn missing round summary: %q", last)
+	}
+}
+
+func TestCleanHuntTermsBansAppTokens(t *testing.T) {
+	got := cleanHuntTerms([]string{
+		"running app for women",    // 'app' token → dropped
+		"fitness apps",             // 'apps' token → dropped
+		"meditation application",   // 'application' token → dropped
+		"job applications tracker", // 'applications' token → dropped
+		"run walk beginner plan",   // kept
+		"happy applesauce recipes", // 'app' only as substring → kept
+	}, nil)
+	want := []string{"run walk beginner plan", "happy applesauce recipes"}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+	}
+}
+
+func TestPlanFromArgsCompetitorCapTen(t *testing.T) {
+	names := make([]any, 0, 12)
+	for i := 0; i < 12; i++ {
+		names = append(names, fmt.Sprintf("brand%d", i))
+	}
+	plan := planFromArgs(map[string]any{
+		"terms":           []any{"run walk beginner plan"},
+		"intent":          "running apps for women",
+		"competitor_apps": names,
+	}, nil)
+	if len(plan.CompetitorApps) != 10 {
+		t.Fatalf("competitor cap = %d, want 10", len(plan.CompetitorApps))
 	}
 }
 

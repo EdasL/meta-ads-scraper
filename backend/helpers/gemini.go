@@ -12,6 +12,7 @@ import (
 	"os"
 	"strings"
 	"time"
+	"unicode"
 
 	"google.golang.org/genai"
 )
@@ -202,10 +203,17 @@ type HuntProposal struct {
 
 const huntSystemInstruction = "You are Peon, Field Desk's discovery agent. " +
 	"You brainstorm Meta Ad Library search terms to find emerging mobile apps. " +
-	"Terms must be generic niche queries a user would type (e.g. 'sleep stories app', " +
-	"'ai bedtime audio') — short, plain, no brand names. Brand or app names the user " +
-	"mentions belong in competitor_apps, never in terms. Never repeat a term listed " +
-	"as already tried. Reply text is 1-3 plain sentences on the angles you chose. " +
+	"Ad Library keyword search matches AD COPY text, not app categories: terms " +
+	"must read like the benefit phrases an advertiser writes in an ad " +
+	"('womens running coach', 'run walk beginner plan') — short, plain, 2-4 " +
+	"content words, no brand names. Never use the words 'app', 'apps', or " +
+	"'application' in a term: junk advertisers keyword-stuff them, and such " +
+	"terms return drama and e-commerce noise. For gendered or narrowly-" +
+	"qualified niches, prefer neutral benefit terms — the target apps usually " +
+	"advertise neutrally, and results are judged against the founder's intent " +
+	"afterwards. Brand or app names the user mentions belong in " +
+	"competitor_apps, never in terms. Never repeat a term listed as already " +
+	"tried. Reply text is 1-3 plain sentences on the angles you chose. " +
 	"Propose 8-15 terms."
 
 // Deprecated: GenerateHuntProposal is the single-shot proposal path. Task 4
@@ -216,7 +224,7 @@ const huntSystemInstruction = "You are Peon, Field Desk's discovery agent. " +
 // grounded in the chat history and prior-round outcomes. It mirrors
 // GenerateExplainer's structured-JSON + 3-attempt backoff discipline, then
 // post-processes terms (lowercase, trim, drop empties/dupes/already-tried, cap
-// 15) and caps competitors at 3. Returns an error (callers skip) when the helper
+// 15) and caps competitors at 10. Returns an error (callers skip) when the helper
 // is nil or every attempt fails.
 func (h *GeminiHelper) GenerateHuntProposal(ctx context.Context, in HuntProposalInput) (HuntProposal, error) {
 	if h == nil {
@@ -232,7 +240,7 @@ func (h *GeminiHelper) GenerateHuntProposal(ctx context.Context, in HuntProposal
 			},
 			"terms": {
 				Type:        genai.TypeArray,
-				Description: "8-15 generic niche search queries. Short, plain, no brand names.",
+				Description: "8-15 benefit-phrase search queries. Short, plain, no brand names, never the word 'app'.",
 				Items:       &genai.Schema{Type: genai.TypeString},
 			},
 			"competitor_apps": {
@@ -297,12 +305,36 @@ func (h *GeminiHelper) GenerateHuntProposal(ctx context.Context, in HuntProposal
 	}
 
 	out.Terms = cleanHuntTerms(out.Terms, in.TriedTerms)
-	out.CompetitorApps = capStrings(out.CompetitorApps, 3)
+	out.CompetitorApps = capStrings(out.CompetitorApps, 10)
 	return out, nil
 }
 
-// cleanHuntTerms lowercases+trims terms, drops empties, dedups (and drops any
-// term already tried, matched case-insensitively), and caps the list at 15.
+// bannedTermTokens are junk magnets in Ad Library keyword search: junk
+// advertisers keyword-stuff them into every creative, so any term containing
+// them returns drama/e-commerce noise (measured 2026-07-15,
+// docs/research/2026-07-15-hunt-term-strategy.md).
+var bannedTermTokens = map[string]struct{}{
+	"app": {}, "apps": {}, "application": {}, "applications": {},
+}
+
+// hasBannedTermToken reports whether any letter/digit token of the (already
+// lowercased) term is banned. Substrings do not count: 'applesauce' passes,
+// 'fitness apps' does not.
+func hasBannedTermToken(term string) bool {
+	tokens := strings.FieldsFunc(term, func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsNumber(r)
+	})
+	for _, tok := range tokens {
+		if _, banned := bannedTermTokens[tok]; banned {
+			return true
+		}
+	}
+	return false
+}
+
+// cleanHuntTerms lowercases+trims terms, drops empties and banned-token terms,
+// dedups (and drops any term already tried, matched case-insensitively), and
+// caps the list at 15.
 func cleanHuntTerms(terms, tried []string) []string {
 	seen := make(map[string]struct{}, len(tried))
 	for _, t := range tried {
@@ -312,6 +344,9 @@ func cleanHuntTerms(terms, tried []string) []string {
 	for _, t := range terms {
 		norm := strings.ToLower(strings.TrimSpace(t))
 		if norm == "" {
+			continue
+		}
+		if hasBannedTermToken(norm) {
 			continue
 		}
 		if _, dup := seen[norm]; dup {
@@ -470,10 +505,15 @@ type HuntTurnInput struct {
 const huntAgentInstruction = "You are Peon, Field Desk's discovery agent. You help the founder find " +
 	"emerging mobile apps by running Meta Ad Library search rounds and researching niches on the web.\n" +
 	"\n" +
-	"Search terms are generic niche queries a user would type (e.g. 'sleep stories app', " +
-	"'ai bedtime audio') — short, plain, and never brand or app names. Any brand or app the " +
-	"founder names belongs in competitor_apps, never in terms. At most 15 terms and at most " +
-	"3 competitor apps.\n" +
+	"Ad Library keyword search matches AD COPY text, not app categories. Terms must read " +
+	"like the benefit phrases an advertiser writes in an ad ('womens running coach', " +
+	"'run walk beginner plan', 'couch to 5k plan') — short, plain, 2-4 content words. " +
+	"Never use the words 'app', 'apps', or 'application' in a term: junk advertisers " +
+	"keyword-stuff them, and such terms return drama and e-commerce noise. For gendered " +
+	"or narrowly-qualified niches, prefer neutral benefit terms — the target apps " +
+	"usually advertise neutrally, and the relevance judge filters results against the " +
+	"intent. Any brand or app the founder names belongs in competitor_apps, never in " +
+	"terms. At most 15 terms and at most 10 competitor apps.\n" +
 	"\n" +
 	"You cannot start a round. propose_round suggests a plan the founder approves with the " +
 	"Start hunt button — that button is the only way a round starts. When the founder asks to " +
@@ -501,9 +541,11 @@ const huntAgentInstruction = "You are Peon, Field Desk's discovery agent. You he
 	"Your reply text is 1-3 plain, professional sentences. The name Peon appears only in " +
 	"prose, never inside terms or competitor apps.\n" +
 	"\n" +
-	"Prefer a few broad head terms ('running app', 'sleep tracker') over many hyper-" +
-	"specific long-tail variants: measured across prior hunts, long-tail terms almost " +
-	"always find nothing on the Ad Library while broad terms carry the round.\n" +
+	"Avoid broad '<niche> app' head terms and hyper-specific long-tail alike: broad " +
+	"'app' heads are colonized by keyword-stuffing advertisers, and long-tail phrases " +
+	"rarely match any ad copy. Specific natural ad-copy phrasing sits between the two. " +
+	"When re-proposing after a round, read the per-term stats from get_round_report and " +
+	"drop or reword terms with zero kept results or mostly off-target results.\n" +
 	"\n" +
 	"Some turns ask you to report a just-finished round. Read its telemetry first " +
 	"(get_round_report, get_round_results), name the promising kept apps, say which " +
@@ -709,8 +751,8 @@ func planSchema() *genai.Schema {
 	return &genai.Schema{
 		Type: genai.TypeObject,
 		Properties: map[string]*genai.Schema{
-			"terms":           {Type: genai.TypeArray, Description: "Generic niche search queries. Short, plain, no brand names. At most 15.", Items: &genai.Schema{Type: genai.TypeString}},
-			"competitor_apps": {Type: genai.TypeArray, Description: "Brand or app names the founder named as competitors. At most 3.", Items: &genai.Schema{Type: genai.TypeString}},
+			"terms":           {Type: genai.TypeArray, Description: "Benefit-phrase search queries. Short, plain, no brand names, never the word 'app'. At most 15.", Items: &genai.Schema{Type: genai.TypeString}},
+			"competitor_apps": {Type: genai.TypeArray, Description: "Brand or app names the founder named as competitors. At most 10.", Items: &genai.Schema{Type: genai.TypeString}},
 			"settings":        settingsSchema(),
 			"intent":          {Type: genai.TypeString, Description: "One plain sentence: what the founder is hunting."},
 			"allow_tried":     {Type: genai.TypeBoolean, Description: "True only when the founder explicitly asked to re-run previous terms."},
@@ -721,7 +763,7 @@ func planSchema() *genai.Schema {
 
 // planFromArgs builds a cleaned HuntPlan from a tool-call args map: terms are
 // normalized + de-duped + stripped of already-tried (cleanHuntTerms),
-// competitors are capped at 3, and settings are clamped. JSON numbers arrive as
+// competitors are capped at 10, and settings are clamped. JSON numbers arrive as
 // float64, which intPtrArg narrows to int.
 func planFromArgs(args map[string]any, tried []string) HuntPlan {
 	if b, ok := args["allow_tried"].(bool); ok && b {
@@ -730,7 +772,7 @@ func planFromArgs(args map[string]any, tried []string) HuntPlan {
 	}
 	plan := HuntPlan{
 		Terms:          cleanHuntTerms(stringSlice(args["terms"]), tried),
-		CompetitorApps: capStrings(stringSlice(args["competitor_apps"]), 3),
+		CompetitorApps: capStrings(stringSlice(args["competitor_apps"]), 10),
 		Settings:       map[string]int{},
 		Intent:         stringArg(args, "intent"),
 	}
