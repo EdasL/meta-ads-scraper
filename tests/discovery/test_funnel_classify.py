@@ -56,6 +56,15 @@ def test_funnel_signal_false_for_plain_web():
     assert fc.funnel_signal(_ad("https://example.com/p", cta="NO", body="just words"), "niche_term") is False
 
 
+def test_funnel_signal_autopasses_hunt_page():
+    # Hunt competitor pulls pass keyword_layer 'hunt_page' — the page identity is
+    # known, so any web landing is that advertiser's funnel. Term-lane hunts ('hunt')
+    # still gate on real funnel signals.
+    ad = _ad("https://joggo.run/home", cta="NO", body="start running")
+    assert fc.funnel_signal(ad, "hunt_page") is True
+    assert fc.funnel_signal(ad, "hunt") is False
+
+
 # --- unit 2: store_ref_from_html ---
 
 def test_store_ref_from_html_ios():

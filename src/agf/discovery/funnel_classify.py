@@ -114,8 +114,12 @@ def matched_funnel_path(url: str | None) -> str | None:
 
 
 def funnel_signal(ad, keyword_layer: str) -> bool:
-    """True when an ad's web destination looks like a quiz/web2app funnel."""
-    if keyword_layer == "funnel_phrase":
+    """True when an ad's web destination looks like a quiz/web2app funnel.
+
+    Auto-pass layers: 'funnel_phrase' (the funnel sweep's own lane) and
+    'hunt_page' (a hunt competitor pull — the page identity is known, so any
+    web landing is that advertiser's funnel, design 2026-07-15)."""
+    if keyword_layer in ("funnel_phrase", "hunt_page"):
         return True
     if matched_funnel_host(ad.link_url) or matched_funnel_path(ad.link_url):
         return True

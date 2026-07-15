@@ -49,13 +49,16 @@ def finish_round(conn, round_id: int, *, status: str, error: str | None = None) 
 
 
 def upsert_hunt_result(conn, row: dict) -> None:
-    """One found page per round; re-finds (other term/page) keep the first row."""
+    """One found page per round; re-finds (other term/page) keep the first row.
+    triage defaults to 'pending' (apps await store triage); web-funnel rows
+    insert as 'kept' — no app triage applies to them (design 2026-07-15)."""
+    row = {"triage": "pending", **row}
     conn.execute(text(
         "INSERT INTO frontend.hunt_results "
         "  (round_id, candidate_id, page_id, page_name, store, store_id, "
-        "   link_url, source_term, was_new, page) "
+        "   link_url, source_term, was_new, page, triage) "
         "VALUES (:round_id, :candidate_id, :page_id, :page_name, :store, "
-        "        :store_id, :link_url, :source_term, :was_new, :page) "
+        "        :store_id, :link_url, :source_term, :was_new, :page, :triage) "
         "ON CONFLICT (round_id, page_id, store, store_id) DO NOTHING"), row)
 
 

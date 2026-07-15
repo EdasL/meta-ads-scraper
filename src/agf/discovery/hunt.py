@@ -3,8 +3,9 @@
 Runs inside the hunt_one subprocess (Task 4). Terms sweep in parallel lanes
 (one extractor each); every page's finds stream into frontend.hunt_results and
 discovery.candidates immediately, and hunt_rounds.progress carries a live
-event feed for the UI. Web-funnel (non_app) ads are counted but not persisted
-here — the nightly sweep owns funnel capture (v1 simplification).
+event feed for the UI. Web-funnel (non_app) ads are captured too: fold_web_funnel
+rows persist to discovery.funnel_candidates AND as store='web' hunt results
+(design 2026-07-15); competitor pulls auto-pass the funnel-signal gate.
 """
 import asyncio
 import collections
@@ -19,15 +20,18 @@ from sqlalchemy import text
 from agf.db.candidates import upsert_sweep_candidate
 from agf.db.dynamic_keywords import add_trial_keywords
 from agf.db.engine import begin
+from agf.db.funnel_candidates import upsert_funnel_candidate
 from agf.db.hunts import (apply_triage_to_results, clamp_hunt_settings,
                           load_round, mark_round_running,
                           round_new_candidate_ids, term_outcome_stats,
                           update_round_progress, upsert_hunt_result)
 from agf.db.pipeline_jobs import enqueue_enrich
+from agf.discovery.funnel_classify import fold_web_funnel
 from agf.discovery.hunt_judge import judge_round
 from agf.discovery.sweep import classify_candidate
 from agf.discovery.triage import run_triage
 from agf.extract.errors import ExtractError
+from agf.scoring.vetoes import FUNNEL_INCUMBENT_PAGE_LIKES_MAX
 
 log = logging.getLogger("agf.hunt")
 
@@ -110,23 +114,38 @@ class _Progress:
 
 
 def _persist_page(engine, round_id: int, term: str, records, depth: int,
-                  stats: dict, lock: threading.Lock) -> tuple[int, int]:
-    """Classify + upsert one SERP page. Returns (found, new) for the page."""
+                  stats: dict, lock: threading.Lock,
+                  funnel_autopass: bool = False) -> tuple[int, int]:
+    """Classify + upsert one SERP page — apps AND web funnels. Web-funnel ads
+    become hunt_results rows (store='web', kept, no candidate) so competitor
+    pulls surface web2app advertisers like Joggo (design 2026-07-15);
+    funnel_autopass skips the funnel-signal gate for competitor pulls, where
+    the page identity is known. Returns (found, new) counting both kinds."""
     rows, seen, drops = [], set(), []
+    funnel_rows, funnel_keys = [], set()
     for ad in records:
         disposition, row = classify_candidate(ad, keyword=term, technique="hunt")
-        if disposition != "candidate":
-            # Non-candidate dispositions ('no_link'/'social'/'non_app'/
-            # 'no_store_id') aren't persisted here (the nightly sweep owns
-            # funnel capture), but they must show up in the round stats.
-            drops.append(disposition)
+        if disposition == "candidate":
+            key = (row["page_id"], row["store"], row["store_id"])
+            if key in seen:
+                continue
+            seen.add(key)
+            row["first_seen_depth"] = depth
+            rows.append(row)
             continue
-        key = (row["page_id"], row["store"], row["store_id"])
-        if key in seen:
-            continue
-        seen.add(key)
-        row["first_seen_depth"] = depth
-        rows.append(row)
+        if disposition == "non_app":
+            likes = ad.page_like_count
+            if likes is None or likes <= FUNNEL_INCUMBENT_PAGE_LIKES_MAX:
+                fdisp, frow = fold_web_funnel(
+                    ad, keyword=term,
+                    technique="hunt_page" if funnel_autopass else "hunt")
+                if fdisp == "candidate":
+                    fkey = (frow["page_id"], frow["landing_domain"])
+                    if fkey not in funnel_keys:
+                        funnel_keys.add(fkey)
+                        funnel_rows.append(frow)
+                    continue
+        drops.append(disposition)
     found = new = 0
     if rows:
         with begin(engine) as conn:
@@ -140,9 +159,27 @@ def _persist_page(engine, round_id: int, term: str, records, depth: int,
                     "was_new": was_new, "page": depth})
                 found += 1
                 new += int(was_new)
+    if funnel_rows:
+        # Deterministic order: concurrent lanes can find the same funnels in
+        # opposite order and deadlock (same discipline as sweep._process_page).
+        funnel_rows.sort(key=lambda fr: (fr["page_id"], fr["landing_domain"]))
+        with begin(engine) as conn:
+            for frow in funnel_rows:
+                _, was_new = upsert_funnel_candidate(conn, frow)
+                upsert_hunt_result(conn, {
+                    "round_id": round_id, "candidate_id": None,
+                    "page_id": frow["page_id"], "page_name": frow["page_name"],
+                    "store": "web", "store_id": frow["landing_domain"],
+                    "link_url": frow["landing_url"], "source_term": term,
+                    "was_new": was_new, "page": depth, "triage": "kept"})
+                found += 1
+                new += int(was_new)
     with lock:
         stats["found"] += found
         stats["new"] += new
+        if funnel_rows:
+            stats["drops"]["funnel_captured"] = (
+                stats["drops"].get("funnel_captured", 0) + len(funnel_rows))
         for disposition in drops:
             stats["drops"][disposition] = stats["drops"].get(disposition, 0) + 1
     return found, new
@@ -244,9 +281,11 @@ def _pull_competitor(engine, extractor, round_id: int, name: str,
             progress.term_stats(key, attempts, 0, 0, "error")
             return
         attempts += 1
-        # _persist_page called without funnel_autopass (Task 5 flips this call site).
+        # Competitor pulls auto-pass the funnel gate: the page identity is known,
+        # so any web landing is that advertiser's own funnel (Joggo/Femmi are
+        # web2app — every ad lands on their domain, not a store).
         found, new = _persist_page(engine, round_id, key, records, 1,
-                                   stats, lock)
+                                   stats, lock, funnel_autopass=True)
         if found:
             with lock:
                 stats["competitor_pages"] += 1

@@ -8,9 +8,10 @@ from sqlalchemy import text
 from agf.db.engine import begin
 from agf.db.hunts import clamp_hunt_settings, term_outcome_stats
 from agf.discovery.hunt import (HUNT_COMPETITOR_COUNTRIES, HUNT_PATIENCE,
-                                _name_similarity, _Progress, _pull_competitor,
-                                run_hunt_round)
-from tests.discovery.conftest import FakeExtractor, make_ad
+                                _name_similarity, _persist_page, _Progress,
+                                _pull_competitor, run_hunt_round)
+from agf.parse import AdRecord
+from tests.discovery.conftest import DAY, NOW_EPOCH, FakeExtractor, make_ad
 
 
 def fresh_stats() -> dict:
@@ -72,11 +73,70 @@ def engine(_migrated_engine):
         conn.execute(text(
             "DELETE FROM public.apps WHERE store = 'ios' "
             "AND store_id IN ('900050', '900060', '900070', '900099')"))
+        conn.execute(text(
+            "DELETE FROM discovery.funnel_candidates "
+            "WHERE landing_domain IN ('joggo.run', 'someblog.example')"))
 
 
 def _ios_ad(store_id: str, page_id: str = PAGE):
     return make_ad(page_id=page_id, page_name=f"App {store_id}",
                    link_url=f"https://apps.apple.com/us/app/id{store_id}")
+
+
+def make_web_ad(page_id=PAGE, page_name="Landing", link_url="https://example.com/x",
+                body_text="just some words", page_like_count=100):
+    """A web-landing AdRecord: non-store link, neutral CTA, no funnel host /
+    path / word — so classify_candidate returns 'non_app' and funnel_signal is
+    False for layer 'hunt' (only 'hunt_page' auto-passes)."""
+    return AdRecord("fake-ad", page_id, page_name, True, NOW_EPOCH - 30 * DAY,
+                    None, 1, None, "", link_url, body_text,
+                    page_like_count=page_like_count)
+
+
+@pytest.fixture
+def hunt_engine_round(engine):
+    return engine, _mk_round(engine, ["run coach"])
+
+
+def test_persist_page_captures_web_funnel_rows(hunt_engine_round):
+    """A competitor pull whose ads all land on a web funnel (the Joggo case)
+    must produce hunt_results rows: store='web', kept, no candidate_id."""
+    engine, round_id = hunt_engine_round
+    records = [make_web_ad(page_id="9", page_name="Joggo",
+                           link_url="https://joggo.run/plan?utm_source=fb",
+                           page_like_count=48310)]
+    stats = fresh_stats()
+    found, new = _persist_page(engine, round_id, "page:Joggo", records, 1,
+                               stats, threading.Lock(), funnel_autopass=True)
+    assert found == 1
+    with begin(engine) as conn:
+        row = conn.execute(text(
+            "SELECT store, store_id, triage, candidate_id, link_url "
+            "FROM frontend.hunt_results WHERE round_id = :r"),
+            {"r": round_id}).one()
+    assert row.store == "web"
+    assert row.store_id == "joggo.run"
+    assert row.triage == "kept"
+    assert row.candidate_id is None
+    with begin(engine) as conn:
+        n = conn.execute(text(
+            "SELECT count(*) FROM discovery.funnel_candidates "
+            "WHERE landing_domain = 'joggo.run'")).scalar()
+    assert n == 1
+    assert stats["drops"]["funnel_captured"] == 1
+
+
+def test_persist_page_term_lane_still_gates_funnels(hunt_engine_round):
+    """Without autopass, a plain web ad with no funnel signal stays a drop."""
+    engine, round_id = hunt_engine_round
+    records = [make_web_ad(page_id="9", page_name="Some Blog",
+                           link_url="https://someblog.example/post",
+                           body_text="read my story", page_like_count=10)]
+    stats = fresh_stats()
+    found, _ = _persist_page(engine, round_id, "run coach", records, 1,
+                             stats, threading.Lock())
+    assert found == 0
+    assert stats["drops"].get("funnel_captured") is None
 
 
 def test_round_sweeps_terms_and_records_results(engine):
