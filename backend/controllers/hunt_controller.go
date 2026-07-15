@@ -76,7 +76,7 @@ const huntProposalTimeout = 90 * time.Second
 // message into a thread title.
 const (
 	maxHuntTerms       = 15
-	maxHuntCompetitors = 3
+	maxHuntCompetitors = 10
 	maxHuntTermLen     = 80
 	maxHuntTitleLen    = 80
 )
