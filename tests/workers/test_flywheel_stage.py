@@ -68,12 +68,19 @@ class _FakeAd:
 
 
 class _FakeExtractor:
-    """One small app advertiser per searched keyword."""
-    def __init__(self):
+    """One small app advertiser per searched keyword. When `ad_query` is set,
+    only that exact query returns the ad: the stage sweeps EVERY live keyword in
+    the shared test DB, and a keyword committed by another test would otherwise
+    absorb FWPAGE1 first, zeroing the sentinel keyword's attribution (the 07-14
+    "load-correlated flake" — cross-test pollution, not load)."""
+    def __init__(self, ad_query=None):
         self.searched = []
+        self.ad_query = ad_query
 
     async def search_page(self, *, query, cursor=None, **kw):
         self.searched.append(query)
+        if self.ad_query is not None and query != self.ad_query:
+            return [], None, False
         return [_FakeAd("FWPAGE1", "777000888")], None, False   # one page, no next
 
 
@@ -90,7 +97,7 @@ def test_run_flywheel_stage_mines_sweeps_and_records(_migrated_engine):
     try:
         corpus = [(11, "Try the glute sculpt method that everyone shares."),
                   (12, "The glute sculpt method works in weeks.")]
-        ex = _FakeExtractor()
+        ex = _FakeExtractor(ad_query="glute sculpt method")
         # min_advertisers=2 to match this 2-advertiser corpus; we're testing the
         # mine→sweep→record wiring, not the production default threshold.
         stats = run_flywheel_stage(eng, ex, max_pages=1, kw_delay=0,
