@@ -1,13 +1,21 @@
 """Hunt round executor tests — fake extractor, real DB (sentinel rows)."""
 import json
+import threading
 
 import pytest
 from sqlalchemy import text
 
 from agf.db.engine import begin
 from agf.db.hunts import clamp_hunt_settings, term_outcome_stats
-from agf.discovery.hunt import HUNT_PATIENCE, _Progress, run_hunt_round
+from agf.discovery.hunt import (HUNT_COMPETITOR_COUNTRIES, HUNT_PATIENCE,
+                                _name_similarity, _Progress, _pull_competitor,
+                                run_hunt_round)
 from tests.discovery.conftest import FakeExtractor, make_ad
+
+
+def fresh_stats() -> dict:
+    """A stats accumulator with the keys _pull_competitor / _persist_page touch."""
+    return {"found": 0, "new": 0, "errors": 0, "competitor_pages": 0, "drops": {}}
 
 pytestmark = pytest.mark.usefixtures("_migrated_engine")
 
@@ -362,7 +370,84 @@ def test_competitor_pull_records_listing_stop(engine):
     round_id = _mk_round(engine, [], competitors=("Calm",))
     run_hunt_round(engine, [ext], round_id)
     term = _progress(engine, round_id)["terms"]["page:Calm"]
-    assert term["stop"] == "listing" and term["found"] == 1
+    assert term["stop"] == "listing_ok" and term["found"] == 1
+
+
+def test_pull_competitor_prefers_name_match_over_first_hit(engine):
+    # Typeahead ranks a big look-alike page first (the live 'Femmi' -> fashion
+    # page failure); the fuzzy name match must pick the exact-name page instead.
+    round_id = _mk_round(engine, [])
+    ext = FakeExtractor()
+    ext.typeahead_results = {"Femmi": [
+        {"page_id": "HUNTPFASH", "page_name": "Femmira Fashion",
+         "page_like_count": 2019, "ig_username": None},
+        {"page_id": "HUNTPFEMMI", "page_name": "Femmi",
+         "page_like_count": 107, "ig_username": None}]}
+    ext.listing_ads = {
+        "HUNTPFEMMI": [_ios_ad("900050", page_id="HUNTPFEMMI")],
+        "HUNTPFASH": [_ios_ad("900060", page_id="HUNTPFASH")]}
+    progress = _Progress(engine, round_id, terms_total=0)
+    _pull_competitor(engine, ext, round_id, "Femmi", progress, fresh_stats(),
+                     threading.Lock(), listing_pages=2)
+    entry = progress._state["terms"]["page:Femmi"]
+    assert entry["stop"] == "listing_ok"
+    assert entry["found"] == 1
+    assert ext.listing_calls[0] == "HUNTPFEMMI"   # best name match tried first
+
+
+def test_pull_competitor_falls_through_empty_pages(engine):
+    round_id = _mk_round(engine, [])
+    ext = FakeExtractor()
+    ext.typeahead_results = {"Joggo": [
+        {"page_id": "HUNTPJ1", "page_name": "Joggo",
+         "page_like_count": 48310, "ig_username": None},
+        {"page_id": "HUNTPJ2", "page_name": "Joggo Fan Club",
+         "page_like_count": 10, "ig_username": None}]}
+    ext.listing_ads = {"HUNTPJ1": [], "HUNTPJ2": []}
+    progress = _Progress(engine, round_id, terms_total=0)
+    _pull_competitor(engine, ext, round_id, "Joggo", progress, fresh_stats(),
+                     threading.Lock(), listing_pages=2)
+    entry = progress._state["terms"]["page:Joggo"]
+    assert entry["stop"] == "no_results"
+    assert entry["pages"] == 2                     # both candidates attempted
+
+
+def test_pull_competitor_no_typeahead_match(engine):
+    round_id = _mk_round(engine, [])
+    ext = FakeExtractor(typeahead_results={}, listing_ads={})
+    progress = _Progress(engine, round_id, terms_total=0)
+    _pull_competitor(engine, ext, round_id, "Gazella", progress, fresh_stats(),
+                     threading.Lock(), listing_pages=2)
+    assert progress._state["terms"]["page:Gazella"]["stop"] == "no_match"
+
+
+def test_run_hunt_round_pulls_up_to_ten_competitors(engine):
+    # 12 named competitors -> 10 attempted (was 3). Empty typeahead: no pulls,
+    # just records the resolution attempts in order.
+    ext = FakeExtractor()
+    round_id = _mk_round(engine, [], competitors=[f"brand{i}" for i in range(12)])
+    run_hunt_round(engine, [ext], round_id)
+    assert ext.typeahead_queries == [f"brand{i}" for i in range(10)]
+
+
+def test_competitor_listing_uses_global_countries(engine):
+    round_id = _mk_round(engine, [])
+    ext = FakeExtractor()
+    ext.typeahead_results = {"Movana": [
+        {"page_id": "HUNTPMOV", "page_name": "Movana",
+         "page_like_count": 17, "ig_username": None}]}
+    ext.listing_ads = {"HUNTPMOV": []}
+    _pull_competitor(engine, ext, round_id, "Movana",
+                     _Progress(engine, round_id, terms_total=0), fresh_stats(),
+                     threading.Lock(), listing_pages=2)
+    assert ext.listing_countries[0] == HUNT_COMPETITOR_COUNTRIES
+
+
+def test_name_similarity_ranks_exact_over_lookalike():
+    assert _name_similarity("Femmi", "Femmi") == 1.0
+    assert (_name_similarity("Femmi", "Femmi")
+            > _name_similarity("Femmi", "Femmira Fashion"))
+    assert _name_similarity("", "anything") == 0.0
 
 
 def _seed_result(conn, round_id, term, store_id, *, triage, relevance):

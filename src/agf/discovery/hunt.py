@@ -8,6 +8,7 @@ here — the nightly sweep owns funnel capture (v1 simplification).
 """
 import asyncio
 import collections
+import difflib
 import logging
 import threading
 import time
@@ -35,6 +36,13 @@ HUNT_PATIENCE = 6         # consecutive net-new-dry pages before early exit — 
 HUNT_MIN_PAGES = 10       # dry exit may not fire before this depth (incumbent-flooded early pages fed the dry counter)
 HUNT_TERM_LANES = 3       # proven DataImpulse concurrency
 HUNT_LISTING_PAGES = 10   # competitor page:<name> pull bound (Task 3)
+HUNT_COMPETITOR_CAP = 10            # matches the Go proposal cap (gemini.go)
+HUNT_COMPETITOR_TYPEAHEAD_TOP = 5   # typeahead rows considered for disambiguation
+HUNT_COMPETITOR_ATTEMPTS = 3        # candidate pages tried before giving up
+# Competitor pulls are GLOBAL: founders name small niche apps that often run
+# only EU/AU campaigns (design 2026-07-15). Term sweeps stay US-only.
+HUNT_COMPETITOR_COUNTRIES = ["US", "GB", "CA", "AU", "DE", "FR", "ES", "IT",
+                             "NL", "SE", "PL", "LT", "BR", "MX", "IN"]
 HUNT_PAGE_DELAY = 2.0
 HUNT_KW_DELAY = 3.0
 HUNT_EVENT_CAP = 50
@@ -182,6 +190,72 @@ def _sweep_term(engine, extractor, round_id: int, lane: int, term: str,
         sleep(HUNT_PAGE_DELAY)
 
 
+def _name_similarity(a: str, b: str) -> float:
+    """Case/whitespace-insensitive fuzzy ratio for typeahead disambiguation."""
+    na = " ".join((a or "").lower().split())
+    nb = " ".join((b or "").lower().split())
+    if not na or not nb:
+        return 0.0
+    return difflib.SequenceMatcher(None, na, nb).ratio()
+
+
+def _pull_competitor(engine, extractor, round_id: int, name: str,
+                     progress: "_Progress", stats: dict,
+                     lock: threading.Lock, listing_pages: int) -> None:
+    """Resolve one competitor name to its Ad Library page and pull its ads.
+
+    Typeahead matches page NAME and ranks big pages first, so the top hit is
+    often a look-alike (live finding 2026-07-15: 'Femmi' -> a fashion page;
+    the real app sat at index 3). Rank the top rows by fuzzy similarity to the
+    entered name (likes break ties) and try the best few until one yields
+    results. Telemetry: the 'pages' slot counts candidate pages ATTEMPTED;
+    stop is one of listing_ok | no_match | no_results | error."""
+    key = f"page:{name}"
+    progress.event(f"Resolving {name}'s ad page")
+    try:
+        pages = asyncio.run(extractor.typeahead(query=name))
+    except ExtractError:
+        progress.event(f"Could not resolve {name} — skipped")
+        with lock:
+            stats["errors"] += 1
+        progress.term_stats(key, 0, 0, 0, "error")
+        return
+    ranked = sorted(
+        pages[:HUNT_COMPETITOR_TYPEAHEAD_TOP],
+        key=lambda p: (_name_similarity(name, p.get("page_name")),
+                       p.get("page_like_count") or 0),
+        reverse=True)
+    if not ranked:
+        progress.event(f"No Ad Library page found for {name}")
+        progress.term_stats(key, 0, 0, 0, "no_match")
+        return
+    attempts = 0
+    for page in ranked[:HUNT_COMPETITOR_ATTEMPTS]:
+        label = page.get("page_name") or name
+        progress.event(f"Pulling ads from '{label}'")
+        try:
+            records, _truncated = asyncio.run(extractor.search_listing(
+                page_id=page["page_id"],
+                countries=HUNT_COMPETITOR_COUNTRIES,
+                max_pages=listing_pages))
+        except ExtractError:
+            with lock:
+                stats["errors"] += 1
+            progress.term_stats(key, attempts, 0, 0, "error")
+            return
+        attempts += 1
+        # _persist_page called without funnel_autopass (Task 5 flips this call site).
+        found, new = _persist_page(engine, round_id, key, records, 1,
+                                   stats, lock)
+        if found:
+            with lock:
+                stats["competitor_pages"] += 1
+            progress.page(0, key, 1, found, new)
+            progress.term_stats(key, attempts, found, new, "listing_ok")
+            return
+    progress.term_stats(key, attempts, 0, 0, "no_results")
+
+
 def run_hunt_round(engine, extractors, round_id: int, *,
                    lookup_ios=None, lookup_android=None,
                    sleep=time.sleep) -> dict:
@@ -201,39 +275,20 @@ def run_hunt_round(engine, extractors, round_id: int, *,
     progress = _Progress(engine, round_id, terms_total=len(terms))
     progress.event(f"Hunt started — {len(terms)} terms, deep paging")
 
-    # Phase 0 — competitor page pulls. typeahead/search_listing run OUTSIDE any
-    # begin() block (no txn held across a network call); only _persist_page opens
-    # short txns for the writes.
+    # Phase 0 — competitor page pulls. Each name is resolved through fuzzy
+    # typeahead disambiguation (not blind result [0]) and pulled GLOBALLY
+    # (niche apps often advertise only in EU/AU). typeahead/search_listing run
+    # OUTSIDE any begin() block (no txn held across a network call); only
+    # _persist_page opens short txns for the writes.
     # competitor_apps is a jsonb array of STRINGS (["calm"]) as the Go API writes it;
     # accept that shape AND legacy [{"name": ...}] dicts.
     raw = rnd.competitor_apps or []
     competitors = [(c.get("name", "") if isinstance(c, dict) else str(c)) for c in raw]
     competitors = [c for c in competitors if c]
     stats["competitor_pages"] = 0
-    for name in competitors[:3]:
-        progress.event(f"Resolving {name}'s ad page")
-        try:
-            pages = asyncio.run(extractors[0].typeahead(query=name))
-        except ExtractError:
-            progress.event(f"Could not resolve {name} — skipped")
-            stats["errors"] += 1
-            continue
-        if not pages:
-            progress.event(f"No Ad Library page found for {name}")
-            continue
-        page = pages[0]
-        try:
-            records, truncated = asyncio.run(extractors[0].search_listing(
-                page_id=page["page_id"], max_pages=knobs["listing_pages"]))
-        except ExtractError:
-            progress.event(f"Could not pull {name}'s ads — skipped")
-            stats["errors"] += 1
-            continue
-        stats["competitor_pages"] += 1
-        found, new = _persist_page(engine, round_id, f"page:{name}", records,
-                                   1, stats, lock)
-        progress.page(0, f"page:{name}", 1, found, new)
-        progress.term_stats(f"page:{name}", 1, found, new, "listing")
+    for name in competitors[:HUNT_COMPETITOR_CAP]:
+        _pull_competitor(engine, extractors[0], round_id, name, progress,
+                         stats, lock, knobs["listing_pages"])
 
     queue = collections.deque(terms)
 
