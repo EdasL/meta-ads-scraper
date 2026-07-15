@@ -1,12 +1,13 @@
 "use client";
 
-import { useState } from "react";
 import Link from "next/link";
 import { IconHeart, IconHeartFilled } from "@tabler/icons-react";
 import { ScoreBadge } from "@/components/ui";
 import { formatSettings, latestEvents, splitByRelevance } from "@/lib/hunt";
-import { removeSavedGem, setRating, upsertSavedGem } from "@/lib/api";
+import { setRating } from "@/lib/api";
 import type { HuntResult, HuntRound } from "@/lib/api";
+import { save, unsave, useIsSaved } from "@/lib/useSaved";
+import type { ShortlistRow } from "@/types/contracts";
 
 /** Human label for a result's store. Unknown stores fall back to the raw value. */
 function storeLabel(store: string): string {
@@ -69,57 +70,59 @@ function TriageState({ triage }: { triage: HuntResult["triage"] }) {
   );
 }
 
-/** Save control: one tap saves the app to the Saved page AND records a like
- *  (feeds preference learning). Tapping again removes both. Optimistic with
- *  revert; the 2s round poll re-syncs `saved` from the server on any drift. */
-function HeartButton({ result: r, userEmail }: { result: HuntResult; userEmail: string }) {
-  const [saved, setSaved] = useState(r.saved);
-  const [busy, setBusy] = useState(false);
-  const advertiserId = r.kept_advertiser_id!;
+/** Adapt a kept hunt result to the ShortlistRow the saved-gems store consumes.
+ *  Only kept results reach the save control, so a kept advertiser id is always
+ *  present. A hunt row carries no scoring axes, so the snapshot axes save as 0
+ *  (unknown, not a real value); the store keeps any richer existing snapshot. */
+function resultToRow(r: HuntResult): ShortlistRow {
+  return {
+    advertiser_id: r.kept_advertiser_id!,
+    cohort: r.cohort ?? "",
+    page_name: r.page_name ?? "",
+    app_id: null,
+    app_name: r.app_name,
+    icon_url: r.icon_url ?? undefined,
+    gem_score: r.gem_score ?? 0,
+    scaling_velocity: 0,
+    under_radar: 0,
+    funnel_intent: 0,
+    active_ad_count: 0,
+    max_longevity_days: 0,
+    alert: false,
+    refreshed_at: new Date().toISOString(),
+    explainer: null,
+    growth: null,
+    hero_creative: null,
+  };
+}
 
-  // Re-sync from the server value when the 2s round poll delivers a change.
-  // Adjusting state during render (guarded by the change) is React's recommended
-  // replacement for a setState-in-effect — it won't fight an in-flight optimistic
-  // toggle, since the server value only differs once the write has landed.
-  const [prevServerSaved, setPrevServerSaved] = useState(r.saved);
-  if (r.saved !== prevServerSaved) {
-    setPrevServerSaved(r.saved);
-    setSaved(r.saved);
+/** Save control: one tap saves the app to the Saved page AND records a like
+ *  (feeds preference learning). Tapping again removes both. Save/unsave route
+ *  through the shared saved-gems store, so /saved and the header count update
+ *  immediately; the store owns the optimistic UI and reverts on a backend
+ *  error, which also makes it the single source of truth for the filled state. */
+function HeartButton({ result: r, userEmail }: { result: HuntResult; userEmail: string }) {
+  const advertiserId = r.kept_advertiser_id!;
+  const saved = useIsSaved(advertiserId);
+
+  // The rating is a best-effort companion to the save, not part of it. The
+  // save (primary action) has already landed in the store by the time this
+  // runs, so a failed rating write must NOT revert it — log and move on.
+  async function rate(value: "like" | "none") {
+    try {
+      await setRating(advertiserId, userEmail, value, "");
+    } catch (e) {
+      console.error("hunt heart: rating write failed", e);
+    }
   }
 
-  async function toggle() {
-    if (busy) return;
-    const next = !saved;
-    setSaved(next);
-    setBusy(true);
-    try {
-      if (next) {
-        await upsertSavedGem(advertiserId, {
-          user_email: userEmail,
-          page_name: r.page_name,
-          app_name: r.app_name,
-          icon_url: r.icon_url,
-          cohort: r.cohort ?? "",
-          gem_score: r.gem_score ?? 0,
-          scaling_velocity: null,
-          under_radar: null,
-          funnel_intent: null,
-          active_ad_count: null,
-          tags: [],
-          note: "",
-          stage: "just_saw",
-          verdict: null,
-          confidence: null,
-        });
-        await setRating(advertiserId, userEmail, "like", "");
-      } else {
-        await removeSavedGem(advertiserId, userEmail);
-        await setRating(advertiserId, userEmail, "none", "");
-      }
-    } catch {
-      setSaved(!next); // revert; the next poll re-syncs from the server
-    } finally {
-      setBusy(false);
+  function toggle() {
+    if (saved) {
+      unsave(advertiserId);
+      void rate("none");
+    } else {
+      save(resultToRow(r));
+      void rate("like");
     }
   }
 
@@ -127,7 +130,6 @@ function HeartButton({ result: r, userEmail }: { result: HuntResult; userEmail: 
     <button
       type="button"
       onClick={toggle}
-      disabled={busy}
       aria-pressed={saved}
       title={saved ? "Remove from Saved" : "Save and like"}
       style={{ border: "none", background: "transparent", cursor: "pointer", padding: 4, color: saved ? "var(--down)" : "var(--muted)", flex: "0 0 auto" }}
