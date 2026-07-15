@@ -323,6 +323,22 @@ func TestHuntRoundSummaries(t *testing.T) {
 	require.EqualValues(t, 2, sums[0].TermCount)
 	require.EqualValues(t, 2, sums[0].FoundCount)
 	require.EqualValues(t, 1, sums[0].KeptCount)
+	// No relevance verdicts yet.
+	require.Equal(t, 0, sums[0].RelevantCount)
+	require.Equal(t, 0, sums[0].OffTargetCount)
+
+	// Give each result a relevance verdict; the summary counts them.
+	must(g.Exec(`UPDATE frontend.hunt_results
+		SET relevance = 'relevant' WHERE round_id = ? AND store_id = ?`,
+		roundID, "com.s1").Error)
+	must(g.Exec(`UPDATE frontend.hunt_results
+		SET relevance = 'off_target' WHERE round_id = ? AND store_id = ?`,
+		roundID, "com.s2").Error)
+	sums, err = repositories.HuntRoundSummaries(ctx, g, huntID)
+	require.NoError(t, err)
+	require.Len(t, sums, 1)
+	require.Equal(t, 1, sums[0].RelevantCount)
+	require.Equal(t, 1, sums[0].OffTargetCount)
 }
 
 func TestInsertHuntRoundSettingsRoundtrip(t *testing.T) {

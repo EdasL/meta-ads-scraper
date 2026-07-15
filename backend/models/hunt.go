@@ -87,11 +87,13 @@ type HuntResultRow struct {
 // HuntRoundSummary is the compact per-round context handed to Gemini so it can
 // avoid repeating angles: how many terms the round ran and how it fared.
 type HuntRoundSummary struct {
-	RoundID    int             `json:"round_id" gorm:"column:round_id"`
-	Terms      json.RawMessage `json:"terms" gorm:"column:terms"`
-	Settings   json.RawMessage `json:"settings" gorm:"column:settings"`
-	Progress   json.RawMessage `json:"progress" gorm:"column:progress"`
-	TermCount  int             `json:"term_count" gorm:"column:term_count"`
-	FoundCount int             `json:"found_count" gorm:"column:found_count"`
-	KeptCount  int             `json:"kept_count" gorm:"column:kept_count"`
+	RoundID        int             `json:"round_id" gorm:"column:round_id"`
+	Terms          json.RawMessage `json:"terms" gorm:"column:terms"`
+	Settings       json.RawMessage `json:"settings" gorm:"column:settings"`
+	Progress       json.RawMessage `json:"progress" gorm:"column:progress"`
+	TermCount      int             `json:"term_count" gorm:"column:term_count"`
+	FoundCount     int             `json:"found_count" gorm:"column:found_count"`
+	KeptCount      int             `json:"kept_count" gorm:"column:kept_count"`
+	RelevantCount  int             `json:"relevant_count" gorm:"column:relevant_count"`
+	OffTargetCount int             `json:"off_target_count" gorm:"column:off_target_count"`
 }

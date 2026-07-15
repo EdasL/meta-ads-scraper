@@ -685,6 +685,9 @@ func summarizeRounds(summaries []models.HuntRoundSummary) (tried, lines []string
 			fmt.Fprintf(&b, ", depth %d", depth)
 		}
 		fmt.Fprintf(&b, ", %d found, %d kept", s.FoundCount, s.KeptCount)
+		if s.RelevantCount > 0 || s.OffTargetCount > 0 {
+			fmt.Fprintf(&b, " (%d relevant, %d off-target)", s.RelevantCount, s.OffTargetCount)
+		}
 		if stops := stopSummary(s.Progress); stops != "" {
 			fmt.Fprintf(&b, "; stops: %s", stops)
 		}

@@ -244,8 +244,9 @@ func InsertHuntRoundTx(tx *gorm.DB, huntID int, messageID *int, terms, competito
 	return roundID, nil
 }
 
-// HuntRoundSummaries returns per-round term/found/kept counts (oldest-first) for
-// the Gemini proposal context so the model can avoid repeating angles.
+// HuntRoundSummaries returns per-round term/found/kept/relevance counts
+// (oldest-first) for the Gemini proposal context so the model can avoid
+// repeating angles and learn which rounds produced on-target results.
 func HuntRoundSummaries(ctx context.Context, g *gorm.DB, huntID int) ([]models.HuntRoundSummary, error) {
 	var rows []models.HuntRoundSummary
 	err := db.WithReadTx(ctx, g, func(tx *gorm.DB) error {
@@ -258,7 +259,11 @@ func HuntRoundSummaries(ctx context.Context, g *gorm.DB, huntID int) ([]models.H
 			        (SELECT count(*) FROM frontend.hunt_results hr
 			          WHERE hr.round_id = r.id) AS found_count,
 			        (SELECT count(*) FROM frontend.hunt_results hr
-			          WHERE hr.round_id = r.id AND hr.triage = 'kept') AS kept_count
+			          WHERE hr.round_id = r.id AND hr.triage = 'kept') AS kept_count,
+			        (SELECT count(*) FROM frontend.hunt_results hr
+			          WHERE hr.round_id = r.id AND hr.relevance = 'relevant') AS relevant_count,
+			        (SELECT count(*) FROM frontend.hunt_results hr
+			          WHERE hr.round_id = r.id AND hr.relevance = 'off_target') AS off_target_count
 			 FROM frontend.hunt_rounds r
 			 WHERE r.hunt_id = ?
 			 ORDER BY r.id`,
