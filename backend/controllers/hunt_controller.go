@@ -435,6 +435,7 @@ type huntSettingsBody struct {
 	PageCap      *int `json:"page_cap"`
 	Patience     *int `json:"patience"`
 	ListingPages *int `json:"listing_pages"`
+	MinPages     *int `json:"min_pages"`
 }
 
 type startRoundBody struct {
@@ -496,6 +497,7 @@ func (c *HuntController) StartRound(ctx *gin.Context) {
 			PageCap:      body.Settings.PageCap,
 			Patience:     body.Settings.Patience,
 			ListingPages: body.Settings.ListingPages,
+			MinPages:     body.Settings.MinPages,
 		})
 		settingsJSON, _ = json.Marshal(clamped)
 	}
@@ -689,7 +691,7 @@ func pendingProposalText(msgs []models.HuntMessageRow, rounds []models.HuntRound
 // settingsLabel renders a proposal's settings map in a stable key order.
 func settingsLabel(s map[string]int) string {
 	var parts []string
-	for _, k := range []string{"page_cap", "patience", "listing_pages"} {
+	for _, k := range []string{"page_cap", "patience", "min_pages", "listing_pages"} {
 		if v, ok := s[k]; ok {
 			parts = append(parts, fmt.Sprintf("%s %d", k, v))
 		}

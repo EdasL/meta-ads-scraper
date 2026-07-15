@@ -53,6 +53,22 @@ func TestClampHuntSettings(t *testing.T) {
 	}
 }
 
+func TestClampHuntSettingsMinPages(t *testing.T) {
+	v := 99
+	got := ClampHuntSettings(HuntSettings{MinPages: &v})
+	if got["min_pages"] != 30 {
+		t.Fatalf("min_pages clamp high: got %d, want 30", got["min_pages"])
+	}
+	lo := 0
+	got = ClampHuntSettings(HuntSettings{MinPages: &lo})
+	if got["min_pages"] != 1 {
+		t.Fatalf("min_pages clamp low: got %d, want 1", got["min_pages"])
+	}
+	if _, ok := ClampHuntSettings(HuntSettings{})["min_pages"]; ok {
+		t.Fatal("absent MinPages must not emit a key")
+	}
+}
+
 func TestPlanFromArgs(t *testing.T) {
 	args := map[string]any{
 		"terms": []any{

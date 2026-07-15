@@ -383,6 +383,7 @@ type HuntSettings struct {
 	PageCap      *int // Ad Library pages per term (1-100)
 	Patience     *int // empty pages tolerated before stopping a term (1-10)
 	ListingPages *int // store listing pages fetched per app (1-30)
+	MinPages     *int // pages to read before the dry exit may fire (1-30)
 }
 
 // ClampHuntSettings bounds each present knob and returns a map keyed by the
@@ -398,6 +399,9 @@ func ClampHuntSettings(s HuntSettings) map[string]int {
 	}
 	if s.ListingPages != nil {
 		out["listing_pages"] = clampInt(*s.ListingPages, 1, 30)
+	}
+	if s.MinPages != nil {
+		out["min_pages"] = clampInt(*s.MinPages, 1, 30)
 	}
 	return out
 }
@@ -483,9 +487,9 @@ const huntAgentInstruction = "You are Peon, Field Desk's discovery agent. You he
 	"and/or get_round_results — do not guess round outcomes.\n" +
 	"\n" +
 	"Optional round settings and their bounds: page_cap (Ad Library pages per term, 1-100), " +
-	"patience (empty pages tolerated before stopping a term, 1-10), listing_pages (store " +
-	"listing pages per app, 1-30). Set only the ones the founder asked for; when asked what " +
-	"a setting means, just explain it.\n" +
+	"patience (empty pages tolerated before stopping a term, 1-10), min_pages (pages to read " +
+	"before the dry exit may fire, 1-30), listing_pages (store listing pages per app, 1-30). " +
+	"Set only the ones the founder asked for; when asked what a setting means, just explain it.\n" +
 	"\n" +
 	"Your reply text is 1-3 plain, professional sentences. The name Peon appears only in " +
 	"prose, never inside terms or competitor apps."
@@ -664,6 +668,7 @@ func settingsSchema() *genai.Schema {
 		Properties: map[string]*genai.Schema{
 			"page_cap":      {Type: genai.TypeInteger, Description: "Max Ad Library pages to scrape per term (1-100)."},
 			"patience":      {Type: genai.TypeInteger, Description: "Empty pages tolerated before stopping a term (1-10)."},
+			"min_pages":     {Type: genai.TypeInteger, Description: "Pages to read per term before the dry early-exit may fire (1-30). Early pages are often full of repeat incumbents; a higher floor reaches new apps."},
 			"listing_pages": {Type: genai.TypeInteger, Description: "Store listing pages to fetch per app (1-30)."},
 		},
 	}
@@ -704,6 +709,7 @@ func planFromArgs(args map[string]any, tried []string) HuntPlan {
 			PageCap:      intPtrArg(raw, "page_cap"),
 			Patience:     intPtrArg(raw, "patience"),
 			ListingPages: intPtrArg(raw, "listing_pages"),
+			MinPages:     intPtrArg(raw, "min_pages"),
 		})
 	}
 	return plan
@@ -719,6 +725,9 @@ func describePlan(verb string, plan HuntPlan) string {
 	}
 	if p, ok := plan.Settings["patience"]; ok {
 		segs = append(segs, fmt.Sprintf("patience %d", p))
+	}
+	if m, ok := plan.Settings["min_pages"]; ok {
+		segs = append(segs, fmt.Sprintf("min %d", m))
 	}
 	if l, ok := plan.Settings["listing_pages"]; ok {
 		segs = append(segs, fmt.Sprintf("listing %d", l))
