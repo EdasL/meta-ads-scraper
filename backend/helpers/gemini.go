@@ -458,6 +458,13 @@ type HuntTurnInput struct {
 	PendingProposal string
 	CardState       string
 	PriorHunts      []string
+
+	// RequireReply marks turns whose text must not be empty (round-completion
+	// reports). When the model ends such a turn with a bare propose_round, the
+	// loop answers the call and asks once, tool-free, for the report text —
+	// live gate 2026-07-15: the model read the telemetry then proposed with no
+	// prose, so the daemon fell back to the canned counts message.
+	RequireReply bool
 }
 
 const huntAgentInstruction = "You are Peon, Field Desk's discovery agent. You help the founder find " +
@@ -620,7 +627,21 @@ func (h *GeminiHelper) GenerateHuntTurn(ctx context.Context, in HuntTurnInput, t
 				// propose_round keeps the tried-term strip (avoid re-proposing
 				// terms already run) unless the model set allow_tried.
 				plan := planFromArgs(call.Args, in.TriedTerms)
-				turn := HuntTurn{Reply: firstText(resp), ToolLog: toolLog}
+				reply := firstText(resp)
+				if reply == "" && in.RequireReply {
+					// The proposal is already captured; answer the call and ask
+					// once for the report prose, with tools answered so the
+					// transcript stays protocol-valid. Still empty afterwards →
+					// the caller falls back (canned message), never an empty row.
+					followup := append(contents, genai.NewContentFromParts([]*genai.Part{
+						genai.NewPartFromFunctionResponse(call.Name, map[string]any{
+							"status": "recorded. Now reply with the round report text — 2-5 plain sentences. Do not call any tools."}),
+					}, genai.RoleUser))
+					if resp2, ferr := h.generateWithRetry(ctx, h.huntModel, followup, config); ferr == nil {
+						reply = firstText(resp2)
+					}
+				}
+				turn := HuntTurn{Reply: reply, ToolLog: toolLog}
 				turn.ToolLog = append(turn.ToolLog, describePlan("proposed a round", plan))
 				turn.Proposal = &plan
 				return turn, nil // terminal tools end the turn

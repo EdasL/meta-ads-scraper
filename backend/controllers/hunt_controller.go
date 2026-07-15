@@ -407,6 +407,7 @@ func (c *HuntController) RoundCompleted(ctx *gin.Context) {
 		TriedTerms:     tried,
 		RoundSummaries: roundLines,
 		PriorHunts:     priorHunts,
+		RequireReply:   true,
 	}, true)
 	if err != nil {
 		// A failed or empty wrap-up wrote no row (requireReply=true) — let the
