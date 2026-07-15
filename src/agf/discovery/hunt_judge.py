@@ -7,6 +7,9 @@ round's intent (one founder sentence) using Gemini structured output.
 Fail-open by design: any error leaves relevance NULL, which every reader
 treats as relevant. A judge outage must never hide results.
 
+Founder-named competitor pulls are not judged: the founder chose them, so
+keyword-noise filtering does not apply.
+
 Network calls run OUTSIDE any DB transaction; reads and writes are their own
 short transactions.
 """
@@ -68,7 +71,11 @@ def _kept_rows(conn, round_id: int):
         "    WHERE ad.advertiser_id = hr.kept_advertiser_id AND c.body_text IS NOT NULL "
         "    LIMIT 1"
         ") ct ON true "
-        "WHERE hr.round_id = :r AND hr.triage = 'kept'"), {"r": round_id}).fetchall()
+        # Founder-named competitor pulls (source_term LIKE 'page:%') are not
+        # judged: the founder chose them, so keyword-noise filtering does not
+        # apply. They keep relevance NULL, which every reader treats as relevant.
+        "WHERE hr.round_id = :r AND hr.triage = 'kept' "
+        "AND hr.source_term NOT LIKE 'page:%'"), {"r": round_id}).fetchall()
 
 
 def _item_line(r) -> str:

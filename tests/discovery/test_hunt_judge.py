@@ -100,6 +100,49 @@ def test_judge_round_null_verdicts_fails_open(_migrated_engine, monkeypatch):
         conn.execute(text("DELETE FROM frontend.hunts WHERE title = 'judge'"))
 
 
+def test_judge_round_skips_competitor_pulls(_migrated_engine, monkeypatch):
+    """Founder-named competitor pulls (source_term LIKE 'page:%') are not judged.
+
+    The founder chose them, so keyword-noise filtering does not apply. Their
+    relevance stays NULL (fail-open = treated as relevant) even when the judge
+    marks everything off_target."""
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    from agf.db.engine import begin
+    with begin(_migrated_engine) as conn:
+        hunt_id = conn.execute(text(
+            "INSERT INTO frontend.hunts (user_email, title) VALUES ('j@t.local', 'judge') RETURNING id"
+        )).scalar_one()
+        round_id = conn.execute(text(
+            "INSERT INTO frontend.hunt_rounds (hunt_id, terms, intent) "
+            "VALUES (:h, '[\"running coach\"]', 'running coach apps') RETURNING id"
+        ), {"h": hunt_id}).scalar_one()
+        ids = []
+        for i, (name, term) in enumerate([("Run Buddy", "running coach"),
+                                          ("Joggo", "page:Joggo")]):
+            ids.append(conn.execute(text(
+                "INSERT INTO frontend.hunt_results (round_id, page_id, page_name, store, store_id, "
+                "source_term, was_new, triage) VALUES (:r, :p, :n, 'ios', :s, :t, true, 'kept') "
+                "RETURNING id"
+            ), {"r": round_id, "p": f"pg{i}", "n": name, "s": f"id{i}", "t": term}).scalar_one())
+
+    def fake_post(url, body):
+        # Judge marks everything off_target; only the keyword row should be written.
+        verdicts = [{"id": i, "relevant": False, "reason": "off"} for i in ids]
+        return {"candidates": [{"content": {"parts": [{"text": json.dumps({"verdicts": verdicts})}]}}]}
+
+    stats = judge_round(_migrated_engine, round_id, "running coach apps", _post=fake_post)
+    assert stats == {"judged": 1, "off_target": 1}
+    with begin(_migrated_engine) as conn:
+        rows = dict(conn.execute(text(
+            "SELECT id, relevance FROM frontend.hunt_results WHERE round_id = :r"), {"r": round_id}).fetchall())
+    assert rows[ids[0]] == "off_target"  # keyword row is judged
+    assert rows[ids[1]] is None  # page:Joggo competitor pull left untouched
+    with begin(_migrated_engine) as conn:
+        conn.execute(text("DELETE FROM frontend.hunt_results WHERE round_id = :r"), {"r": round_id})
+        conn.execute(text("DELETE FROM frontend.hunt_rounds WHERE id = :r"), {"r": round_id})
+        conn.execute(text("DELETE FROM frontend.hunts WHERE title = 'judge'"))
+
+
 def test_judge_round_no_intent_skips(_migrated_engine):
     stats = judge_round(_migrated_engine, 999999, "")
     assert stats["judged"] == 0 and "skipped" in stats
