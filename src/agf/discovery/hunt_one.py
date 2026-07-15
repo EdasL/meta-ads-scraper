@@ -3,6 +3,7 @@ Owns terminal status for both the round row and the pipeline job on every
 exit path (the daemon's safety net only catches a killed process)."""
 import argparse
 import logging
+import os
 import signal
 import sys
 from functools import partial
@@ -67,12 +68,19 @@ def main(argv=None) -> int:
         with begin(engine) as conn:
             finish_round(conn, args.round_id, status="done")
             set_job_status(conn, args.job_id, "done")
-            try:
-                counts = round_summary_counts(conn, args.round_id)
-                insert_round_message(conn, args.round_id,
-                                     compose_round_message(args.round_id, "done", counts))
-            except Exception:  # message is a convenience; the round row is the truth
-                log.exception("round completion message failed")
+        # The round is committed done; disarm the watchdog BEFORE the (up to
+        # 120s) completion hook so a late alarm can't overwrite 'done' with
+        # 'error' via _fail.
+        signal.alarm(0)
+        if not _notify_completed(args.round_id, http_client):
+            with begin(engine) as conn:
+                try:
+                    counts = round_summary_counts(conn, args.round_id)
+                    insert_round_message(
+                        conn, args.round_id,
+                        compose_round_message(args.round_id, "done", counts))
+                except Exception:  # message is a convenience; the round row is the truth
+                    log.exception("round completion message failed")
         log.info("hunt round %d done: %s", args.round_id, stats)
         return 0
     except HuntTimeout as e:
@@ -85,6 +93,28 @@ def main(argv=None) -> int:
     finally:
         signal.alarm(0)
         http_client.close()
+
+
+def _notify_completed(round_id: int, http_client) -> bool:
+    """POST the internal round-completed hook; True when the API wrote Peon's
+    wrap-up message. Any failure returns False and the caller writes the
+    canned fallback, so a round never finishes silently."""
+    base = os.environ.get("AGF_API_URL", "").rstrip("/")
+    token = os.environ.get("AGF_API_TOKEN", "")
+    if not base or not token:
+        return False
+    try:
+        resp = http_client.post(
+            f"{base}/api/internal/hunts/rounds/{round_id}/completed",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=120)
+        if resp.status_code != 200:
+            log.warning("completion hook returned %d for round %d",
+                        resp.status_code, round_id)
+        return resp.status_code == 200
+    except Exception:  # noqa: BLE001 — fallback message covers any failure
+        log.exception("completion hook failed for round %d", round_id)
+        return False
 
 
 def _fail(engine, args, msg: str) -> None:

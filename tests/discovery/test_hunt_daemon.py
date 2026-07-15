@@ -72,3 +72,90 @@ def test_safety_net_marks_job_and_round_on_runner_death(engine):
             "SELECT status, error_text FROM frontend.hunt_rounds WHERE id = :i"),
             {"i": round_id}).one()
     assert row.status == "error" and "killed" in row.error_text
+
+
+class _FakeResp:
+    def __init__(self, status_code):
+        self.status_code = status_code
+
+
+class _FakeClient:
+    """Captures POST args; returns a canned response or raises."""
+    def __init__(self, resp=None, exc=None):
+        self._resp = resp
+        self._exc = exc
+        self.calls = []
+
+    def post(self, url, headers=None, timeout=None):
+        self.calls.append((url, headers, timeout))
+        if self._exc is not None:
+            raise self._exc
+        return self._resp
+
+
+def test_notify_completed_posts_with_token(monkeypatch):
+    monkeypatch.setenv("AGF_API_URL", "http://api.test")
+    monkeypatch.setenv("AGF_API_TOKEN", "tok")
+    from agf.discovery.hunt_one import _notify_completed
+    client = _FakeClient(resp=_FakeResp(200))
+    assert _notify_completed(7, client) is True
+    url, headers, _ = client.calls[0]
+    assert url.endswith("/api/internal/hunts/rounds/7/completed")
+    assert headers["Authorization"] == "Bearer tok"
+
+
+def test_notify_completed_false_on_error_or_missing_env(monkeypatch):
+    from agf.discovery.hunt_one import _notify_completed
+    # (a) no env -> False, no HTTP call
+    monkeypatch.delenv("AGF_API_URL", raising=False)
+    monkeypatch.delenv("AGF_API_TOKEN", raising=False)
+    unused = _FakeClient(resp=_FakeResp(200))
+    assert _notify_completed(1, unused) is False
+    assert unused.calls == []
+    # (b) client raises -> False
+    monkeypatch.setenv("AGF_API_URL", "http://api.test")
+    monkeypatch.setenv("AGF_API_TOKEN", "tok")
+    assert _notify_completed(2, _FakeClient(exc=RuntimeError("down"))) is False
+    # (c) non-200 -> False
+    assert _notify_completed(3, _FakeClient(resp=_FakeResp(503))) is False
+
+
+def _mk_job(engine, round_id) -> int:
+    with begin(engine) as conn:
+        enqueue_jobs(conn, "hunt", [round_id])
+    with engine.connect() as conn:
+        return conn.execute(text(
+            "SELECT id FROM public.pipeline_jobs "
+            "WHERE kind = 'hunt' AND advertiser_id = :r"),
+            {"r": round_id}).scalar_one()
+
+
+def _assistant_msg_count(engine, round_id) -> int:
+    with engine.connect() as conn:
+        return conn.execute(text(
+            "SELECT count(*) FROM frontend.hunt_messages m "
+            "JOIN frontend.hunt_rounds r ON r.hunt_id = m.hunt_id "
+            "WHERE r.id = :r AND m.role = 'assistant'"),
+            {"r": round_id}).scalar_one()
+
+
+def test_done_path_writes_canned_message_only_when_notify_fails(engine, monkeypatch):
+    from agf.discovery import hunt_one
+    monkeypatch.setattr(hunt_one, "run_hunt_round", lambda *a, **k: {"found": 0})
+    monkeypatch.setattr(hunt_one, "_build_extractors", lambda k: [])
+
+    # Hook fails -> hunt_one writes the canned fallback message.
+    monkeypatch.setattr(hunt_one, "_notify_completed", lambda *a, **k: False)
+    rid = _mk_round(engine)
+    jid = _mk_job(engine, rid)
+    assert hunt_one.main(["--round-id", str(rid), "--job-id", str(jid)]) == 0
+    assert _job_status(engine, rid) == "done"
+    assert _assistant_msg_count(engine, rid) == 1
+
+    # Hook succeeds (Peon wrote the message) -> hunt_one writes NO message.
+    monkeypatch.setattr(hunt_one, "_notify_completed", lambda *a, **k: True)
+    rid2 = _mk_round(engine)
+    jid2 = _mk_job(engine, rid2)
+    assert hunt_one.main(["--round-id", str(rid2), "--job-id", str(jid2)]) == 0
+    assert _job_status(engine, rid2) == "done"
+    assert _assistant_msg_count(engine, rid2) == 0
