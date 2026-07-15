@@ -4,6 +4,7 @@ capture + pricing, download deduped creatives, then company enrichment. conn-fir
 (no commit); cross-cutting deps arrive via EnrichDeps (worker adapter §3.9)."""
 import asyncio
 import logging
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from urllib.parse import urlparse
@@ -44,6 +45,9 @@ class EnrichDeps:
     proxy: str | None = None
     capture: bool = True               # run funnel screenshots
     creative_urls: dict | None = None  # {external_ad_id: [(type, url)]}
+    check_alive: object = None         # (url) -> bool landing liveness; None = default
+                                       # httpx probe, applied only when a real chromium
+                                       # would be launched (page is None)
 
 
 def _domain_of(url):
@@ -137,7 +141,49 @@ def _media_only_pass(conn, advertiser_id, deps: EnrichDeps, *, done, cap) -> int
     return n
 
 
-async def record_web_funnel(conn, ad_id, link_url, target, deps: EnrichDeps) -> int:
+# Unresolved ad-tech URL macro (e.g. sng.link "...&cp={{ad.id}}") — the ad server
+# never substituted it, so the landing can only 404/abort; rendering it is pure waste.
+_URL_MACRO = re.compile(r"\{\{[^{}]*\}\}")
+
+_LIVENESS_TIMEOUT_SEC = 6.0
+
+
+def _url_alive(url, timeout=_LIVENESS_TIMEOUT_SEC) -> bool:
+    """Transport-level landing liveness, headers only (the render pays for the body).
+    ANY HTTP response — including 403/405/500 — counts as alive, because bot walls
+    front real funnels; dead means DNS failure, refused connection, or a hang past
+    `timeout`. Cheap insurance before each ~30s-timeout chromium render."""
+    import httpx
+    try:
+        with httpx.Client(timeout=timeout, follow_redirects=True) as c:
+            with c.stream("GET", url):
+                pass
+        return True
+    except Exception:
+        return False
+
+
+class FunnelProbeBreaker:
+    """Per-advertiser dead-funnel circuit breaker. Hunt-surfaced advertisers carry
+    dead/slow landings; each failed render burns up to ~40s of the enrich deadline
+    (30s goto + settles), and top_n=5 of them pinned ~46% of enrich jobs at the
+    SIGALRM wall (2026-07-13..15 regression). After max_fails failed probes the
+    advertiser's remaining probes are skipped — funnel rows are still written from
+    URL intent, and the store/creative/company enrichment is untouched."""
+
+    def __init__(self, max_fails=2):
+        self.max_fails = max_fails
+        self.fails = 0
+
+    def allow(self) -> bool:
+        return self.fails < self.max_fails
+
+    def fail(self) -> None:
+        self.fails += 1
+
+
+async def record_web_funnel(conn, ad_id, link_url, target, deps: EnrichDeps,
+                            breaker: FunnelProbeBreaker | None = None) -> int:
     """Probe a resolved web landing and record it as the app's funnel when it shows
     web-to-app intent. `target` is an already-resolved ResolvedTarget. Returns 1 if a
     public.funnels row was written, else 0.
@@ -158,16 +204,35 @@ async def record_web_funnel(conn, ad_id, link_url, target, deps: EnrichDeps) -> 
         return 0
     kind = quiz_steps = shot = None
     confirmed = False
-    # Playwright's SYNC API can't run inside the asyncio loop → offload.
-    try:
-        probe = await asyncio.to_thread(
-            render_and_probe, target.final_url, page=deps.page, proxy=deps.proxy)
-    except Exception as e:
-        probe = None              # a slow/dead landing must not kill the advertiser
-        # ...but never silently: a swallowed probe means the funnel probe fails
-        # invisibly (e.g. browser launch dying on a bad TMPDIR).
-        log.warning("funnel probe failed for %s: %s: %s",
-                    target.final_url, type(e).__name__, e)
+    probe = None
+    skip = None
+    if _URL_MACRO.search(target.final_url):
+        skip = "unresolved ad-tech macro in URL"
+    elif breaker is not None and not breaker.allow():
+        skip = "dead-funnel breaker open for this advertiser"
+    else:
+        check = deps.check_alive
+        if check is None and deps.page is None:   # about to pay for a real chromium
+            check = _url_alive
+        if check is not None and not await asyncio.to_thread(check, target.final_url):
+            skip = "landing transport-dead (no HTTP response)"
+            if breaker is not None:
+                breaker.fail()
+    if skip is not None:
+        log.info("funnel probe skipped for %s: %s", target.final_url, skip)
+    else:
+        # Playwright's SYNC API can't run inside the asyncio loop → offload.
+        try:
+            probe = await asyncio.to_thread(
+                render_and_probe, target.final_url, page=deps.page, proxy=deps.proxy)
+        except Exception as e:
+            probe = None          # a slow/dead landing must not kill the advertiser
+            if breaker is not None:
+                breaker.fail()
+            # ...but never silently: a swallowed probe means the funnel probe fails
+            # invisibly (e.g. browser launch dying on a bad TMPDIR).
+            log.warning("funnel probe failed for %s: %s: %s",
+                        target.final_url, type(e).__name__, e)
     if probe is not None:
         kind, status, _store, _sid, _drop, _payoff = classify_funnel(
             probe.landing_html, target, funnel_host=funnel_host,
@@ -206,6 +271,7 @@ async def enrich_gem(conn, advertiser_id, *, top_n=5, media_cap=120,
     n_funnels = n_creatives = 0
     last_app_meta = None
     company_domain = company_html = None
+    breaker = FunnelProbeBreaker()     # shared across this advertiser's ads
 
     for ad in ads:
         target = await resolve_landing(deps.extractor, ad.link_url)
@@ -237,7 +303,8 @@ async def enrich_gem(conn, advertiser_id, *, top_n=5, media_cap=120,
                 except Exception:
                     company_html = None
             if deps.capture:
-                n_funnels += await record_web_funnel(conn, ad.id, ad.link_url, target, deps)
+                n_funnels += await record_web_funnel(conn, ad.id, ad.link_url, target,
+                                                     deps, breaker=breaker)
 
         for ctype, url in (deps.creative_urls or {}).get(str(ad.external_ad_id), []):
             try:                              # fbcdn URLs expire → a dead one mustn't kill the gem

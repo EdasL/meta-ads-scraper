@@ -4,7 +4,9 @@ from agf.parse import AdRecord
 from agf.classify import AppIntent
 from agf.extract.deeplink import ResolvedLink
 from agf.db import repo
-from agf.enrich_full.run_enrich import enrich_gem, EnrichDeps
+from agf.enrich_full.run_enrich import (enrich_gem, record_web_funnel, EnrichDeps,
+                                        FunnelProbeBreaker)
+from agf.enrich_full.schemas import ResolvedTarget
 from tests.enrich_full.conftest import FakeExtractor
 from tests.enrich_full.test_company import FakeWhois, _rec
 
@@ -362,6 +364,105 @@ def test_enrich_gem_media_pass_respects_cap(pg_conn):
     res = asyncio.run(enrich_gem(pg_conn, adv, top_n=0, media_cap=2, deps=deps))
 
     assert res.creatives == 2
+
+
+class _BoomPage:
+    """A landing whose render always dies (dead host / net::ERR_ABORTED) —
+    the hunt-surfaced dead-funnel shape that blew the enrich deadline."""
+
+    def __init__(self):
+        self.gotos = 0
+
+    def goto(self, url):
+        self.gotos += 1
+        raise RuntimeError("net::ERR_ABORTED")
+
+
+def _web_target(url):
+    return ResolvedTarget(kind="web", store_id=None, landing_url=url, final_url=url)
+
+
+def test_record_web_funnel_macro_url_skips_probe(pg_conn):
+    # An unresolved ad-tech macro ({{ad.id}}) can never render a real page —
+    # the probe must be skipped outright, while the row is still recorded
+    # from URL intent (w2a markers).
+    url = "https://track.example.com/c/abc?cp={{ad.id}}&pid=w2a_meta"
+    ar = _ad("MACRO-WEB", url)
+    adv = repo.upsert_advertiser(pg_conn, ar)
+    ad_web = repo.upsert_ad(pg_conn, ar, adv, None)
+    page = _BoomPage()
+    deps = EnrichDeps(extractor=FakeExtractor(), page=page, capture=True)
+
+    wrote = asyncio.run(record_web_funnel(pg_conn, ad_web, url, _web_target(url), deps))
+
+    assert wrote == 1
+    assert page.gotos == 0            # no render was paid for
+
+
+def test_record_web_funnel_dead_landing_skips_render(pg_conn):
+    # check_alive says the host is transport-dead: skip the browser render,
+    # count a breaker failure, still record the funnel row from URL intent.
+    url = "https://gone.example.com/onboarding?pid=w2a_meta"
+    ar = _ad("DEADHOST-WEB", url)
+    adv = repo.upsert_advertiser(pg_conn, ar)
+    ad_web = repo.upsert_ad(pg_conn, ar, adv, None)
+    page = FakeWebFunnel()            # would confirm + screenshot if driven
+    breaker = FunnelProbeBreaker()
+    deps = EnrichDeps(extractor=FakeExtractor(), page=page, capture=True,
+                      check_alive=lambda u: False,
+                      put=lambda key, d, ct, client=None: key)
+
+    wrote = asyncio.run(record_web_funnel(pg_conn, ad_web, url, _web_target(url),
+                                          deps, breaker=breaker))
+
+    assert wrote == 1
+    assert page.shots == 0            # render never ran
+    assert breaker.fails == 1
+    fr = pg_conn.execute(text("SELECT kind, screenshot_s3_key FROM public.funnels "
+                              "WHERE ad_id=:i"), {"i": ad_web}).first()
+    assert fr.kind is None and fr.screenshot_s3_key is None
+
+
+def test_enrich_gem_stops_liveness_after_two_dead_landings(pg_conn):
+    # 4 dead web ads: the breaker opens after 2 failures, so liveness is only
+    # probed twice — the remaining ads' rows are written from URL intent alone.
+    urls = [f"https://dead{i}.example.com/go?pid=w2a_meta" for i in range(4)]
+    adv = None
+    for i, url in enumerate(urls):
+        ar = _ad(f"BRK-{i}", url)
+        adv = repo.upsert_advertiser(pg_conn, ar)
+        repo.upsert_ad(pg_conn, ar, adv, None)
+    ex = FakeExtractor(links={u: ResolvedLink(u, AppIntent("web", None)) for u in urls})
+    seen = []
+
+    def check(u):
+        seen.append(u)
+        return False
+
+    deps = EnrichDeps(extractor=ex, capture=True, check_alive=check)
+    res = asyncio.run(enrich_gem(pg_conn, adv, top_n=5, deps=deps))
+
+    assert len(seen) == 2             # breaker open -> 3rd/4th never probed
+    assert res.funnels == 4           # every row still written
+
+
+def test_enrich_gem_render_failures_open_the_breaker(pg_conn):
+    # Renders that die (dead host reached the browser) count toward the breaker
+    # too: after 2 failed renders the remaining ads are not rendered at all.
+    urls = [f"https://boom{i}.example.com/go?pid=w2a_meta" for i in range(4)]
+    adv = None
+    for i, url in enumerate(urls):
+        ar = _ad(f"BOOM-{i}", url)
+        adv = repo.upsert_advertiser(pg_conn, ar)
+        repo.upsert_ad(pg_conn, ar, adv, None)
+    ex = FakeExtractor(links={u: ResolvedLink(u, AppIntent("web", None)) for u in urls})
+    page = _BoomPage()
+    deps = EnrichDeps(extractor=ex, capture=True, page=page)
+
+    res = asyncio.run(enrich_gem(pg_conn, adv, top_n=5, deps=deps))
+
+    assert page.gotos == 2            # 3rd/4th renders skipped
+    assert res.funnels == 4
 
 
 def test_enrich_gem_dead_creative_url_does_not_crash(pg_conn):
