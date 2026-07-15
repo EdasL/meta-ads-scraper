@@ -98,6 +98,24 @@ def round_summary_counts(conn, round_id: int) -> dict:
     return {"found": row.found, "kept": row.kept, "off_target": row.off_target}
 
 
+def term_outcome_stats(conn, round_id: int) -> dict:
+    """Post-triage outcome tallies per source_term for one round: kept /
+    relevant / off_target. Keys match progress.terms entries (competitor pulls
+    appear as 'page:<name>'). NULL relevance counts as neither (fail-open
+    unjudged, spec 2026-07-15)."""
+    out = {}
+    for row in conn.execute(text(
+            "SELECT source_term, "
+            "count(*) FILTER (WHERE triage = 'kept') AS kept, "
+            "count(*) FILTER (WHERE relevance = 'relevant') AS relevant, "
+            "count(*) FILTER (WHERE relevance = 'off_target') AS off_target "
+            "FROM frontend.hunt_results WHERE round_id = :r "
+            "GROUP BY source_term"), {"r": round_id}):
+        out[row.source_term] = {"kept": row.kept, "relevant": row.relevant,
+                                "off_target": row.off_target}
+    return out
+
+
 def compose_round_message(round_id: int, status: str, counts: dict, error=None) -> str:
     """Plain, honest chat copy for a finished round. No marketing voice."""
     if status != "done":

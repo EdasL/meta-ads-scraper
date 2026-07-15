@@ -20,8 +20,8 @@ from agf.db.dynamic_keywords import add_trial_keywords
 from agf.db.engine import begin
 from agf.db.hunts import (apply_triage_to_results, clamp_hunt_settings,
                           load_round, mark_round_running,
-                          round_new_candidate_ids, update_round_progress,
-                          upsert_hunt_result)
+                          round_new_candidate_ids, term_outcome_stats,
+                          update_round_progress, upsert_hunt_result)
 from agf.db.pipeline_jobs import enqueue_enrich
 from agf.discovery.hunt_judge import judge_round
 from agf.discovery.sweep import classify_candidate
@@ -88,6 +88,16 @@ class _Progress:
         with self._lock:
             self._state.setdefault("terms", {})[term] = {
                 "pages": pages, "found": found, "new": new, "stop": stop}
+            self._flush()
+
+    def merge_term_outcomes(self, outcomes: dict) -> None:
+        """Merge post-triage tallies (kept/relevant/off_target) into the
+        existing terms entries so Peon's get_round_report sees outcome per
+        term, not just sweep telemetry."""
+        with self._lock:
+            terms = self._state.setdefault("terms", {})
+            for term, vals in outcomes.items():
+                terms.setdefault(term, {}).update(vals)
             self._flush()
 
 
@@ -282,10 +292,18 @@ def run_hunt_round(engine, extractors, round_id: int, *,
         progress.event(f"Triage done — {stats['kept']} kept, "
                        f"{stats['vetoed']} vetoed; "
                        f"{stats['enrich_enqueued']} queued for enrich")
+        # Read outcomes in a short txn, then merge (merge opens its own txn to
+        # flush progress — never nest the two).
+        with begin(engine) as conn:
+            outcomes = term_outcome_stats(conn, round_id)
+        progress.merge_term_outcomes(outcomes)
     else:
         with begin(engine) as conn:
             stats.update(apply_triage_to_results(conn, round_id))
         stats["enrich_enqueued"] = 0
+        with begin(engine) as conn:
+            outcomes = term_outcome_stats(conn, round_id)
+        progress.merge_term_outcomes(outcomes)
     if terms:
         with begin(engine) as conn:
             stats["keywords_minted"] = add_trial_keywords(

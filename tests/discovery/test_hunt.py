@@ -5,8 +5,8 @@ import pytest
 from sqlalchemy import text
 
 from agf.db.engine import begin
-from agf.db.hunts import clamp_hunt_settings
-from agf.discovery.hunt import HUNT_PATIENCE, run_hunt_round
+from agf.db.hunts import clamp_hunt_settings, term_outcome_stats
+from agf.discovery.hunt import HUNT_PATIENCE, _Progress, run_hunt_round
 from tests.discovery.conftest import FakeExtractor, make_ad
 
 pytestmark = pytest.mark.usefixtures("_migrated_engine")
@@ -85,9 +85,12 @@ def test_round_sweeps_terms_and_records_results(engine):
     assert [r.store_id for r in rows] == ["900001", "900002"]
     assert all(r.was_new and r.candidate_id and r.source_term == "sleep app"
                for r in rows)
-    # per-term telemetry: page 1 finds 2, page 2 empty -> Meta exhausted
+    # per-term telemetry: page 1 finds 2, page 2 empty -> Meta exhausted.
+    # Phase 5 (no lookups here) merges per-term outcome tallies onto the entry:
+    # both results stay pending, so kept/relevant/off_target are all 0.
     assert _progress(engine, round_id)["terms"]["sleep app"] == {
-        "pages": 2, "found": 2, "new": 2, "stop": "exhausted"}
+        "pages": 2, "found": 2, "new": 2, "stop": "exhausted",
+        "kept": 0, "relevant": 0, "off_target": 0}
 
 
 def test_non_candidate_dispositions_counted_in_drops(engine):
@@ -360,3 +363,50 @@ def test_competitor_pull_records_listing_stop(engine):
     run_hunt_round(engine, [ext], round_id)
     term = _progress(engine, round_id)["terms"]["page:Calm"]
     assert term["stop"] == "listing" and term["found"] == 1
+
+
+def _seed_result(conn, round_id, term, store_id, *, triage, relevance):
+    conn.execute(text(
+        "INSERT INTO frontend.hunt_results "
+        "  (round_id, page_id, page_name, store, store_id, source_term, "
+        "   was_new, triage, relevance) "
+        "VALUES (:r, :pid, 'App', 'ios', :sid, :term, true, :tri, :rel)"),
+        {"r": round_id, "pid": f"HUNTP{store_id}", "sid": store_id,
+         "term": term, "tri": triage, "rel": relevance})
+
+
+@pytest.fixture
+def round_id(engine):
+    return _mk_round(engine, ["run coach"])
+
+
+@pytest.fixture
+def hunt_round_with_results(engine):
+    rid = _mk_round(engine, ["run coach"], competitors=("joggo",))
+    with begin(engine) as conn:
+        _seed_result(conn, rid, "run coach", "910001",
+                     triage="kept", relevance="relevant")
+        _seed_result(conn, rid, "run coach", "910002",
+                     triage="vetoed", relevance=None)
+        _seed_result(conn, rid, "page:joggo", "910003",
+                     triage="kept", relevance="off_target")
+    return engine, rid
+
+
+def test_term_outcome_stats_groups_by_source_term(hunt_round_with_results):
+    engine, rid = hunt_round_with_results
+    with begin(engine) as conn:
+        out = term_outcome_stats(conn, rid)
+    assert out["run coach"] == {"kept": 1, "relevant": 1, "off_target": 0}
+    assert out["page:joggo"] == {"kept": 1, "relevant": 0, "off_target": 1}
+
+
+def test_progress_merge_term_outcomes_preserves_sweep_telemetry(engine, round_id):
+    p = _Progress(engine, round_id, terms_total=1)
+    p.term_stats("run coach", pages=4, found=2, new=1, stop="dry")
+    p.merge_term_outcomes({"run coach": {"kept": 1, "relevant": 1, "off_target": 0},
+                           "page:joggo": {"kept": 1, "relevant": 0, "off_target": 1}})
+    terms = p._state["terms"]
+    assert terms["run coach"] == {"pages": 4, "found": 2, "new": 1, "stop": "dry",
+                                  "kept": 1, "relevant": 1, "off_target": 0}
+    assert terms["page:joggo"] == {"kept": 1, "relevant": 0, "off_target": 1}
