@@ -7,7 +7,7 @@ import { editTerms, formatSettings } from "@/lib/hunt";
 import type { HuntProposal } from "@/lib/api";
 
 /** Mirror of the server's competitor-app cap (hunt_controller.go). */
-const MAX_COMPETITORS = 3;
+const MAX_COMPETITORS = 10;
 
 /**
  * The editable side of a Peon proposal: term chips (× to remove, an input to
