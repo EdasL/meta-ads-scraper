@@ -31,7 +31,8 @@ from agf.extract.errors import ExtractError
 log = logging.getLogger("agf.hunt")
 
 HUNT_PAGE_CAP = 40        # always-deep: gem band sits below incumbents
-HUNT_PATIENCE = 3         # consecutive net-new-dry pages before early exit
+HUNT_PATIENCE = 6         # consecutive net-new-dry pages before early exit — raised from 3, design 2026-07-15
+HUNT_MIN_PAGES = 10       # dry exit may not fire before this depth (incumbent-flooded early pages fed the dry counter)
 HUNT_TERM_LANES = 3       # proven DataImpulse concurrency
 HUNT_LISTING_PAGES = 10   # competitor page:<name> pull bound (Task 3)
 HUNT_PAGE_DELAY = 2.0
@@ -118,7 +119,7 @@ def _persist_page(engine, round_id: int, term: str, records, depth: int,
                     "page_id": row["page_id"], "page_name": row["page_name"],
                     "store": row["store"], "store_id": row["store_id"],
                     "link_url": row["link_url"], "source_term": term,
-                    "was_new": was_new})
+                    "was_new": was_new, "page": depth})
                 found += 1
                 new += int(was_new)
     with lock:
@@ -132,7 +133,8 @@ def _persist_page(engine, round_id: int, term: str, records, depth: int,
 def _sweep_term(engine, extractor, round_id: int, lane: int, term: str,
                 progress: _Progress, stats: dict, lock: threading.Lock,
                 sleep, patience: int = HUNT_PATIENCE,
-                page_cap: int = HUNT_PAGE_CAP) -> tuple[int, int, int, str]:
+                page_cap: int = HUNT_PAGE_CAP,
+                min_pages: int = HUNT_MIN_PAGES) -> tuple[int, int, int, str]:
     """Deep-page one term. Returns (pages, found, new, stop) for lane telemetry;
     the shared `stats` accumulators are updated as before. stop is one of
     'exhausted' (Meta no next page), 'dry' (patience), 'cap' (page_cap),
@@ -163,7 +165,7 @@ def _sweep_term(engine, extractor, round_id: int, lane: int, term: str,
         consec_dry = 0 if new > 0 else consec_dry + 1
         if not has_next or not cursor:
             return depth, term_found, term_new, "exhausted"
-        if consec_dry >= patience:
+        if consec_dry >= patience and depth >= min_pages:
             return depth, term_found, term_new, "dry"
         if depth >= page_cap:
             return depth, term_found, term_new, "cap"
@@ -235,7 +237,7 @@ def run_hunt_round(engine, extractors, round_id: int, *,
             pages, found, new, stop = _sweep_term(
                 engine, extractor, round_id, lane_id, term,
                 progress, stats, lock, sleep,
-                knobs["patience"], knobs["page_cap"])
+                knobs["patience"], knobs["page_cap"], knobs["min_pages"])
             progress.term_stats(term, pages, found, new, stop)
             with lock:
                 stats["terms_swept"] += 1

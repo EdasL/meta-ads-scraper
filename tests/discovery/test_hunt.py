@@ -5,6 +5,7 @@ import pytest
 from sqlalchemy import text
 
 from agf.db.engine import begin
+from agf.db.hunts import clamp_hunt_settings
 from agf.discovery.hunt import HUNT_PATIENCE, run_hunt_round
 from tests.discovery.conftest import FakeExtractor, make_ad
 
@@ -116,11 +117,52 @@ def test_known_candidate_marked_not_new(engine):
             {"r": round2}).scalar_one() is False
 
 
+def test_clamp_settings_min_pages_and_patience_default():
+    knobs = clamp_hunt_settings(None)
+    assert knobs["patience"] == 6
+    assert knobs["min_pages"] == 10
+    assert clamp_hunt_settings({"min_pages": 99})["min_pages"] == 30
+    assert clamp_hunt_settings({"min_pages": 0})["min_pages"] == 1
+
+
+def test_dry_exit_waits_for_min_pages(engine):
+    # Page 1 yields a net-new ad; pages 2..N re-find that same ad (new=0 each).
+    # patience 2 would stop at page 3 under the OLD rule, but the min_pages 6
+    # floor holds the dry exit until depth >= 6. has_next stays true throughout.
+    ad = _ios_ad("900202")
+    ext = FakeExtractor()
+    ext.script_pages("floored term", [[ad] for _ in range(8)])
+    round_id = _mk_round(engine, ["floored term"],
+                         settings={"patience": 2, "min_pages": 6})
+    run_hunt_round(engine, [ext], round_id)
+    term = _progress(engine, round_id)["terms"]["floored term"]
+    assert term["stop"] == "dry"
+    assert term["pages"] == 6
+
+
+def test_results_carry_page_depth(engine):
+    # A new ad on page 1 and another new ad on page 3; the two hunt_results rows
+    # must record page = 1 and page = 3. Page 4 is empty -> Meta exhausted.
+    ext = FakeExtractor()
+    ext.script_pages("depth term",
+                     [[_ios_ad("900204")], [], [_ios_ad("900206")], []])
+    round_id = _mk_round(engine, ["depth term"])
+    run_hunt_round(engine, [ext], round_id)
+    with engine.connect() as conn:
+        rows = conn.execute(text(
+            "SELECT store_id, page FROM frontend.hunt_results "
+            "WHERE round_id = :r ORDER BY store_id"), {"r": round_id}).all()
+    assert [(r.store_id, r.page) for r in rows] == [
+        ("900204", 1), ("900206", 3)]
+
+
 def test_patience_stops_dry_paging(engine):
     dry = [[_ios_ad("900020")]] + [[] for _ in range(HUNT_PATIENCE + 5)]
     ext = FakeExtractor()
     ext.script_pages("dry term", dry)
-    stats = run_hunt_round(engine, [ext], _mk_round(engine, ["dry term"]))
+    # min_pages 1 disables the depth floor so patience alone drives the early exit.
+    stats = run_hunt_round(engine, [ext],
+                           _mk_round(engine, ["dry term"], settings={"min_pages": 1}))
     assert stats["pages"] == 1 + HUNT_PATIENCE  # first live page + patience window
 
 
@@ -292,7 +334,8 @@ def test_term_stop_dry_recorded(engine):
     dry = [[_ios_ad("900021")]] + [[] for _ in range(HUNT_PATIENCE + 5)]
     ext = FakeExtractor()
     ext.script_pages("dry term", dry)
-    round_id = _mk_round(engine, ["dry term"])
+    # min_pages 1 disables the depth floor so patience alone drives the early exit.
+    round_id = _mk_round(engine, ["dry term"], settings={"min_pages": 1})
     run_hunt_round(engine, [ext], round_id)
     term = _progress(engine, round_id)["terms"]["dry term"]
     assert term["stop"] == "dry"

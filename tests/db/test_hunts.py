@@ -34,7 +34,7 @@ def _result_row(round_id: int, **over) -> dict:
     row = {"round_id": round_id, "candidate_id": None, "page_id": "77001",
            "page_name": "Dreamy", "store": "ios", "store_id": "123456",
            "link_url": "https://apps.apple.com/us/app/id123456",
-           "source_term": "sleep stories app", "was_new": True}
+           "source_term": "sleep stories app", "was_new": True, "page": 1}
     row.update(over)
     return row
 
@@ -74,9 +74,11 @@ def test_clamp_hunt_settings_defaults_and_bounds():
     assert clamp_hunt_settings({"page_cap": True})["page_cap"] == 40
     assert clamp_hunt_settings({"page_cap": None})["page_cap"] == 40
     assert clamp_hunt_settings({"page_cap": "5"})["page_cap"] == 40
+    assert clamp_hunt_settings({"min_pages": 99})["min_pages"] == 30
+    assert clamp_hunt_settings({"min_pages": 0})["min_pages"] == 1
     # unknown keys ignored; a partial dict fills the rest from defaults
     assert clamp_hunt_settings({"patience": 5, "junk": 1}) == {
-        "page_cap": 40, "patience": 5, "listing_pages": 10}
+        "page_cap": 40, "patience": 5, "listing_pages": 10, "min_pages": 10}
 
 
 def test_round_status_transitions(pg_conn):
@@ -99,6 +101,20 @@ def test_upsert_hunt_result_is_idempotent(pg_conn):
         "SELECT count(*) FROM frontend.hunt_results WHERE round_id = :r"),
         {"r": round_id}).scalar_one()
     assert n == 1
+
+
+def test_upsert_hunt_result_records_page(pg_conn):
+    round_id = _seed_round(pg_conn, _seed_hunt(pg_conn))
+    upsert_hunt_result(pg_conn, {
+        "round_id": round_id, "candidate_id": None, "page_id": "p9",
+        "page_name": "Deep Find", "store": "ios", "store_id": "id9",
+        "link_url": None, "source_term": "running app", "was_new": True,
+        "page": 7,
+    })
+    row = pg_conn.execute(text(
+        "SELECT page FROM frontend.hunt_results "
+        "WHERE round_id = :r AND page_id = 'p9'"), {"r": round_id}).one()
+    assert row.page == 7
 
 
 def test_update_round_progress_replaces_blob(pg_conn):

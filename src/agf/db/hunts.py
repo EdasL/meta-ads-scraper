@@ -10,8 +10,11 @@ from sqlalchemy import text
 
 # Per-round scrape knobs (spec 2026-07-13-peon-agent-tools). Defaults mirror the
 # executor constants; stored per-round values overlay these, bounded below.
-DEFAULT_HUNT_SETTINGS = {"page_cap": 40, "patience": 3, "listing_pages": 10}
-_SETTINGS_BOUNDS = {"page_cap": (1, 100), "patience": (1, 10), "listing_pages": (1, 30)}
+DEFAULT_HUNT_SETTINGS = {
+    "page_cap": 40, "patience": 6, "listing_pages": 10, "min_pages": 10}
+_SETTINGS_BOUNDS = {
+    "page_cap": (1, 100), "patience": (1, 10),
+    "listing_pages": (1, 30), "min_pages": (1, 30)}
 
 
 def clamp_hunt_settings(raw: dict | None) -> dict:
@@ -50,9 +53,9 @@ def upsert_hunt_result(conn, row: dict) -> None:
     conn.execute(text(
         "INSERT INTO frontend.hunt_results "
         "  (round_id, candidate_id, page_id, page_name, store, store_id, "
-        "   link_url, source_term, was_new) "
+        "   link_url, source_term, was_new, page) "
         "VALUES (:round_id, :candidate_id, :page_id, :page_name, :store, "
-        "        :store_id, :link_url, :source_term, :was_new) "
+        "        :store_id, :link_url, :source_term, :was_new, :page) "
         "ON CONFLICT (round_id, page_id, store, store_id) DO NOTHING"), row)
 
 
