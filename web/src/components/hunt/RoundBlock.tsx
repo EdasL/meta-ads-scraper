@@ -1,8 +1,11 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
+import { IconHeart, IconHeartFilled } from "@tabler/icons-react";
 import { ScoreBadge } from "@/components/ui";
 import { formatSettings, latestEvents, splitByRelevance } from "@/lib/hunt";
+import { removeSavedGem, setRating, upsertSavedGem } from "@/lib/api";
 import type { HuntResult, HuntRound } from "@/lib/api";
 
 /** Human label for a result's store. Unknown stores fall back to the raw value. */
@@ -66,63 +69,140 @@ function TriageState({ triage }: { triage: HuntResult["triage"] }) {
   );
 }
 
-/**
- * One found-app row: name (linked to its gem page once kept + scored), store
- * badge, Ad Library link, source term, new flag, triage state, and GemScore.
- * Reused for both the on-target list and the collapsed off-target group.
- */
-function ResultRow({ result: r }: { result: HuntResult }) {
+/** Save control: one tap saves the app to the Saved page AND records a like
+ *  (feeds preference learning). Tapping again removes both. Optimistic with
+ *  revert; the 2s round poll re-syncs `saved` from the server on any drift. */
+function HeartButton({ result: r, userEmail }: { result: HuntResult; userEmail: string }) {
+  const [saved, setSaved] = useState(r.saved);
+  const [busy, setBusy] = useState(false);
+  const advertiserId = r.kept_advertiser_id!;
+
+  // Re-sync from the server value when the 2s round poll delivers a change.
+  // Adjusting state during render (guarded by the change) is React's recommended
+  // replacement for a setState-in-effect — it won't fight an in-flight optimistic
+  // toggle, since the server value only differs once the write has landed.
+  const [prevServerSaved, setPrevServerSaved] = useState(r.saved);
+  if (r.saved !== prevServerSaved) {
+    setPrevServerSaved(r.saved);
+    setSaved(r.saved);
+  }
+
+  async function toggle() {
+    if (busy) return;
+    const next = !saved;
+    setSaved(next);
+    setBusy(true);
+    try {
+      if (next) {
+        await upsertSavedGem(advertiserId, {
+          user_email: userEmail,
+          page_name: r.page_name,
+          app_name: r.app_name,
+          icon_url: r.icon_url,
+          cohort: r.cohort ?? "",
+          gem_score: r.gem_score ?? 0,
+          scaling_velocity: null,
+          under_radar: null,
+          funnel_intent: null,
+          active_ad_count: null,
+          tags: [],
+          note: "",
+          stage: "just_saw",
+          verdict: null,
+          confidence: null,
+        });
+        await setRating(advertiserId, userEmail, "like", "");
+      } else {
+        await removeSavedGem(advertiserId, userEmail);
+        await setRating(advertiserId, userEmail, "none", "");
+      }
+    } catch {
+      setSaved(!next); // revert; the next poll re-syncs from the server
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={toggle}
+      disabled={busy}
+      aria-pressed={saved}
+      title={saved ? "Remove from Saved" : "Save and like"}
+      style={{ border: "none", background: "transparent", cursor: "pointer", padding: 4, color: saved ? "var(--down)" : "var(--muted)", flex: "0 0 auto" }}
+    >
+      {saved ? <IconHeartFilled size={18} /> : <IconHeart size={18} stroke={1.75} />}
+    </button>
+  );
+}
+
+/** One found app as a card: icon, name, store badge, GemScore, tagline, and a
+ *  save control once the app is kept. All fields are real data from the round;
+ *  missing fields render nothing (no placeholders). */
+function ResultCard({ result: r, userEmail }: { result: HuntResult; userEmail: string | null }) {
   const scored = r.gem_score != null && r.kept_advertiser_id != null;
+  const name = r.app_name ?? r.page_name ?? r.store_id;
   return (
     <div
       style={{
+        border: "1px solid var(--line)",
+        background: "var(--surface-2)",
+        padding: "10px 12px",
         display: "flex",
-        alignItems: "center",
-        gap: 10,
-        padding: "7px 0",
-        borderTop: "1px solid var(--line)",
-        flexWrap: "wrap",
+        flexDirection: "column",
+        gap: 8,
+        minWidth: 0,
       }}
     >
-      {scored ? (
-        <Link
-          className="t-sm w-strong"
-          href={`/gems/${r.kept_advertiser_id}`}
-          style={{ flex: "1 1 180px", minWidth: 0, color: "var(--ink)", textDecoration: "underline" }}
-          title="Open the gem page"
-        >
-          {r.page_name ?? r.store_id}
-        </Link>
-      ) : (
-        <span className="t-sm w-strong" style={{ flex: "1 1 180px", minWidth: 0 }}>
-          {r.page_name ?? r.store_id}
+      <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+        {r.icon_url ? (
+          // eslint-disable-next-line @next/next/no-img-element -- store CDN icon, remote domains not configured for next/image
+          <img src={r.icon_url} alt="" width={40} height={40} style={{ flex: "0 0 auto", border: "1px solid var(--line)", objectFit: "cover" }} />
+        ) : (
+          <span aria-hidden style={{ width: 40, height: 40, flex: "0 0 auto", border: "1px solid var(--line)", background: "var(--surface-3)" }} />
+        )}
+        <div style={{ minWidth: 0, flex: "1 1 auto" }}>
+          {scored ? (
+            <Link className="t-sm w-strong" href={`/gems/${r.kept_advertiser_id}`} style={{ color: "var(--ink)", textDecoration: "underline", display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title="Open the gem page">
+              {name}
+            </Link>
+          ) : (
+            <span className="t-sm w-strong" style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {name}
+            </span>
+          )}
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 2 }}>
+            <StoreBadge store={r.store} href={r.link_url} />
+            {scored && <ScoreBadge score={r.gem_score!} variant="card" />}
+          </div>
+        </div>
+        {r.kept_advertiser_id != null && userEmail && <HeartButton result={r} userEmail={userEmail} />}
+      </div>
+      {r.tagline && (
+        <p className="t-xs" style={{ color: "var(--ink-soft)", margin: 0, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
+          {r.tagline}
+        </p>
+      )}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <a className="t-xs" href={adLibraryUrl(r.page_id)} target="_blank" rel="noreferrer" style={{ color: "var(--ink-soft)", textDecoration: "underline" }} title="Open this page's ads in the Meta Ad Library">
+          Ads
+        </a>
+        <span className="t-xs" style={{ color: "var(--muted)" }} title="Search term that surfaced this app">
+          {r.source_term}
         </span>
-      )}
-      <StoreBadge store={r.store} href={r.link_url} />
-      <a
-        className="t-xs"
-        href={adLibraryUrl(r.page_id)}
-        target="_blank"
-        rel="noreferrer"
-        style={{ color: "var(--ink-soft)", textDecoration: "underline" }}
-        title="Open this page's ads in the Meta Ad Library"
-      >
-        Ads
-      </a>
-      <span className="t-xs" style={{ color: "var(--muted)" }} title="Search term that surfaced this app">
-        {r.source_term}
-      </span>
-      {r.was_new && (
-        <span className="t-xs w-strong" style={{ color: "var(--up)" }}>
-          New
-        </span>
-      )}
-      <TriageState triage={r.triage} />
-      {scored && (
-        <Link href={`/gems/${r.kept_advertiser_id}`} title={`GemScore ${Math.round(r.gem_score!)} / 100`} style={{ textDecoration: "none" }}>
-          <ScoreBadge score={r.gem_score!} variant="card" />
-        </Link>
-      )}
+        {r.page != null && (
+          <span className="t-xs nums" style={{ color: "var(--muted)" }} title="Ad Library page this app was found on">
+            p{r.page}
+          </span>
+        )}
+        {r.was_new && (
+          <span className="t-xs w-strong" style={{ color: "var(--up)" }}>
+            New
+          </span>
+        )}
+        <TriageState triage={r.triage} />
+      </div>
     </div>
   );
 }
@@ -137,7 +217,15 @@ function ResultRow({ result: r }: { result: HuntResult }) {
  * off-target rows collapse into an "Off target (N)" group at the bottom, each
  * keeping the same row markup plus a muted reason line.
  */
-export function RoundBlock({ round, results }: { round: HuntRound; results: HuntResult[] }) {
+export function RoundBlock({
+  round,
+  results,
+  userEmail,
+}: {
+  round: HuntRound;
+  results: HuntResult[];
+  userEmail: string | null;
+}) {
   const p = round.progress;
   const events = latestEvents(round);
 
@@ -210,9 +298,9 @@ export function RoundBlock({ round, results }: { round: HuntRound; results: Hunt
       )}
 
       {onTarget.length > 0 && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 10 }}>
           {onTarget.map((r) => (
-            <ResultRow key={r.id} result={r} />
+            <ResultCard key={r.id} result={r} userEmail={userEmail} />
           ))}
         </div>
       )}
@@ -222,10 +310,10 @@ export function RoundBlock({ round, results }: { round: HuntRound; results: Hunt
           <summary className="t-xs w-strong" style={{ color: "var(--muted)", cursor: "pointer", padding: "6px 0" }}>
             Off target ({offTarget.length})
           </summary>
-          <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 10 }}>
             {offTarget.map((r) => (
               <div key={r.id}>
-                <ResultRow result={r} />
+                <ResultCard result={r} userEmail={userEmail} />
                 {r.relevance_note && (
                   <p className="t-xs" style={{ color: "var(--muted)", margin: "2px 0 0" }}>
                     {r.relevance_note}

@@ -16,15 +16,15 @@ const MAX_TERM_LEN = 80;
 
 /** Server defaults for the round-scrape knobs — a key equal to its default is
  *  omitted from `formatSettings` (it adds no information over the baseline). */
-const DEFAULT_SETTINGS = { page_cap: 40, patience: 3, listing_pages: 10 } as const;
+const DEFAULT_SETTINGS = { page_cap: 40, patience: 6, listing_pages: 10, min_pages: 10 } as const;
 
 const norm = (s: string): string => s.trim().toLowerCase();
 const isString = (v: unknown): v is string => typeof v === "string";
 
 /** Extract the optional settings object from a raw proposal blob. Returns a
- *  fresh {page_cap?, patience?, listing_pages?} with only the numeric keys the
- *  server writes, or undefined when there is nothing to carry (empty / absent /
- *  malformed). Values are trusted as-is — the server has already clamped them. */
+ *  fresh {page_cap?, patience?, listing_pages?, min_pages?} with only the numeric
+ *  keys the server writes, or undefined when there is nothing to carry (empty /
+ *  absent / malformed). Values are trusted as-is — the server has already clamped them. */
 function parseSettings(raw: unknown): HuntSettings | undefined {
   if (raw === null || typeof raw !== "object") return undefined;
   const s = raw as Record<string, unknown>;
@@ -32,15 +32,16 @@ function parseSettings(raw: unknown): HuntSettings | undefined {
   if (typeof s.page_cap === "number") out.page_cap = s.page_cap;
   if (typeof s.patience === "number") out.patience = s.patience;
   if (typeof s.listing_pages === "number") out.listing_pages = s.listing_pages;
+  if (typeof s.min_pages === "number") out.min_pages = s.min_pages;
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
 /**
  * Render a round's scrape settings as a compact, plain status fragment —
- * "depth 40 · patience 8 · listing 20" — showing ONLY the keys that differ from
- * the server defaults (page_cap 40 / patience 3 / listing_pages 10). Returns ""
- * when settings is undefined/empty or every key is at its default, so callers can
- * append it conditionally. Out-of-range values are shown verbatim (already clamped).
+ * "depth 40 · patience 8 · listing 20 · min 4" — showing ONLY the keys that differ
+ * from the server defaults (page_cap 40 / patience 6 / listing_pages 10 / min_pages
+ * 10). Returns "" when settings is undefined/empty or every key is at its default, so
+ * callers can append it conditionally. Out-of-range values are shown verbatim (already clamped).
  */
 export function formatSettings(settings: HuntSettings | undefined): string {
   if (!settings) return "";
@@ -53,6 +54,9 @@ export function formatSettings(settings: HuntSettings | undefined): string {
   }
   if (settings.listing_pages != null && settings.listing_pages !== DEFAULT_SETTINGS.listing_pages) {
     parts.push(`listing ${settings.listing_pages}`);
+  }
+  if (settings.min_pages != null && settings.min_pages !== DEFAULT_SETTINGS.min_pages) {
+    parts.push(`min ${settings.min_pages}`);
   }
   return parts.join(" · ");
 }

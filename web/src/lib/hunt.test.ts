@@ -15,11 +15,11 @@ import { parseProposal, editTerms, huntIsActive, latestEvents, formatSettings, s
 import type { HuntResult } from "./api.ts";
 
 // --- formatSettings ----------------------------------------------------------
-// Server defaults are page_cap 40 / patience 3 / listing_pages 10; formatSettings
-// shows only keys that differ from those, labelled depth/patience/listing.
+// Server defaults are page_cap 40 / patience 6 / listing_pages 10 / min_pages 10;
+// formatSettings shows only keys that differ, labelled depth/patience/listing/min.
 
 test("formatSettings hides keys equal to the defaults", () => {
-  assert.equal(formatSettings({ page_cap: 40, patience: 3, listing_pages: 10 }), "");
+  assert.equal(formatSettings({ page_cap: 40, patience: 6, listing_pages: 10, min_pages: 10 }), "");
 });
 
 test("formatSettings is empty for an empty object or undefined", () => {
@@ -32,16 +32,28 @@ test("formatSettings shows a single non-default override", () => {
   assert.equal(formatSettings({ page_cap: 40, patience: 8, listing_pages: 10 }), "patience 8");
 });
 
-test("formatSettings shows all three non-default keys in depth·patience·listing order", () => {
+test("formatSettings shows all four non-default keys in depth·patience·listing·min order", () => {
   assert.equal(
-    formatSettings({ page_cap: 50, patience: 8, listing_pages: 20 }),
-    "depth 50 · patience 8 · listing 20",
+    formatSettings({ page_cap: 50, patience: 8, listing_pages: 20, min_pages: 4 }),
+    "depth 50 · patience 8 · listing 20 · min 4",
   );
+});
+
+test("formatSettings hides min_pages at its default (10) and shows an override", () => {
+  assert.equal(formatSettings({ min_pages: 10 }), "");
+  assert.equal(formatSettings({ min_pages: 3 }), "min 3");
 });
 
 test("formatSettings shows out-of-range values as-is (server already clamped)", () => {
   assert.equal(formatSettings({ page_cap: 200 }), "depth 200");
   assert.equal(formatSettings({ patience: 99, listing_pages: 99 }), "patience 99 · listing 99");
+});
+
+test("parseProposal passes min_pages through in settings", () => {
+  assert.deepEqual(
+    parseProposal({ terms: ["a"], competitor_apps: [], settings: { min_pages: 4 } }),
+    { terms: ["a"], competitor_apps: [], settings: { min_pages: 4 } },
+  );
 });
 
 // --- parseProposal -----------------------------------------------------------

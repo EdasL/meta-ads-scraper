@@ -250,6 +250,8 @@ export interface HuntSettings {
   page_cap?: number;
   patience?: number;
   listing_pages?: number;
+  /** Pages to read per term before the dry early-exit may fire (1-30). */
+  min_pages?: number;
 }
 
 /** The assistant's structured suggestion. Stored jsonb carries the two term
@@ -319,6 +321,16 @@ export interface HuntResult {
   triage: "pending" | "kept" | "vetoed";
   kept_advertiser_id: number | null;
   gem_score: number | null;
+  /** SERP page this app was first found on this round; null on pre-158 rows. */
+  page: number | null;
+  app_name: string | null;
+  icon_url: string | null;
+  tagline: string | null;
+  cohort: string | null;
+  /** True when the signed-in user already saved this advertiser. */
+  saved: boolean;
+  /** The signed-in user's rating for this advertiser, null when unrated. */
+  rating: "like" | "neutral" | "dislike" | null;
   /** Peon's on-target judgement against the round's intent: "relevant" or
    *  "off_target", or null when the round carried no intent (nothing to judge). */
   relevance: "relevant" | "off_target" | null;

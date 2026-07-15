@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { useSession } from "next-auth/react";
 import { IconPlus } from "@tabler/icons-react";
 import { Button } from "@/components/ui";
 import { huntIsActive } from "@/lib/hunt";
@@ -34,6 +35,8 @@ function fmtDate(iso: string): string {
 }
 
 export function HuntView() {
+  const { data: session } = useSession();
+  const userEmail = session?.user?.email ?? null;
   const [hunts, setHunts] = useState<HuntSummary[]>([]);
   const [activeId, setActiveId] = useState<number | null>(null);
   const [thread, setThread] = useState<HuntThread | null>(null);
@@ -384,12 +387,12 @@ export function HuntView() {
                 />
               )}
               {(roundsByMsg.map.get(m.id) ?? []).map((r) => (
-                <RoundBlock key={r.id} round={r} results={resultsFor(r.id)} />
+                <RoundBlock key={r.id} round={r} results={resultsFor(r.id)} userEmail={userEmail} />
               ))}
             </div>
           ))}
           {roundsByMsg.orphans.map((r) => (
-            <RoundBlock key={r.id} round={r} results={resultsFor(r.id)} />
+            <RoundBlock key={r.id} round={r} results={resultsFor(r.id)} userEmail={userEmail} />
           ))}
           {pendingHere != null && (
             <MessageBubble message={{ id: -1, role: "user", content: pendingHere, proposal: null, tool_log: null, created_at: "" }} />
@@ -455,22 +458,28 @@ function PeonWorking() {
 function MessageBubble({ message }: { message: HuntMessage }) {
   const isUser = message.role === "user";
   const toolLog = Array.isArray(message.tool_log) ? message.tool_log : [];
+  const hasText = message.content.trim() !== "";
+  // A proposal-only assistant turn (no reply text) shows just the Peon label and
+  // its card — never an empty bordered box. An empty user bubble renders nothing.
+  if (!hasText && toolLog.length === 0 && isUser) return null;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 4, alignItems: isUser ? "flex-end" : "flex-start" }}>
       {!isUser && <span className="eyebrow">Peon</span>}
-      <div
-        className="t-sm"
-        style={{
-          maxWidth: "82%",
-          whiteSpace: "pre-wrap",
-          border: "1.5px solid var(--ink)",
-          background: isUser ? "var(--surface-3)" : "var(--surface-2)",
-          color: "var(--ink)",
-          padding: "10px 12px",
-        }}
-      >
-        {message.content}
-      </div>
+      {hasText && (
+        <div
+          className="t-sm"
+          style={{
+            maxWidth: "82%",
+            whiteSpace: "pre-wrap",
+            border: "1.5px solid var(--ink)",
+            background: isUser ? "var(--surface-3)" : "var(--surface-2)",
+            color: "var(--ink)",
+            padding: "10px 12px",
+          }}
+        >
+          {message.content}
+        </div>
+      )}
       {toolLog.length > 0 && (
         <div className="t-xs font-mono" style={{ maxWidth: "82%", color: "var(--muted)" }}>
           {toolLog.join(" · ")}
