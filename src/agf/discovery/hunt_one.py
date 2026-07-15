@@ -106,8 +106,11 @@ def _notify_completed(round_id: int, http_client) -> bool:
     try:
         resp = http_client.post(
             f"{base}/api/internal/hunts/rounds/{round_id}/completed",
+            # 150s > the API's worst-case successful turn (90s Gemini budget +
+            # 15s write) — a read timeout under a still-succeeding turn would
+            # write the canned fallback ON TOP of Peon's committed message.
             headers={"Authorization": f"Bearer {token}"},
-            timeout=120)
+            timeout=150)
         if resp.status_code != 200:
             log.warning("completion hook returned %d for round %d",
                         resp.status_code, round_id)

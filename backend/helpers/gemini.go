@@ -669,7 +669,7 @@ func (h *GeminiHelper) generateWithRetry(ctx context.Context, model string, cont
 	return nil, fmt.Errorf("gemini API error after %d retries: %w", maxRetries, err)
 }
 
-// settingsSchema declares the three optional integer knobs with their bounds in
+// settingsSchema declares the four optional integer knobs with their bounds in
 // the descriptions (the server still clamps).
 func settingsSchema() *genai.Schema {
 	return &genai.Schema{

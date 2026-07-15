@@ -244,8 +244,9 @@ export interface HuntSummary {
 }
 
 /** Optional per-round scrape-tuning knobs (backend clamps each on write:
- *  page_cap 1-100, patience 1-10, listing_pages 1-30). Absent keys fall back to
- *  the server defaults (40 / 3 / 10). The wire shape is this object or `{}`. */
+ *  page_cap 1-100, patience 1-10, listing_pages 1-30, min_pages 1-30). Absent
+ *  keys fall back to the server defaults (40 / 6 / 10 / 10). The wire shape is
+ *  this object or `{}`. */
 export interface HuntSettings {
   page_cap?: number;
   patience?: number;
