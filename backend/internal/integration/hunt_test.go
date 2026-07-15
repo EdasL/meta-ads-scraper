@@ -301,6 +301,99 @@ func TestHuntGetReturnsToolLog(t *testing.T) {
 	require.Equal(t, []string{"checked round 1's report", "looked at round 1's results"}, log)
 }
 
+// TestHuntResultsCarryAppAndUserState verifies the read aggregate joins each
+// kept result with the caller's saved/rating state and the SERP page depth, and
+// that another user's saved row never leaks. Advertiser A is saved+rated by the
+// owner; advertiser B is saved only by a DIFFERENT user. The Discover matview is
+// not refreshed in tests, so app_name/icon_url/tagline/cohort come back null —
+// the LEFT JOIN must be null-safe (no scan error), which the presence of the two
+// rows proves.
+func TestHuntResultsCarryAppAndUserState(t *testing.T) {
+	r := router()
+	huntID := seedHunt(t, authedEmail, "app-state hunt")
+
+	var advA, advB int
+	require.NoError(t, db.DB().Raw(
+		`INSERT INTO public.advertisers (page_id, page_name) VALUES ('HUNTA','Kept Co A') RETURNING id`).Scan(&advA).Error)
+	require.NoError(t, db.DB().Raw(
+		`INSERT INTO public.advertisers (page_id, page_name) VALUES ('HUNTB','Kept Co B') RETURNING id`).Scan(&advB).Error)
+
+	// Owner saves + rates advertiser A.
+	require.NoError(t, db.DB().Exec(
+		`INSERT INTO frontend.saved_gems (user_email, advertiser_id, gem_score) VALUES (?, ?, 0)`,
+		authedEmail, advA).Error)
+	require.NoError(t, db.DB().Exec(
+		`INSERT INTO frontend.app_ratings (user_email, advertiser_id, rating) VALUES (?, ?, 'like')`,
+		authedEmail, advA).Error)
+	// A DIFFERENT user saves advertiser B — the owner must see it as NOT saved.
+	require.NoError(t, db.DB().Exec(
+		`INSERT INTO frontend.saved_gems (user_email, advertiser_id, gem_score) VALUES (?, ?, 0)`,
+		huntForeignEmail, advB).Error)
+
+	t.Cleanup(func() {
+		require.NoError(t, db.DB().Exec(`DELETE FROM frontend.saved_gems WHERE advertiser_id IN (?, ?)`, advA, advB).Error)
+		require.NoError(t, db.DB().Exec(`DELETE FROM frontend.app_ratings WHERE advertiser_id IN (?, ?)`, advA, advB).Error)
+		require.NoError(t, db.DB().Exec(`DELETE FROM public.advertisers WHERE id IN (?, ?)`, advA, advB).Error)
+	})
+
+	// One round, two kept results: A first found on SERP page 4, B on page 2.
+	var roundID int
+	require.NoError(t, db.DB().Raw(
+		`INSERT INTO frontend.hunt_rounds (hunt_id, terms, competitor_apps)
+		 VALUES (?, '["sleep stories app"]'::jsonb, '[]'::jsonb) RETURNING id`,
+		huntID).Scan(&roundID).Error)
+	require.NoError(t, db.DB().Exec(
+		`INSERT INTO frontend.hunt_results
+		 (round_id, page_id, page_name, store, store_id, source_term, was_new, triage, kept_advertiser_id, page)
+		 VALUES (?, 'PGA', 'Kept Co A', 'play', 'com.a', 'sleep stories app', true, 'kept', ?, 4),
+		        (?, 'PGB', 'Kept Co B', 'play', 'com.b', 'sleep stories app', true, 'kept', ?, 2)`,
+		roundID, advA, roundID, advB).Error)
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, authed(httptest.NewRequest(http.MethodGet, "/api/hunts/"+strconv.Itoa(huntID), nil)))
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp struct {
+		Results []struct {
+			KeptAdvertiserID *int    `json:"kept_advertiser_id"`
+			Page             *int    `json:"page"`
+			AppName          *string `json:"app_name"`
+			IconURL          *string `json:"icon_url"`
+			Tagline          *string `json:"tagline"`
+			Cohort           *string `json:"cohort"`
+			Saved            bool    `json:"saved"`
+			Rating           *string `json:"rating"`
+		} `json:"results"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Len(t, resp.Results, 2)
+
+	byAdv := map[int]int{} // advertiser_id → index into resp.Results
+	for i, res := range resp.Results {
+		require.NotNil(t, res.KeptAdvertiserID)
+		byAdv[*res.KeptAdvertiserID] = i
+		// The matview is not refreshed in tests → all app fields are null, and
+		// the LEFT JOIN must not error on the null (both rows present proves it).
+		require.Nil(t, res.AppName, "app_name null until the matview carries it")
+		require.Nil(t, res.IconURL)
+		require.Nil(t, res.Tagline)
+		require.Nil(t, res.Cohort)
+	}
+
+	a := resp.Results[byAdv[advA]]
+	require.NotNil(t, a.Page)
+	require.Equal(t, 4, *a.Page, "advertiser A found on page 4")
+	require.True(t, a.Saved, "owner saved advertiser A")
+	require.NotNil(t, a.Rating)
+	require.Equal(t, "like", *a.Rating, "owner rated advertiser A a like")
+
+	b := resp.Results[byAdv[advB]]
+	require.NotNil(t, b.Page)
+	require.Equal(t, 2, *b.Page, "advertiser B found on page 2")
+	require.False(t, b.Saved, "another user's save must not leak into the owner's view")
+	require.Nil(t, b.Rating, "advertiser B has no rating from the owner")
+}
+
 func TestHuntStartRoundNullMessageID(t *testing.T) {
 	t.Setenv(middlewares.APITokenEnv, writeToken)
 	r := router()

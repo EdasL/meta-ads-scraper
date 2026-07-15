@@ -71,6 +71,17 @@ type HuntResultRow struct {
 	Relevance        *string  `json:"relevance" gorm:"column:relevance"`
 	RelevanceNote    *string  `json:"relevance_note" gorm:"column:relevance_note"`
 	GemScore         *float64 `json:"gem_score" gorm:"column:gem_score"`
+	// Page is the SERP page the result was first found on (Task 1). App fields
+	// come from the Discover matview (null until it carries the advertiser);
+	// Saved/Rating are the CALLER's own state, email-scoped so no other user's
+	// saves leak. All nil on the tool-facing RoundResults read (not selected).
+	Page    *int    `json:"page" gorm:"column:page"`
+	AppName *string `json:"app_name" gorm:"column:app_name"`
+	IconURL *string `json:"icon_url" gorm:"column:icon_url"`
+	Tagline *string `json:"tagline" gorm:"column:tagline"`
+	Cohort  *string `json:"cohort" gorm:"column:cohort"`
+	Saved   bool    `json:"saved" gorm:"column:saved"`
+	Rating  *string `json:"rating" gorm:"column:rating"`
 }
 
 // HuntRoundSummary is the compact per-round context handed to Gemini so it can

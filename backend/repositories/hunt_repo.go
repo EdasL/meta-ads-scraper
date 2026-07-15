@@ -115,22 +115,33 @@ func ListHuntRounds(ctx context.Context, g *gorm.DB, huntID int) ([]models.HuntR
 	return rows, err
 }
 
-// ListHuntResults returns every result across a hunt's rounds, joining the kept
-// advertiser's GemScore (null-safe) at read time.
-func ListHuntResults(ctx context.Context, g *gorm.DB, huntID int) ([]models.HuntResultRow, error) {
+// ListHuntResults returns every result across a hunt's rounds, joined at read
+// time with the kept advertiser's GemScore, its Discover-feed app data
+// (icon/tagline/cohort; null until the matview carries it), the SERP page depth,
+// and the CALLER's saved/rating state (email-scoped — another user's saves never
+// leak).
+func ListHuntResults(ctx context.Context, g *gorm.DB, huntID int, email string) ([]models.HuntResultRow, error) {
 	var rows []models.HuntResultRow
 	err := db.WithReadTx(ctx, g, func(tx *gorm.DB) error {
 		return tx.Raw(
 			`SELECT hr.id, hr.round_id, hr.page_id, hr.page_name, hr.store, hr.store_id,
 			        hr.link_url, hr.source_term, hr.was_new, hr.triage, hr.kept_advertiser_id,
-			        hr.relevance, hr.relevance_note,
-			        s.gem_score
+			        hr.relevance, hr.relevance_note, hr.page,
+			        s.gem_score,
+			        esa.app_name, esa.icon_url, esa.tagline, esa.cohort,
+			        (sg.advertiser_id IS NOT NULL) AS saved,
+			        ar.rating
 			 FROM frontend.hunt_results hr
 			 JOIN frontend.hunt_rounds r ON r.id = hr.round_id
 			 LEFT JOIN adtech.advertiser_scores s ON s.advertiser_id = hr.kept_advertiser_id
+			 LEFT JOIN frontend.emerging_scaling_apps esa ON esa.advertiser_id = hr.kept_advertiser_id
+			 LEFT JOIN frontend.saved_gems sg
+			        ON sg.advertiser_id = hr.kept_advertiser_id AND lower(sg.user_email) = lower(?)
+			 LEFT JOIN frontend.app_ratings ar
+			        ON ar.advertiser_id = hr.kept_advertiser_id AND lower(ar.user_email) = lower(?)
 			 WHERE r.hunt_id = ?
 			 ORDER BY hr.id`,
-			huntID,
+			email, email, huntID,
 		).Scan(&rows).Error
 	})
 	return rows, err

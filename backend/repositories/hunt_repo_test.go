@@ -273,7 +273,7 @@ func TestListHuntResultsJoinsGemScore(t *testing.T) {
 		VALUES (?, 'PG2', 'Pending Co', 'appstore', '999', 'sleep stories app', false, 'pending')`,
 		roundID).Error)
 
-	results, err := repositories.ListHuntResults(ctx, g, huntID)
+	results, err := repositories.ListHuntResults(ctx, g, huntID, huntTestEmail)
 	require.NoError(t, err)
 	require.Len(t, results, 2)
 

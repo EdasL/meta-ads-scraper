@@ -501,7 +501,7 @@ func (c *HuntController) Get(ctx *gin.Context) {
 		helpers.Detail(ctx, http.StatusInternalServerError, "something went wrong.")
 		return
 	}
-	results, err := repositories.ListHuntResults(rctx, db.DB(), huntID)
+	results, err := repositories.ListHuntResults(rctx, db.DB(), huntID, email)
 	if err != nil {
 		helpers.Detail(ctx, http.StatusInternalServerError, "something went wrong.")
 		return
