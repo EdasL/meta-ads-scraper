@@ -111,9 +111,13 @@ func TestPreferenceQueueServeTime(t *testing.T) {
 		ON CONFLICT (user_email, advertiser_id) DO UPDATE SET rating = 'dislike'`,
 		email, ids[5]).Error)
 
-	// limit 12 > the 10 unrated candidates → every candidate is served, so the
-	// assertions below are deterministic (no vacuous skips).
-	rows, err := repositories.PreferenceQueue(context.Background(), g, email, 12, nil)
+	// Limit = the whole matview pool: the shared test DB can hold matview rows
+	// committed by other tests (a fixed 12 let those crowd the low-ranked
+	// off-taste sentinel out of the queue), so size the limit to serve every
+	// unrated candidate and keep the assertions deterministic.
+	var poolN int
+	must(g.Raw(`SELECT count(*) FROM frontend.emerging_scaling_apps`).Scan(&poolN).Error)
+	rows, err := repositories.PreferenceQueue(context.Background(), g, email, poolN+12, nil)
 	require.NoError(t, err)
 	require.NotEmpty(t, rows)
 
