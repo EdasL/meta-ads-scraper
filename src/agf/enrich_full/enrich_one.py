@@ -155,7 +155,7 @@ def run_job(engine, *, advertiser_id, job_id, enrich_call, score_call,
             set_status(engine, job_id, "error", error_text=str(e)[:500],
                        finished=True, status_table=status_table)
         except Exception:
-            pass  # best-effort; the Go stale-guard (180s) is the backstop
+            pass  # best-effort; the Go stale-guard (540s) is the backstop
         raise
 
 
@@ -165,7 +165,7 @@ def main(argv=None):
     ap.add_argument("--job-id", type=int, required=True)
     ap.add_argument("--top-n", type=int, default=5)
     ap.add_argument("--media-cap", type=int, default=120)
-    ap.add_argument("--timeout", type=int, default=180)
+    ap.add_argument("--timeout", type=int, default=300)
     ap.add_argument("--status-table", default="enrich_jobs",
                     choices=tuple(_STATUS_TABLES))
     ap.add_argument("--mark-crawled", action="store_true", default=False)

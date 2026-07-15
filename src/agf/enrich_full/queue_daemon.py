@@ -32,7 +32,10 @@ QUEUED_MAX_AGE_SEC = 120
 
 # Wall-clock bound for one enrich_one subprocess. The CLI's own SIGALRM fires
 # at AGF_ENRICH_ONE_TIMEOUT_SEC; this is the grace-padded hard kill.
-ENRICH_ONE_TIMEOUT_SEC = int(os.environ.get("AGF_ENRICH_ONE_TIMEOUT_SEC", "180"))
+# 300s (was 180): matches pipeline_daemon — post-hunt healthy p95 hit 172.5s.
+# The Go stale-guard (enrichTimeout=540s) covers pickup 120 + this 300 + kill
+# grace 60 + margin; keep that inequality when touching either side.
+ENRICH_ONE_TIMEOUT_SEC = int(os.environ.get("AGF_ENRICH_ONE_TIMEOUT_SEC", "300"))
 
 POLL_SEC = float(os.environ.get("AGF_ENRICH_POLL_SEC", "5"))
 

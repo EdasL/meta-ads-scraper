@@ -16,8 +16,9 @@ import (
 // enrichTimeout bounds how long a non-terminal row is trusted before the
 // status endpoint reports it as failed. Budget: queue pickup by the worker-VM
 // daemon (QUEUED_MAX_AGE_SEC=120 in agf/enrich_full/queue_daemon.py) + the
-// enrich_one run itself (--timeout 180) + margin.
-const enrichTimeout = 360 * time.Second
+// enrich_one run itself (--timeout 300) + its subprocess hard-kill grace (60)
+// + margin.
+const enrichTimeout = 540 * time.Second
 
 type EnrichController struct{}
 

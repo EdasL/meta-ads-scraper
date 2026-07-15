@@ -26,7 +26,11 @@ log = logging.getLogger("agf.pipeline")
 
 # Wall-clock bound for one enrich_one subprocess. The CLI's own SIGALRM fires at
 # AGF_ENRICH_ONE_TIMEOUT_SEC; the subprocess timeout is the grace-padded hard kill.
-ENRICH_ONE_TIMEOUT_SEC = int(os.environ.get("AGF_ENRICH_ONE_TIMEOUT_SEC", "180"))
+# 300s (was 180): post-hunt the healthy p95 hit 172.5s — hunt advertisers carry
+# more off-store ads, so more funnel probes per job. The dead-funnel breaker in
+# run_enrich is the fix for the pathological case; this is legitimate headroom.
+# Must stay under the Go API's 360s stale-guard (enrich_controller.go).
+ENRICH_ONE_TIMEOUT_SEC = int(os.environ.get("AGF_ENRICH_ONE_TIMEOUT_SEC", "300"))
 
 POLL_SEC = float(os.environ.get("AGF_PIPELINE_POLL_SEC", "5"))
 

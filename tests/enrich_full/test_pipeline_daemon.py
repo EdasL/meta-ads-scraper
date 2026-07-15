@@ -72,7 +72,7 @@ def test_process_once_runner_raises_marks_error(engine):
     # row stuck 'running'
     assert _status(engine, A1) == "error"
     # ... AND must mark the crawl_log so the TTL applies — an OUTER-killed
-    # subprocess (240s hard kill, advertiser 10173 hot-loop 2026-07-11) never
+    # subprocess (timeout+60 hard kill, advertiser 10173 hot-loop 2026-07-11) never
     # reaches enrich_one's own error-path marker, and without this row claim_due
     # sorts the advertiser never-crawled-first and re-enqueues it every tick.
     with engine.connect() as conn:
@@ -88,3 +88,13 @@ def test_process_once_runner_raises_marks_error(engine):
 
 def test_process_once_empty_queue_returns_false(engine):
     assert process_once(engine, runner=lambda a, j: None) is False
+
+
+def test_enrich_deadline_default_is_300():
+    # 300s deadline (2026-07-15): hunt-era healthy jobs run p95 172.5s — the old
+    # 180s wall killed borderline-legitimate enrichments. Env-less default; the
+    # derived lease (+120) must keep outlasting the subprocess hard kill (+60).
+    from agf.enrich_full import pipeline_daemon, queue_daemon
+    assert pipeline_daemon.ENRICH_ONE_TIMEOUT_SEC == 300
+    assert queue_daemon.ENRICH_ONE_TIMEOUT_SEC == 300
+    assert pipeline_daemon.LEASE_SEC == pipeline_daemon.ENRICH_ONE_TIMEOUT_SEC + 120
