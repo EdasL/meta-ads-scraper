@@ -426,10 +426,25 @@ func TestHuntStartRoundValidation(t *testing.T) {
 	w = postRounds(t, r, huntID, `{"terms":`+string(tj)+`,"competitor_apps":[]}`)
 	require.Equal(t, http.StatusUnprocessableEntity, w.Code, "16 terms rejected")
 
-	// 4 competitors → 422.
+	// 11 competitors → 422 (one over the cap of 10).
+	over := make([]string, 11)
+	for i := range over {
+		over[i] = "brand " + strconv.Itoa(i)
+	}
+	oj, _ := json.Marshal(over)
 	w = postRounds(t, r, huntID,
-		`{"terms":["sleep stories app"],"competitor_apps":["A","B","C","D"]}`)
-	require.Equal(t, http.StatusUnprocessableEntity, w.Code, "4 competitors rejected")
+		`{"terms":["sleep stories app"],"competitor_apps":`+string(oj)+`}`)
+	require.Equal(t, http.StatusUnprocessableEntity, w.Code, "11 competitors rejected")
+
+	// 10 competitors → accepted (at the cap).
+	atCap := make([]string, 10)
+	for i := range atCap {
+		atCap[i] = "brand " + strconv.Itoa(i)
+	}
+	aj, _ := json.Marshal(atCap)
+	w = postRounds(t, r, huntID,
+		`{"terms":["sleep stories app"],"competitor_apps":`+string(aj)+`}`)
+	require.Equal(t, http.StatusAccepted, w.Code, "10 competitors accepted")
 }
 
 func TestHuntForeignEmail404(t *testing.T) {
