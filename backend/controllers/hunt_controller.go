@@ -143,6 +143,23 @@ func (c *HuntController) List(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, rows)
 }
 
+// Delete handles DELETE /api/hunts/:hunt_id — removes an owned thread and its
+// messages, rounds, and results (cascade). 404s on a foreign or missing hunt via
+// requireOwner, so it can never delete another user's hunt.
+func (c *HuntController) Delete(ctx *gin.Context) {
+	huntID, _, ok := c.requireOwner(ctx)
+	if !ok {
+		return
+	}
+	rctx, cancel := reqCtx(ctx)
+	defer cancel()
+	if err := repositories.DeleteHunt(rctx, db.DB(), huntID); err != nil {
+		helpers.Detail(ctx, http.StatusInternalServerError, "could not delete hunt.")
+		return
+	}
+	ctx.Status(http.StatusNoContent)
+}
+
 // huntCardState is the founder's live proposal card — the terms/competitors the
 // chips currently show, which may differ from the last proposal if they edited.
 type huntCardState struct {

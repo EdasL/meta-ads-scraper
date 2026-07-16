@@ -74,6 +74,7 @@ func Init(r *gin.Engine) {
 		api.GET("/hunts", hunt.List)
 		api.POST("/hunts", middlewares.RequireToken(), hunt.Create)
 		api.GET("/hunts/:hunt_id", hunt.Get)
+		api.DELETE("/hunts/:hunt_id", middlewares.RequireToken(), hunt.Delete)
 		api.POST("/hunts/:hunt_id/messages", middlewares.RequireToken(), hunt.Message)
 		api.POST("/hunts/:hunt_id/rounds", middlewares.RequireToken(), hunt.StartRound)
 		api.GET("/health/metrics", health.Metrics)

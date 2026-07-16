@@ -129,6 +129,21 @@ def compose_round_message(round_id: int, status: str, counts: dict, error=None) 
     return f"{base}, {off} off target." if off else f"{base}."
 
 
+def assistant_message_since_finish(conn, round_id: int) -> bool:
+    """True when an assistant message already landed at/after this round finished
+    — i.e. the API's completion hook wrote Peon's wrap-up (even if its HTTP
+    response was lost in transit). The daemon checks this before writing its
+    canned fallback so the two writers can't double-message the same round."""
+    row = conn.execute(text(
+        "SELECT EXISTS ("
+        "  SELECT 1 FROM frontend.hunt_messages m "
+        "  JOIN frontend.hunt_rounds r ON r.hunt_id = m.hunt_id "
+        "  WHERE r.id = :r AND m.role = 'assistant' "
+        "    AND r.finished_at IS NOT NULL AND m.created_at >= r.finished_at"
+        ")"), {"r": round_id}).scalar()
+    return bool(row)
+
+
 def insert_round_message(conn, round_id: int, content: str) -> None:
     """One assistant message into the round's hunt thread (non-fatal helper)."""
     conn.execute(text(

@@ -159,3 +159,27 @@ def test_done_path_writes_canned_message_only_when_notify_fails(engine, monkeypa
     assert hunt_one.main(["--round-id", str(rid2), "--job-id", str(jid2)]) == 0
     assert _job_status(engine, rid2) == "done"
     assert _assistant_msg_count(engine, rid2) == 0
+
+
+def test_done_path_skips_fallback_when_hook_wrote_but_response_lost(engine, monkeypatch):
+    """The race the guard closes: the API completion hook DID write Peon's wrap-up
+    but its HTTP response was lost, so the daemon sees False. The canned fallback
+    must be suppressed — exactly one assistant message, not two."""
+    from agf.discovery import hunt_one
+    from agf.db.hunts import insert_round_message
+
+    monkeypatch.setattr(hunt_one, "run_hunt_round", lambda *a, **k: {"found": 0})
+    monkeypatch.setattr(hunt_one, "_build_extractors", lambda k: [])
+
+    rid = _mk_round(engine)
+    jid = _mk_job(engine, rid)
+
+    def _wrote_but_lost_response(round_id, client):
+        with begin(engine) as conn:
+            insert_round_message(conn, round_id, "Peon's real wrap-up.")
+        return False
+
+    monkeypatch.setattr(hunt_one, "_notify_completed", _wrote_but_lost_response)
+    assert hunt_one.main(["--round-id", str(rid), "--job-id", str(jid)]) == 0
+    assert _job_status(engine, rid) == "done"
+    assert _assistant_msg_count(engine, rid) == 1

@@ -2,10 +2,11 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { useSession } from "next-auth/react";
-import { IconPlus } from "@tabler/icons-react";
+import { IconPlus, IconTrash } from "@tabler/icons-react";
 import { Button } from "@/components/ui";
 import { huntIsActive } from "@/lib/hunt";
 import {
+  deleteHunt,
   getHunt,
   getHunts,
   postHunt,
@@ -32,6 +33,43 @@ function statusDot(status: string | null): string {
 function fmtDate(iso: string): string {
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+// The last hunt the founder had open, per account, so a reload returns to it
+// instead of snapping to the top of the list. Keyed by email so two accounts on
+// one browser never restore each other's thread.
+function lastHuntKey(email: string | null): string | null {
+  return email ? `fd:hunt:last:${email}` : null;
+}
+function readLastHunt(email: string | null): number | null {
+  const k = lastHuntKey(email);
+  if (!k || typeof window === "undefined") return null;
+  const n = Number(window.localStorage.getItem(k));
+  return Number.isInteger(n) && n > 0 ? n : null;
+}
+function writeLastHunt(email: string | null, id: number): void {
+  const k = lastHuntKey(email);
+  if (k && typeof window !== "undefined") window.localStorage.setItem(k, String(id));
+}
+
+// A round's wrap-up (Peon's reflection, or the daemon's canned fallback) is
+// written server-side up to ~90s AFTER the round flips to done — polling would
+// otherwise stop the instant it's done and never surface it. True while the
+// most-recently-finished round still has no assistant message after it, within a
+// bounded window so a thread whose message genuinely never comes stops polling.
+const WRAPUP_WAIT_MS = 180_000;
+function wrapupPending(thread: HuntThread, nowMs: number): boolean {
+  let lastFinishMs = -1;
+  for (const r of thread.rounds) {
+    if ((r.status === "done" || r.status === "error") && r.finished_at) {
+      lastFinishMs = Math.max(lastFinishMs, new Date(r.finished_at).getTime());
+    }
+  }
+  if (lastFinishMs < 0 || nowMs - lastFinishMs > WRAPUP_WAIT_MS) return false;
+  const reflected = thread.messages.some(
+    (m) => m.role === "assistant" && new Date(m.created_at).getTime() >= lastFinishMs,
+  );
+  return !reflected;
 }
 
 export function HuntView() {
@@ -81,22 +119,35 @@ export function HuntView() {
     }
   }, []);
 
-  // Initial load: hunt list, and the most recent thread if there is one.
+  // Initial load: hunt list, then open the thread the founder last had open
+  // (restored from localStorage) — or the most-recently-active one when there is
+  // no valid saved id. Reruns when the email resolves; the `cur != null` guard
+  // keeps it from clobbering a thread the founder already opened or created.
   useEffect(() => {
     let cancelled = false;
     getHunts()
       .then((list) => {
         if (cancelled) return;
         setHunts(list);
-        if (list.length > 0) {
-          setActiveId(list[0].id);
-        }
+        if (list.length === 0) return;
+        setActiveId((cur) => {
+          if (cur != null) return cur;
+          const saved = readLastHunt(userEmail);
+          return saved != null && list.some((h) => h.id === saved) ? saved : list[0].id;
+        });
       })
       .catch(() => {});
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [userEmail]);
+
+  // Remember the open thread so a reload returns to it. newHunt() nulls activeId
+  // for the blank composer; don't persist that (a reload then restores the last
+  // real thread, which is the useful default).
+  useEffect(() => {
+    if (activeId != null) writeLastHunt(userEmail, activeId);
+  }, [activeId, userEmail]);
 
   // Load a thread whenever a hunt is selected. Clearing back to the empty
   // "new hunt" state is done by newHunt() (which nulls both), so the effect
@@ -127,9 +178,12 @@ export function HuntView() {
     if (!thread) return;
     const id = thread.hunt.id;
     const active = huntIsActive(thread.rounds);
+    // A round just finished but Peon's async wrap-up hasn't landed — keep the
+    // fast cadence so the reflection surfaces without a manual reload.
+    const awaitingWrapup = !active && wrapupPending(thread, Date.now());
     const awaitingScores =
       !active && thread.results.some((r) => r.triage === "kept" && r.gem_score == null);
-    const period = active ? 2000 : awaitingScores ? 30000 : 0;
+    const period = active || awaitingWrapup ? 2000 : awaitingScores ? 30000 : 0;
     if (period === 0) return;
     timer.current = setInterval(() => {
       loadThread(id);
@@ -292,6 +346,31 @@ export function HuntView() {
     setDraft("");
   }
 
+  // Delete a hunt and everything under it. Confirms first (irreversible), then
+  // drops it from the rail; if it was the one on screen, fall back to the next
+  // most-recent hunt (the rail is activity-sorted) or the blank composer.
+  const removeHunt = useCallback(
+    async (id: number) => {
+      if (typeof window !== "undefined" &&
+          !window.confirm("Delete this hunt and its results? This cannot be undone.")) {
+        return;
+      }
+      try {
+        await deleteHunt(id);
+      } catch {
+        return; // transient — leave the rail as-is so the founder can retry
+      }
+      const remaining = hunts.filter((h) => h.id !== id);
+      setHunts(remaining);
+      if (activeIdRef.current === id) {
+        const fallback = remaining[0]?.id ?? null;
+        setActiveId(fallback);
+        if (fallback == null) setThread(null);
+      }
+    },
+    [hunts],
+  );
+
   return (
     <main style={{ maxWidth: 1100, margin: "0 auto", padding: "24px 22px 80px", display: "flex", gap: 24, alignItems: "flex-start", flexWrap: "wrap" }}>
       {/* Left rail — hunt history */}
@@ -301,36 +380,64 @@ export function HuntView() {
           New hunt
         </Button>
         <div style={{ display: "flex", flexDirection: "column" }}>
+          {/* The delete control sits on top of the selectable row (nested
+              buttons are invalid HTML) and only shows on hover / keyboard focus. */}
+          <style>{`.hunt-row .hunt-del { opacity: 0; }
+                   .hunt-row:hover .hunt-del, .hunt-del:focus-visible { opacity: 1; }`}</style>
           {hunts.map((h) => {
             const active = h.id === activeId;
             return (
-              <button
-                key={h.id}
-                type="button"
-                onClick={() => setActiveId(h.id)}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
-                  textAlign: "left",
-                  width: "100%",
-                  padding: "10px 10px",
-                  border: "none",
-                  borderLeft: active ? "2px solid var(--ink)" : "2px solid transparent",
-                  background: active ? "var(--surface-3)" : "transparent",
-                  cursor: "pointer",
-                }}
-              >
-                <span aria-hidden style={{ width: 7, height: 7, borderRadius: "50%", background: statusDot(h.last_round_status), flex: "0 0 auto" }} />
-                <span style={{ flex: "1 1 auto", minWidth: 0 }}>
-                  <span className="t-sm w-strong" style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--ink)" }}>
-                    {h.title || "Untitled hunt"}
+              <div key={h.id} className="hunt-row" style={{ position: "relative", display: "flex" }}>
+                <button
+                  type="button"
+                  onClick={() => setActiveId(h.id)}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    textAlign: "left",
+                    width: "100%",
+                    padding: "10px 28px 10px 10px",
+                    border: "none",
+                    borderLeft: active ? "2px solid var(--ink)" : "2px solid transparent",
+                    background: active ? "var(--surface-3)" : "transparent",
+                    cursor: "pointer",
+                  }}
+                >
+                  <span aria-hidden style={{ width: 7, height: 7, borderRadius: "50%", background: statusDot(h.last_round_status), flex: "0 0 auto" }} />
+                  <span style={{ flex: "1 1 auto", minWidth: 0 }}>
+                    <span className="t-sm w-strong" style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--ink)" }}>
+                      {h.title || "Untitled hunt"}
+                    </span>
+                    <span className="t-xs nums" style={{ color: "var(--muted)" }}>
+                      {fmtDate(h.last_activity)}
+                    </span>
                   </span>
-                  <span className="t-xs nums" style={{ color: "var(--muted)" }}>
-                    {fmtDate(h.created_at)}
-                  </span>
-                </span>
-              </button>
+                </button>
+                <button
+                  type="button"
+                  className="hunt-del"
+                  aria-label="Delete hunt"
+                  title="Delete hunt"
+                  onClick={() => removeHunt(h.id)}
+                  style={{
+                    position: "absolute",
+                    top: "50%",
+                    right: 6,
+                    transform: "translateY(-50%)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    padding: 4,
+                    border: "none",
+                    background: "transparent",
+                    color: "var(--muted)",
+                    cursor: "pointer",
+                  }}
+                >
+                  <IconTrash size={14} stroke={1.75} />
+                </button>
+              </div>
             );
           })}
         </div>

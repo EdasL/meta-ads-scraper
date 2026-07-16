@@ -235,11 +235,14 @@ export async function completeOnboarding(): Promise<void> {
 // hunt_controller.go); the Go /api group serves these under /hunts. All calls
 // ride the same session-checked `/backend/*` proxy (hunts is allowlisted there).
 
-/** One hunt thread in the list. `last_round_status` is null until a round runs. */
+/** One hunt thread in the list. `last_round_status` is null until a round runs.
+ *  `last_activity` is the newest of the thread's create time, its latest message,
+ *  and its latest round — the list is sorted newest-activity first on it. */
 export interface HuntSummary {
   id: number;
   title: string;
   created_at: string;
+  last_activity: string;
   last_round_status: string | null;
 }
 
@@ -386,6 +389,18 @@ export async function postHuntMessage(
     method: "POST",
     body: JSON.stringify(cardState ? { message, card_state: cardState } : { message }),
   });
+}
+
+/** Delete a hunt thread and everything under it (messages, rounds, results).
+ *  The backend cascades and returns 204; a raw fetch avoids parsing an empty
+ *  body as JSON (which `live` would do). */
+export async function deleteHunt(id: number): Promise<void> {
+  const res = await fetch(`${API_BASE}/hunts/${id}`, {
+    method: "DELETE",
+    cache: "no-store",
+    headers: { "Content-Type": "application/json" },
+  });
+  if (!res.ok) throw new Error(`API ${res.status}: ${res.statusText}`);
 }
 
 /** Enqueue an approved round (202). Returns the newly-queued round row. */

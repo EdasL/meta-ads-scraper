@@ -25,6 +25,14 @@ func CreateHunt(ctx context.Context, g *gorm.DB, email, title string) (int, erro
 	return id, err
 }
 
+// DeleteHunt removes a hunt thread and all of its messages, rounds, and results
+// (ON DELETE CASCADE). The caller must have already verified ownership.
+func DeleteHunt(ctx context.Context, g *gorm.DB, huntID int) error {
+	return db.WithWriteTx(ctx, g, func(tx *gorm.DB) error {
+		return tx.Exec(`DELETE FROM frontend.hunts WHERE id = ?`, huntID).Error
+	})
+}
+
 // HuntOwner returns the owner email for a hunt, or "" when it does not exist.
 func HuntOwner(ctx context.Context, g *gorm.DB, huntID int) (string, error) {
 	var emails []string
@@ -40,18 +48,28 @@ func HuntOwner(ctx context.Context, g *gorm.DB, huntID int) (string, error) {
 	return emails[0], nil
 }
 
-// ListHunts returns the owner's hunts newest-first, each carrying the status of
-// its most recent round (null when it has none yet).
+// ListHunts returns the owner's hunts most-recently-active first, each carrying
+// the status of its most recent round (null when it has none yet) and its
+// last-activity time (the newest of the thread, its messages, and its rounds —
+// so a hunt jumps to the top when Peon replies or a round runs, not just when it
+// was created).
 func ListHunts(ctx context.Context, g *gorm.DB, email string) ([]models.HuntRow, error) {
 	var rows []models.HuntRow
 	err := db.WithReadTx(ctx, g, func(tx *gorm.DB) error {
 		return tx.Raw(
 			`SELECT h.id, h.title, h.created_at,
+			        GREATEST(
+			          h.created_at,
+			          COALESCE((SELECT max(m.created_at) FROM frontend.hunt_messages m
+			                     WHERE m.hunt_id = h.id), h.created_at),
+			          COALESCE((SELECT max(r.created_at) FROM frontend.hunt_rounds r
+			                     WHERE r.hunt_id = h.id), h.created_at)
+			        ) AS last_activity,
 			        (SELECT r.status FROM frontend.hunt_rounds r
 			          WHERE r.hunt_id = h.id ORDER BY r.id DESC LIMIT 1) AS last_round_status
 			 FROM frontend.hunts h
 			 WHERE lower(h.user_email) = lower(?)
-			 ORDER BY h.id DESC`,
+			 ORDER BY last_activity DESC, h.id DESC`,
 			email,
 		).Scan(&rows).Error
 	})

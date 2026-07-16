@@ -10,6 +10,7 @@ from functools import partial
 
 from agf.db.engine import begin, get_engine
 from agf.db.hunts import (
+    assistant_message_since_finish,
     compose_round_message,
     finish_round,
     insert_round_message,
@@ -75,10 +76,15 @@ def main(argv=None) -> int:
         if not _notify_completed(args.round_id, http_client):
             with begin(engine) as conn:
                 try:
-                    counts = round_summary_counts(conn, args.round_id)
-                    insert_round_message(
-                        conn, args.round_id,
-                        compose_round_message(args.round_id, "done", counts))
+                    # The hook returning False can still mean the API wrote Peon's
+                    # wrap-up (a lost/timed-out response); only write the canned
+                    # fallback when no assistant message landed, so a round is
+                    # never silent AND never double-messaged.
+                    if not assistant_message_since_finish(conn, args.round_id):
+                        counts = round_summary_counts(conn, args.round_id)
+                        insert_round_message(
+                            conn, args.round_id,
+                            compose_round_message(args.round_id, "done", counts))
                 except Exception:  # message is a convenience; the round row is the truth
                     log.exception("round completion message failed")
         log.info("hunt round %d done: %s", args.round_id, stats)

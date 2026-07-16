@@ -46,26 +46,27 @@ func TestCreateHuntAndListHunts(t *testing.T) {
 	hunts, err := repositories.ListHunts(ctx, g, huntTestEmail)
 	require.NoError(t, err)
 	require.Len(t, hunts, 2)
-	// Ordered by id DESC (newest first).
+	// No activity yet → ordered by create time (newest first): id2 leads.
 	require.Equal(t, id2, hunts[0].ID)
 	require.Equal(t, "budgeting apps", hunts[0].Title)
 	require.Equal(t, id1, hunts[1].ID)
-	// No rounds yet → LastRoundStatus is null.
+	// No rounds yet → LastRoundStatus is null; LastActivity falls back to create.
 	require.Nil(t, hunts[0].LastRoundStatus)
+	require.False(t, hunts[0].LastActivity.IsZero())
 
-	// A round on id1 populates its LastRoundStatus.
+	// A round on the OLDER hunt (id1) is fresh activity — it must jump to the top
+	// of the list even though id2 was created later, and carry its round status.
 	terms, _ := json.Marshal([]string{"sleep stories app"})
 	comps, _ := json.Marshal([]string{})
 	_, err = repositories.InsertHuntRound(ctx, g, id1, nil, terms, comps, nil, nil)
 	require.NoError(t, err)
 	hunts, err = repositories.ListHunts(ctx, g, huntTestEmail)
 	require.NoError(t, err)
-	for _, h := range hunts {
-		if h.ID == id1 {
-			require.NotNil(t, h.LastRoundStatus)
-			require.Equal(t, "queued", *h.LastRoundStatus)
-		}
-	}
+	require.Equal(t, id1, hunts[0].ID, "hunt with the newest round sorts first")
+	require.NotNil(t, hunts[0].LastRoundStatus)
+	require.Equal(t, "queued", *hunts[0].LastRoundStatus)
+	require.True(t, hunts[0].LastActivity.After(hunts[1].LastActivity),
+		"the active hunt's last_activity is newer than the idle one's")
 }
 
 func TestHuntOwner(t *testing.T) {
@@ -555,4 +556,58 @@ func TestRoundResultsTriageFilterAndLimit(t *testing.T) {
 	none, err := repositories.RoundResults(ctx, g, otherHunt, roundID, "", 100)
 	require.NoError(t, err)
 	require.Empty(t, none)
+}
+
+func TestDeleteHuntCascades(t *testing.T) {
+	if ratingsDB == nil {
+		t.Skip("AGF_IT_DB_URL not set")
+	}
+	g := ratingsDB
+	ctx := context.Background()
+	cleanHunts(g)
+	t.Cleanup(func() { cleanHunts(g) })
+
+	// Build a full hunt: thread + message + round + result.
+	huntID, err := repositories.CreateHunt(ctx, g, huntTestEmail, "to delete")
+	require.NoError(t, err)
+	_, err = repositories.InsertHuntMessage(ctx, g, huntID, "user", "sleep apps", nil, nil)
+	require.NoError(t, err)
+	terms, _ := json.Marshal([]string{"sleep stories"})
+	roundID, err := repositories.InsertHuntRound(ctx, g, huntID, nil, terms, nil, nil, nil)
+	require.NoError(t, err)
+	must(g.Exec(`INSERT INTO frontend.hunt_results
+		(round_id, page_id, store, store_id, source_term, was_new, triage)
+		VALUES (?, 'D1', 'play', 'com.d1', 'sleep stories', true, 'kept')`, roundID).Error)
+
+	// A second hunt must survive the delete untouched.
+	keepID, err := repositories.CreateHunt(ctx, g, huntTestEmail, "to keep")
+	require.NoError(t, err)
+
+	require.NoError(t, repositories.DeleteHunt(ctx, g, huntID))
+
+	// The hunt and every child row are gone.
+	require.Equal(t, "", mustOwner(ctx, g, huntID))
+	require.Equal(t, 0, countRows(g, `SELECT count(*) FROM frontend.hunt_messages WHERE hunt_id = ?`, huntID))
+	require.Equal(t, 0, countRows(g, `SELECT count(*) FROM frontend.hunt_rounds WHERE hunt_id = ?`, huntID))
+	require.Equal(t, 0, countRows(g, `SELECT count(*) FROM frontend.hunt_results WHERE round_id = ?`, roundID))
+
+	// The other hunt is still listed.
+	hunts, err := repositories.ListHunts(ctx, g, huntTestEmail)
+	require.NoError(t, err)
+	require.Len(t, hunts, 1)
+	require.Equal(t, keepID, hunts[0].ID)
+}
+
+func mustOwner(ctx context.Context, g *gorm.DB, huntID int) string {
+	owner, err := repositories.HuntOwner(ctx, g, huntID)
+	if err != nil {
+		panic(err)
+	}
+	return owner
+}
+
+func countRows(g *gorm.DB, query string, args ...any) int {
+	var n int
+	must(g.Raw(query, args...).Scan(&n).Error)
+	return n
 }

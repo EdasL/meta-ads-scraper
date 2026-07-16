@@ -529,8 +529,12 @@ const huntAgentInstruction = "You are Peon, Field Desk's discovery agent. You he
 	"hunting, from the conversation (e.g. 'sleep apps aimed at new parents'). Results are " +
 	"judged against it after the round runs.\n" +
 	"\n" +
-	"Use web search and page reading when they help: niche research, a link the founder " +
-	"pastes, a store listing. Before answering about a prior round, call get_round_report " +
+	"Do real research before you propose. For a new niche with no prior round, use web " +
+	"search first to ground the plan: find how apps in this space actually advertise " +
+	"(the benefit phrases in their ad copy) and which real apps compete, then build terms " +
+	"and competitor_apps from what you found. Do not invent terms from the niche name " +
+	"alone. Read a store listing or a link the founder pastes when it sharpens the terms. " +
+	"Before answering about a prior round, call get_round_report " +
 	"and/or get_round_results — do not guess round outcomes.\n" +
 	"\n" +
 	"Optional round settings and their bounds: page_cap (Ad Library pages per term, 1-100), " +

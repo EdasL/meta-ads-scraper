@@ -6,11 +6,14 @@ import (
 )
 
 // HuntRow is one hunt thread in the list view. LastRoundStatus is null when the
-// hunt has no rounds yet.
+// hunt has no rounds yet. LastActivity is the newest of the thread's create time,
+// its latest message, and its latest round — the list sorts on it, and the rail
+// shows it so the date matches the sort order.
 type HuntRow struct {
 	ID              int       `json:"id"`
 	Title           string    `json:"title"`
 	CreatedAt       time.Time `json:"created_at"`
+	LastActivity    time.Time `json:"last_activity" gorm:"column:last_activity"`
 	LastRoundStatus *string   `json:"last_round_status" gorm:"column:last_round_status"`
 }
 
