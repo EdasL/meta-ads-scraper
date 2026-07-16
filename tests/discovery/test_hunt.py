@@ -61,7 +61,8 @@ def engine(_migrated_engine):
             " WHERE kept_advertiser_id IS NOT NULL)"))
         conn.execute(text(
             "DELETE FROM discovery.dynamic_keywords "
-            "WHERE keyword IN ('hunt mint term', 'pending term') AND kind = 'app'"))
+            "WHERE keyword IN ('hunt mint term', 'pending term', 'fast tail term') "
+            "AND kind = 'app'"))
         conn.execute(text(
             "DELETE FROM frontend.hunts WHERE user_email = 't@test.local'"))
         conn.execute(text(
@@ -544,6 +545,45 @@ def test_term_outcome_stats_groups_by_source_term(hunt_round_with_results):
         out = term_outcome_stats(conn, rid)
     assert out["run coach"] == {"kept": 1, "relevant": 1, "off_target": 0}
     assert out["page:joggo"] == {"kept": 1, "relevant": 0, "off_target": 1}
+
+
+def test_run_hunt_finish_runs_fast_tail_on_judge_timeout(engine, monkeypatch):
+    # A finish-budget overrun surfaces as HuntTimeout from judge_round. The fast
+    # DB tail (enrich enqueue + keyword mint) lives in run_hunt_finish's `finally`,
+    # so it must STILL run even though HuntTimeout (a BaseException) propagates —
+    # a completed scrape never loses its enrich/mint.
+    from agf.discovery import hunt as hunt_mod
+    from agf.discovery.hunt_one import HuntTimeout
+
+    ext = FakeExtractor()
+    ext.script_pages("fast tail term", [[_ios_ad("900060")], []])
+    round_id = _mk_round(engine, ["fast tail term"])
+    ctx = hunt_mod.run_hunt_sweep(engine, [ext], round_id, sleep=lambda *_: None)
+
+    lookups = lambda ids: {str(i): _meta() for i in ids}
+
+    def boom(*a, **k):
+        raise HuntTimeout("finish budget exceeded")
+    monkeypatch.setattr(hunt_mod, "judge_round", boom)
+
+    with pytest.raises(HuntTimeout):
+        hunt_mod.run_hunt_finish(engine, round_id, ctx,
+                                 lookup_ios=lookups, lookup_android=lookups)
+
+    with engine.connect() as conn:
+        res = conn.execute(text(
+            "SELECT kept_advertiser_id FROM frontend.hunt_results "
+            "WHERE round_id = :r"), {"r": round_id}).one()
+        assert res.kept_advertiser_id is not None
+        job = conn.execute(text(
+            "SELECT status FROM public.pipeline_jobs "
+            "WHERE kind = 'enrich' AND advertiser_id = :a"),
+            {"a": res.kept_advertiser_id}).scalar_one()
+        assert job == "queued"          # enrich enqueued despite the judge timeout
+        kw = conn.execute(text(
+            "SELECT source FROM discovery.dynamic_keywords "
+            "WHERE keyword = 'fast tail term' AND kind = 'app'")).scalar_one()
+        assert kw == "hunt"             # keyword mint ran despite the judge timeout
 
 
 def test_progress_merge_term_outcomes_preserves_sweep_telemetry(engine, round_id):

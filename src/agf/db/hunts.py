@@ -5,6 +5,7 @@ Conn-first: every helper takes an open connection and the CALLER owns the txn
 with bound params.
 """
 import json
+from datetime import datetime, timezone
 
 from sqlalchemy import text
 
@@ -66,6 +67,23 @@ def update_round_progress(conn, round_id: int, progress: dict) -> None:
     conn.execute(text(
         "UPDATE frontend.hunt_rounds SET progress = CAST(:p AS jsonb) "
         "WHERE id = :i"), {"i": round_id, "p": json.dumps(progress)})
+
+
+def mark_round_partial(conn, round_id: int) -> None:
+    """Flag a round whose scrape stopped at the page/time budget before it could
+    finish. Sets progress.partial and appends a plain, honest event; the results
+    already persisted stand. Product voice — no fabricated numbers."""
+    row = conn.execute(text(
+        "SELECT progress FROM frontend.hunt_rounds WHERE id = :i"),
+        {"i": round_id}).first()
+    progress = dict(row.progress) if row and row.progress else {}
+    progress["partial"] = True
+    events = list(progress.get("events") or [])
+    events.append({
+        "t": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "msg": "Stopped at the page budget — results so far are saved."})
+    progress["events"] = events[-50:]
+    update_round_progress(conn, round_id, progress)
 
 
 def apply_triage_to_results(conn, round_id: int) -> dict:

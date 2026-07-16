@@ -21,16 +21,22 @@ log = logging.getLogger("agf.hunt_daemon")
 
 KIND = "hunt"
 POLL_SEC = int(os.environ.get("AGF_HUNT_POLL_SEC", "2"))
-ROUND_TIMEOUT_SEC = int(os.environ.get("AGF_HUNT_ROUND_TIMEOUT_SEC", "5400"))
-LEASE_SEC = ROUND_TIMEOUT_SEC + 120
+# Two inner SIGALRM budgets: the scrape (existing knob) and a best-effort phase-5
+# finish. The outer bounds must dominate their SUM (invariant:
+# SIGALRM(scrape)+SIGALRM(finish) < subprocess < lease).
+SCRAPE_TIMEOUT_SEC = int(os.environ.get("AGF_HUNT_ROUND_TIMEOUT_SEC", "5400"))
+FINISH_TIMEOUT_SEC = int(os.environ.get("AGF_HUNT_FINISH_BUDGET_SEC", "600"))
+_INNER_TOTAL = SCRAPE_TIMEOUT_SEC + FINISH_TIMEOUT_SEC
+LEASE_SEC = _INNER_TOTAL + 120
 
 
 def run_hunt_subprocess(round_id: int, job_id: int) -> None:
     cmd = [sys.executable, "-m", "agf.discovery.hunt_one",
            "--round-id", str(round_id),
            "--job-id", str(job_id),
-           "--timeout", str(ROUND_TIMEOUT_SEC)]
-    subprocess.run(cmd, timeout=ROUND_TIMEOUT_SEC + 60, check=False)
+           "--timeout", str(SCRAPE_TIMEOUT_SEC),
+           "--finish-timeout", str(FINISH_TIMEOUT_SEC)]
+    subprocess.run(cmd, timeout=_INNER_TOTAL + 60, check=False)
 
 
 def process_once(engine, *, runner=run_hunt_subprocess) -> bool:

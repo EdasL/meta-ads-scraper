@@ -295,11 +295,16 @@ def _pull_competitor(engine, extractor, round_id: int, name: str,
     progress.term_stats(key, attempts, 0, 0, "no_results")
 
 
-def run_hunt_round(engine, extractors, round_id: int, *,
-                   lookup_ios=None, lookup_android=None,
+def run_hunt_sweep(engine, extractors, round_id: int, *,
                    sleep=time.sleep) -> dict:
-    """Execute one approved hunt round. Streams results as pages complete.
-    Terminal round/job status is stamped by the caller (hunt_one)."""
+    """Phases 0-4: competitor page pulls + parallel term lanes. Every page's
+    finds persist incrementally (each page its own txn), so results are durable
+    the moment they land — a mid-sweep timeout keeps whatever committed.
+
+    Returns the context the finish half needs:
+    {"stats", "progress", "rnd", "terms"}. Terminal round/job status is stamped
+    by the caller (hunt_one); phase 5 (triage/judge/enrich/mint) is run_hunt_finish.
+    """
     with begin(engine) as conn:
         rnd = load_round(conn, round_id)
         if rnd is None:
@@ -357,52 +362,88 @@ def run_hunt_round(engine, extractors, round_id: int, *,
         t.join()
     progress.event(f"Search finished — {stats['found']} found, "
                    f"{stats['new']} new to Field Desk")
+    return {"stats": stats, "progress": progress, "rnd": rnd, "terms": terms}
 
-    # Phase 5 — triage readback + enrich enqueue + hunt keyword mint. run_triage is
-    # SCOPED to this round's own candidates (only_ids) so a founder's round never blocks
-    # behind — and can't be SIGALRM-killed by — the global status='new' backlog; the
-    # nightly tick still drains that backlog unscoped.
-    if lookup_ios is not None and lookup_android is not None:
-        progress.event("Checking store listings (triage)")
-        with begin(engine) as conn:
-            own_ids = round_new_candidate_ids(conn, round_id)
-            run_triage(conn, lookup_ios=lookup_ios, lookup_android=lookup_android,
-                       only_ids=own_ids)
-        with begin(engine) as conn:
-            counts = apply_triage_to_results(conn, round_id)
-            stats.update(counts)
-        # Relevance judge runs BETWEEN triage and enqueue: it makes network calls,
-        # so it must hold no txn (prod incident: network-inside-txn). Fail-open —
-        # NULL relevance is treated as relevant, so a judge outage hides nothing.
-        progress.event("Judging relevance against the hunt intent")
-        stats.update(judge_round(engine, round_id, getattr(rnd, "intent", None)))
-        with begin(engine) as conn:
-            kept_ids = [r.kept_advertiser_id for r in conn.execute(text(
-                "SELECT DISTINCT kept_advertiser_id FROM frontend.hunt_results "
-                "WHERE round_id = :r AND kept_advertiser_id IS NOT NULL "
-                "AND COALESCE(relevance, 'relevant') <> 'off_target'"),
-                {"r": round_id})]
-            stats["enrich_enqueued"] = enqueue_enrich(conn, kept_ids)
+
+def run_hunt_finish(engine, round_id: int, ctx: dict, *,
+                    lookup_ios=None, lookup_android=None) -> dict:
+    """Phase 5 — triage readback + relevance judge + enrich enqueue + keyword mint.
+
+    Best-effort: the fast DB tail (_finalize_hunt_round: enrich enqueue +
+    term-outcome merge + keyword mint) runs in a `finally`, so it executes even
+    when triage/judge blows the finish budget (HuntTimeout is a BaseException —
+    the finally still runs, then it re-propagates). A completed scrape therefore
+    never loses its enrich/mint. run_triage is SCOPED to this round's own
+    candidates (only_ids) so a founder's round never blocks behind — nor can be
+    killed by — the global status='new' backlog; the nightly tick drains that.
+    """
+    stats = ctx["stats"]
+    progress = ctx["progress"]
+    rnd = ctx["rnd"]
+    terms = ctx["terms"]
+    has_lookups = lookup_ios is not None and lookup_android is not None
+    try:
+        if has_lookups:
+            progress.event("Checking store listings (triage)")
+            with begin(engine) as conn:
+                own_ids = round_new_candidate_ids(conn, round_id)
+                run_triage(conn, lookup_ios=lookup_ios,
+                           lookup_android=lookup_android, only_ids=own_ids)
+            with begin(engine) as conn:
+                stats.update(apply_triage_to_results(conn, round_id))
+            # Relevance judge runs BETWEEN triage and enqueue: it makes network
+            # calls, so it holds no txn (prod incident: network-inside-txn).
+            # Fail-open — NULL relevance is treated as relevant, so a judge
+            # outage (or a finish-budget kill mid-judge) hides nothing.
+            progress.event("Judging relevance against the hunt intent")
+            stats.update(judge_round(engine, round_id, getattr(rnd, "intent", None)))
+        else:
+            with begin(engine) as conn:
+                stats.update(apply_triage_to_results(conn, round_id))
+    finally:
+        _finalize_hunt_round(engine, round_id, progress, terms, stats)
+    # Normal-path-only events: a finish-budget HuntTimeout re-propagates from the
+    # `finally` above and skips everything below. The triage recap reports the
+    # enrich count _finalize just computed.
+    if has_lookups:
         progress.event(f"Triage done — {stats['kept']} kept, "
                        f"{stats['vetoed']} vetoed; "
                        f"{stats['enrich_enqueued']} queued for enrich")
-        # Read outcomes in a short txn, then merge (merge opens its own txn to
-        # flush progress — never nest the two).
-        with begin(engine) as conn:
-            outcomes = term_outcome_stats(conn, round_id)
-        progress.merge_term_outcomes(outcomes)
-    else:
-        with begin(engine) as conn:
-            stats.update(apply_triage_to_results(conn, round_id))
-        stats["enrich_enqueued"] = 0
-        with begin(engine) as conn:
-            outcomes = term_outcome_stats(conn, round_id)
-        progress.merge_term_outcomes(outcomes)
+    progress.event(f"Hunt finished — {stats['found']} found, "
+                   f"{stats['new']} new to Field Desk, {stats['kept']} kept")
+    return stats
+
+
+def _finalize_hunt_round(engine, round_id: int, progress, terms, stats) -> None:
+    """Fast DB-only tail — enrich enqueue + term-outcome merge + keyword mint.
+    Runs on the normal path AND (via run_hunt_finish's `finally`) when triage or
+    the judge raised HuntTimeout, so a scrape that already happened is never
+    skipped. Idempotent + safe after a partial judge: kept_ids are recomputed
+    from the DB, so partial relevance state is fine (fail-open = relevant)."""
+    with begin(engine) as conn:
+        kept_ids = [r.kept_advertiser_id for r in conn.execute(text(
+            "SELECT DISTINCT kept_advertiser_id FROM frontend.hunt_results "
+            "WHERE round_id = :r AND kept_advertiser_id IS NOT NULL "
+            "AND COALESCE(relevance, 'relevant') <> 'off_target'"),
+            {"r": round_id})]
+        stats["enrich_enqueued"] = enqueue_enrich(conn, kept_ids)
+    # Read outcomes in a short txn, then merge (merge opens its own txn to flush
+    # progress — never nest the two).
+    with begin(engine) as conn:
+        outcomes = term_outcome_stats(conn, round_id)
+    progress.merge_term_outcomes(outcomes)
     if terms:
         with begin(engine) as conn:
             stats["keywords_minted"] = add_trial_keywords(
                 conn, terms, source="hunt", kind="app")
 
-    progress.event(f"Hunt finished — {stats['found']} found, "
-                   f"{stats['new']} new to Field Desk, {stats['kept']} kept")
-    return stats
+
+def run_hunt_round(engine, extractors, round_id: int, *,
+                   lookup_ios=None, lookup_android=None,
+                   sleep=time.sleep) -> dict:
+    """Execute one approved hunt round end to end (sweep then finish). Thin
+    wrapper preserving the original signature; hunt_one splits the two halves
+    under separate alarm budgets so a finish overrun can't discard the scrape."""
+    ctx = run_hunt_sweep(engine, extractors, round_id, sleep=sleep)
+    return run_hunt_finish(engine, round_id, ctx,
+                           lookup_ios=lookup_ios, lookup_android=lookup_android)

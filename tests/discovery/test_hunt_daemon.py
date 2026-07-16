@@ -141,7 +141,10 @@ def _assistant_msg_count(engine, round_id) -> int:
 
 def test_done_path_writes_canned_message_only_when_notify_fails(engine, monkeypatch):
     from agf.discovery import hunt_one
-    monkeypatch.setattr(hunt_one, "run_hunt_round", lambda *a, **k: {"found": 0})
+    monkeypatch.setattr(hunt_one, "run_hunt_sweep",
+                        lambda *a, **k: {"stats": {"found": 0}, "progress": None,
+                                         "rnd": None, "terms": []})
+    monkeypatch.setattr(hunt_one, "run_hunt_finish", lambda *a, **k: {"found": 0})
     monkeypatch.setattr(hunt_one, "_build_extractors", lambda k: [])
 
     # Hook fails -> hunt_one writes the canned fallback message.
@@ -168,7 +171,10 @@ def test_done_path_skips_fallback_when_hook_wrote_but_response_lost(engine, monk
     from agf.discovery import hunt_one
     from agf.db.hunts import insert_round_message
 
-    monkeypatch.setattr(hunt_one, "run_hunt_round", lambda *a, **k: {"found": 0})
+    monkeypatch.setattr(hunt_one, "run_hunt_sweep",
+                        lambda *a, **k: {"stats": {"found": 0}, "progress": None,
+                                         "rnd": None, "terms": []})
+    monkeypatch.setattr(hunt_one, "run_hunt_finish", lambda *a, **k: {"found": 0})
     monkeypatch.setattr(hunt_one, "_build_extractors", lambda k: [])
 
     rid = _mk_round(engine)
@@ -183,3 +189,73 @@ def test_done_path_skips_fallback_when_hook_wrote_but_response_lost(engine, monk
     assert hunt_one.main(["--round-id", str(rid), "--job-id", str(jid)]) == 0
     assert _job_status(engine, rid) == "done"
     assert _assistant_msg_count(engine, rid) == 1
+
+
+def _round_status(engine, round_id):
+    with engine.connect() as conn:
+        return conn.execute(text(
+            "SELECT status FROM frontend.hunt_rounds WHERE id = :i"),
+            {"i": round_id}).scalar_one()
+
+
+def test_finish_timeout_still_marks_round_done(engine, monkeypatch):
+    """A finish-budget overrun (HuntTimeout out of run_hunt_finish) must NOT fail
+    the round — the scrape already succeeded, so the round commits 'done'."""
+    from agf.discovery import hunt_one
+    monkeypatch.setattr(hunt_one, "_build_extractors", lambda k: [])
+    monkeypatch.setattr(hunt_one, "run_hunt_sweep",
+                        lambda *a, **k: {"stats": {"found": 0}, "progress": None,
+                                         "rnd": None, "terms": []})
+    def finish_boom(*a, **k):
+        raise hunt_one.HuntTimeout("hunt round exceeded finish budget")
+    monkeypatch.setattr(hunt_one, "run_hunt_finish", finish_boom)
+    monkeypatch.setattr(hunt_one, "_notify_completed", lambda *a, **k: True)
+
+    rid = _mk_round(engine)
+    jid = _mk_job(engine, rid)
+    assert hunt_one.main(["--round-id", str(rid), "--job-id", str(jid)]) == 0
+    assert _job_status(engine, rid) == "done"
+    assert _round_status(engine, rid) == "done"
+
+
+def test_sweep_timeout_marks_round_done_partial_and_skips_finish(engine, monkeypatch):
+    """A mid-sweep timeout commits 'done' with a partial marker and does NOT run
+    phase 5 (the sweep's lane threads may still be alive)."""
+    from agf.discovery import hunt_one
+    monkeypatch.setattr(hunt_one, "_build_extractors", lambda k: [])
+    def sweep_boom(*a, **k):
+        raise hunt_one.HuntTimeout("hunt round exceeded scrape budget")
+    monkeypatch.setattr(hunt_one, "run_hunt_sweep", sweep_boom)
+    finish_calls = []
+    monkeypatch.setattr(hunt_one, "run_hunt_finish",
+                        lambda *a, **k: finish_calls.append(1))
+    monkeypatch.setattr(hunt_one, "_notify_completed", lambda *a, **k: True)
+
+    rid = _mk_round(engine)
+    jid = _mk_job(engine, rid)
+    assert hunt_one.main(["--round-id", str(rid), "--job-id", str(jid)]) == 0
+    assert _job_status(engine, rid) == "done"
+    with engine.connect() as conn:
+        progress = conn.execute(text(
+            "SELECT progress FROM frontend.hunt_rounds WHERE id = :i"),
+            {"i": rid}).scalar_one()
+    assert _round_status(engine, rid) == "done"
+    assert progress.get("partial") is True
+    assert finish_calls == []          # phase 5 skipped after a mid-sweep timeout
+
+
+def test_real_sweep_error_still_marks_round_error(engine, monkeypatch):
+    """A non-timeout sweep failure (proxy wedge) is a real error and must fail
+    the round — only completed scrapes commit 'done'."""
+    from agf.discovery import hunt_one
+    monkeypatch.setattr(hunt_one, "_build_extractors", lambda k: [])
+    def sweep_crash(*a, **k):
+        raise RuntimeError("proxy wedged")
+    monkeypatch.setattr(hunt_one, "run_hunt_sweep", sweep_crash)
+    monkeypatch.setattr(hunt_one, "run_hunt_finish", lambda *a, **k: {})
+
+    rid = _mk_round(engine)
+    jid = _mk_job(engine, rid)
+    assert hunt_one.main(["--round-id", str(rid), "--job-id", str(jid)]) == 1
+    assert _job_status(engine, rid) == "error"
+    assert _round_status(engine, rid) == "error"
