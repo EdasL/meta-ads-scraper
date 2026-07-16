@@ -78,6 +78,19 @@ class _Progress:
             )[-HUNT_EVENT_CAP:]
             self._flush()
 
+    def mark_partial(self, msg: str) -> None:
+        """Flag a round whose scrape stopped at the page/time budget. The flag
+        lives IN self._state so every later lane flush preserves it — a
+        standalone SELECT-modify-UPDATE on progress would be clobbered by the
+        next _flush() (which rewrites the whole blob). Product voice — no
+        fabricated numbers."""
+        with self._lock:
+            self._state["partial"] = True
+            self._state["events"] = (
+                self._state["events"] + [{"t": _now_iso(), "msg": msg}]
+            )[-HUNT_EVENT_CAP:]
+            self._flush()
+
     def page(self, lane: int, term: str, depth: int, found: int, new: int) -> None:
         with self._lock:
             self._state["lanes"][str(lane)] = {"term": term, "page": depth}
@@ -319,47 +332,60 @@ def run_hunt_sweep(engine, extractors, round_id: int, *,
     progress = _Progress(engine, round_id, terms_total=len(terms))
     progress.event(f"Hunt started — {len(terms)} terms, deep paging")
 
-    # Phase 0 — competitor page pulls. Each name is resolved through fuzzy
-    # typeahead disambiguation (not blind result [0]) and pulled GLOBALLY
-    # (niche apps often advertise only in EU/AU). typeahead/search_listing run
-    # OUTSIDE any begin() block (no txn held across a network call); only
-    # _persist_page opens short txns for the writes.
-    # competitor_apps is a jsonb array of STRINGS (["calm"]) as the Go API writes it;
-    # accept that shape AND legacy [{"name": ...}] dicts.
-    raw = rnd.competitor_apps or []
-    competitors = [(c.get("name", "") if isinstance(c, dict) else str(c)) for c in raw]
-    competitors = [c for c in competitors if c]
-    stats["competitor_pages"] = 0
-    for name in competitors[:HUNT_COMPETITOR_CAP]:
-        _pull_competitor(engine, extractors[0], round_id, name, progress,
-                         stats, lock, knobs["listing_pages"])
+    try:
+        # Phase 0 — competitor page pulls. Each name is resolved through fuzzy
+        # typeahead disambiguation (not blind result [0]) and pulled GLOBALLY
+        # (niche apps often advertise only in EU/AU). typeahead/search_listing run
+        # OUTSIDE any begin() block (no txn held across a network call); only
+        # _persist_page opens short txns for the writes.
+        # competitor_apps is a jsonb array of STRINGS (["calm"]) as the Go API writes
+        # it; accept that shape AND legacy [{"name": ...}] dicts.
+        raw = rnd.competitor_apps or []
+        competitors = [(c.get("name", "") if isinstance(c, dict) else str(c)) for c in raw]
+        competitors = [c for c in competitors if c]
+        stats["competitor_pages"] = 0
+        for name in competitors[:HUNT_COMPETITOR_CAP]:
+            _pull_competitor(engine, extractors[0], round_id, name, progress,
+                             stats, lock, knobs["listing_pages"])
 
-    queue = collections.deque(terms)
+        queue = collections.deque(terms)
 
-    def lane(lane_id: int) -> None:
-        extractor = extractors[lane_id % len(extractors)]
-        while True:
-            try:
-                term = queue.popleft()
-            except IndexError:
-                return
-            pages, found, new, stop = _sweep_term(
-                engine, extractor, round_id, lane_id, term,
-                progress, stats, lock, sleep,
-                knobs["patience"], knobs["page_cap"], knobs["min_pages"])
-            progress.term_stats(term, pages, found, new, stop)
-            with lock:
-                stats["terms_swept"] += 1
-            progress.term_done(lane_id)
-            sleep(HUNT_KW_DELAY)
+        def lane(lane_id: int) -> None:
+            extractor = extractors[lane_id % len(extractors)]
+            while True:
+                try:
+                    term = queue.popleft()
+                except IndexError:
+                    return
+                pages, found, new, stop = _sweep_term(
+                    engine, extractor, round_id, lane_id, term,
+                    progress, stats, lock, sleep,
+                    knobs["patience"], knobs["page_cap"], knobs["min_pages"])
+                progress.term_stats(term, pages, found, new, stop)
+                with lock:
+                    stats["terms_swept"] += 1
+                progress.term_done(lane_id)
+                sleep(HUNT_KW_DELAY)
 
-    lanes = min(HUNT_TERM_LANES, max(1, len(terms)), max(1, len(extractors)))
-    threads = [threading.Thread(target=lane, args=(i,), daemon=True)
-               for i in range(lanes)]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join()
+        lanes = min(HUNT_TERM_LANES, max(1, len(terms)), max(1, len(extractors)))
+        threads = [threading.Thread(target=lane, args=(i,), daemon=True)
+                   for i in range(lanes)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+    except BaseException as exc:  # noqa: BLE001
+        # The scrape budget's SIGALRM (HuntTimeout) fires in THIS main thread
+        # while the lane threads are still alive and may keep flushing. Record
+        # the partial marker INSIDE progress._state so those later flushes
+        # preserve it, then re-raise so hunt_one commits the round done (partial).
+        # A real (non-timeout) sweep failure gets NO partial marker — it re-raises
+        # unchanged and hunt_one marks the round error.
+        from agf.discovery.hunt_one import HuntTimeout
+        if isinstance(exc, HuntTimeout):
+            progress.mark_partial(
+                "Stopped at the page budget — results so far are saved.")
+        raise
     progress.event(f"Search finished — {stats['found']} found, "
                    f"{stats['new']} new to Field Desk")
     return {"stats": stats, "progress": progress, "rnd": rnd, "terms": terms}

@@ -14,7 +14,6 @@ from agf.db.hunts import (
     compose_round_message,
     finish_round,
     insert_round_message,
-    mark_round_partial,
     round_summary_counts,
 )
 from agf.db.pipeline_jobs import set_job_status
@@ -76,12 +75,13 @@ def main(argv=None) -> int:
         except HuntTimeout as e:
             # The sweep didn't finish, but every persisted page is real. The lane
             # threads may still be alive — do NOT run phase 5 after a mid-sweep
-            # timeout. Commit the round 'done' (partial), never 'error'.
+            # timeout. The partial marker is already in progress (run_hunt_sweep
+            # set it in _Progress._state so lane flushes can't clobber it). Commit
+            # the round 'done' (partial), never 'error'.
             signal.alarm(0)
             log.warning("hunt round %d sweep hit the scrape budget: %s",
                         args.round_id, e)
             with begin(engine) as conn:
-                mark_round_partial(conn, args.round_id)
                 finish_round(conn, args.round_id, status="done")
                 set_job_status(conn, args.job_id, "done")
             _complete_round(engine, args, http_client)

@@ -219,11 +219,16 @@ def test_finish_timeout_still_marks_round_done(engine, monkeypatch):
 
 
 def test_sweep_timeout_marks_round_done_partial_and_skips_finish(engine, monkeypatch):
-    """A mid-sweep timeout commits 'done' with a partial marker and does NOT run
-    phase 5 (the sweep's lane threads may still be alive)."""
+    """A mid-sweep timeout commits 'done' and does NOT run phase 5 (the sweep's
+    lane threads may still be alive). The partial marker is the sweep's job now,
+    so the fake honors that contract: it marks partial IN progress, then raises
+    (real run_hunt_sweep's timeout behavior). hunt_one must not clobber it."""
     from agf.discovery import hunt_one
+    from agf.discovery.hunt import _Progress
     monkeypatch.setattr(hunt_one, "_build_extractors", lambda k: [])
-    def sweep_boom(*a, **k):
+    def sweep_boom(engine_arg, extractors, round_id_arg, **k):
+        _Progress(engine_arg, round_id_arg, terms_total=0).mark_partial(
+            "Stopped at the page budget — results so far are saved.")
         raise hunt_one.HuntTimeout("hunt round exceeded scrape budget")
     monkeypatch.setattr(hunt_one, "run_hunt_sweep", sweep_boom)
     finish_calls = []

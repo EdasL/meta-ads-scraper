@@ -586,6 +586,45 @@ def test_run_hunt_finish_runs_fast_tail_on_judge_timeout(engine, monkeypatch):
         assert kw == "hunt"             # keyword mint ran despite the judge timeout
 
 
+def test_mark_partial_survives_a_later_flush(engine, round_id):
+    # The race the fix closes: on a mid-sweep timeout the lane threads are still
+    # alive and keep flushing the WHOLE progress blob. mark_partial must set the
+    # flag IN _state so any later flush preserves partial=True + its event — a
+    # standalone SELECT-modify-UPDATE on progress would be clobbered by the next
+    # _flush().
+    p = _Progress(engine, round_id, terms_total=1)
+    p.mark_partial("Stopped at the page budget — results so far are saved.")
+    # A normal lane mutation after the marker triggers a full-blob _flush.
+    p.term_stats("run coach", pages=4, found=2, new=1, stop="dry")
+    prog = _progress(engine, round_id)
+    assert prog["partial"] is True
+    assert any("stopped at the page budget" in e["msg"].lower()
+               for e in prog["events"])
+
+
+def test_run_hunt_sweep_marks_partial_on_timeout(engine, monkeypatch):
+    # run_hunt_sweep owns the partial marker now: a HuntTimeout during the lane
+    # join records partial IN progress, then re-raises so hunt_one commits done.
+    from agf.discovery import hunt as hunt_mod
+    from agf.discovery.hunt_one import HuntTimeout
+
+    ext = FakeExtractor()
+    ext.script_pages("timeout term", [[_ios_ad("900070")], []])
+    round_id = _mk_round(engine, ["timeout term"])
+
+    real_join = hunt_mod.threading.Thread.join
+
+    def boom_join(self, *a, **k):
+        real_join(self, *a, **k)          # let the lane finish its writes first
+        raise HuntTimeout("hunt round exceeded scrape budget")
+    monkeypatch.setattr(hunt_mod.threading.Thread, "join", boom_join)
+
+    with pytest.raises(HuntTimeout):
+        hunt_mod.run_hunt_sweep(engine, [ext], round_id, sleep=lambda *_: None)
+    prog = _progress(engine, round_id)
+    assert prog["partial"] is True
+
+
 def test_progress_merge_term_outcomes_preserves_sweep_telemetry(engine, round_id):
     p = _Progress(engine, round_id, terms_total=1)
     p.term_stats("run coach", pages=4, found=2, new=1, stop="dry")
