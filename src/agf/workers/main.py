@@ -118,7 +118,7 @@ from agf.db.generic_deep_runs import (close_generic_deep_run,
 from agf.db.funnel_candidates import (close_funnel_sweep_run, funnel_deep_ran_within_days,
                                       funnel_sweep_ran_today, funnel_sweep_ran_within,
                                       open_funnel_sweep_run)
-from agf.discovery.funnel_confirm import run_funnel_confirm
+from agf.discovery.funnel_confirm import run_funnel_confirm, _confirm_looks_stalled
 import agf.discovery.keyword_redundancy as _kr
 from agf.discovery.keyword_redundancy import (admit_by_novelty,
                                               drop_token_supersets,
@@ -436,6 +436,13 @@ def run_funnel_stage(engine, extractor, *, max_pages=8, kw_delay=3.0,
     confirm = run_funnel_confirm(engine, resolve=resolve, probe=probe,
                                  limit=confirm_limit)
     _touch_heartbeat()
+    if _confirm_looks_stalled(confirm):
+        # Nearly every landing probe failed and nothing confirmed — the render path is
+        # likely broken (dead browser/proxy). This exact state ran silently 2026-07-12..20
+        # because probe failures were swallowed; surface it loudly so it can't hide again.
+        print(f"[worker] funnel confirm STALLED: {confirm['probe_failed']}/{confirm['examined']} "
+              f"probes failed, 0 confirmed — landing render likely broken",
+              file=sys.stderr, flush=True)
     return {"sweep": sweep, "deep": deep_stats, "confirm": confirm}
 
 

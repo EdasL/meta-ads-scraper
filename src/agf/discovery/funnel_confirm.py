@@ -9,15 +9,30 @@ The orchestrator is SYNC and takes injectable `resolve(url)->obj{kind,store_id}`
 `probe(url)->obj{landing_html,quiz_steps}` callables — the runnable script wires the async
 Extractor.resolve_deeplink (via asyncio.run) and the sync Playwright render_and_probe.
 This keeps the orchestrator network-free and testable with fakes."""
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs, unquote
 
 from sqlalchemy import text
 
+from agf.classify import classify_url
 from agf.db.candidates import upsert_sweep_candidate
 from agf.db.engine import begin
 from agf.db.funnel_candidates import mark_funnel_confirmed
 from agf.discovery.firehose_fingerprint import detect_signatures, classify_payoff
 from agf.discovery.funnel_classify import store_ref_from_html
+
+# MMP / app-attribution deeplink hosts. These gate on a real device + real ad-click, so a
+# headless browser only ERR_ABORTs on them — we recover the app WITHOUT rendering (see
+# _resolve_mmp_app) rather than churning the probe on them forever.
+_MMP_HOSTS = ("onelink.me", "onelink.to", "app.adjust.com", "adjust.com", "adj.st",
+              "app.link", "bnc.lt", "branch.io", "go.link", "apple.co", "sng.link",
+              "smart.link", "singular", "tlnk.io", "kochava", "lnk.to")
+# Query params an MMP link uses to carry the destination store URL (fallback / deep-link).
+_STORE_PARAM_KEYS = ("af_dp", "deep_link_value", "af_web_dp", "af_ios_url", "af_android_url",
+                     "af_r", "redirect", "fallback", "url", "$ios_url", "$android_url",
+                     "$fallback_url")
+# After this many failed probe attempts a candidate is dropped 'probe_unreachable' so a
+# permanently-dead URL stops re-selecting at the head of the oldest-first queue.
+_DEFAULT_ATTEMPT_CAP = 4
 
 
 def _has_funnel_path(url):
@@ -89,7 +104,7 @@ def build_funnel_bridge_row(r, *, store, store_id, technique="funnel_confirm"):
 def _new_rows(conn, ids):
     rows = conn.execute(text(
         "SELECT id, landing_url, landing_domain, funnel_host, "
-        "page_id, page_name, page_like_count, source_keyword "
+        "page_id, page_name, page_like_count, source_keyword, confirm_attempts "
         "FROM discovery.funnel_candidates "
         "WHERE status='new' ORDER BY first_seen_at, id")).all()
     if ids is not None:                      # filter in Python — driver-agnostic, avoids ANY/IN binding
@@ -98,17 +113,115 @@ def _new_rows(conn, ids):
     return rows
 
 
-def run_funnel_confirm(engine, *, resolve, probe, ids=None, limit=None) -> dict:
+def _is_mmp(landing_domain, landing_url) -> bool:
+    hay = f"{landing_domain or ''} {landing_url or ''}"
+    return any(h in hay for h in _MMP_HOSTS)
+
+
+def _store_from_mmp_params(landing_url):
+    """An MMP link's store-fallback params often carry the destination store URL directly.
+    Returns (store, store_id) or (None, None) — network-free."""
+    try:
+        qs = parse_qs(urlparse(landing_url or "").query)
+    except Exception:
+        return (None, None)
+    for key in _STORE_PARAM_KEYS:
+        for raw in qs.get(key, ()):
+            intent = classify_url(unquote(raw))
+            if intent.kind in ("ios", "android") and intent.store_id:
+                return (intent.kind, intent.store_id)
+    return (None, None)
+
+
+def _store_from_page(conn, page_id):
+    """If this advertiser's Meta page already maps to a known app candidate, reuse it — an
+    MMP deeplink we can't render still belongs to that known app (its own app-store ad
+    resolved earlier). Most reliable of the two recovery signals."""
+    if not page_id:
+        return (None, None)
+    row = conn.execute(text(
+        "SELECT store, store_id FROM discovery.candidates "
+        "WHERE page_id = :p AND store IN ('ios','android') AND store_id IS NOT NULL "
+        "ORDER BY first_seen_at, id LIMIT 1"), {"p": page_id}).first()
+    return (row.store, row.store_id) if row else (None, None)
+
+
+def _resolve_mmp_app(engine, r):
+    """Cheap, network-free app recovery for an MMP deeplink: page->app map first, then the
+    link's store-fallback params. Returns (store, store_id) or (None, None)."""
+    with engine.connect() as conn:
+        store, store_id = _store_from_page(conn, r.page_id)
+    if store_id:
+        return (store, store_id)
+    return _store_from_mmp_params(r.landing_url)
+
+
+def _register_probe_failure(engine, r, stats, attempt_cap) -> None:
+    """A probe that couldn't reach/render the landing. Count the attempt; once it caps,
+    DROP as 'probe_unreachable' so a permanently-dead URL (NXDOMAIN, 30s timeout, opaque
+    MMP hop) stops re-selecting at the head of the oldest-first queue and blocking newer
+    candidates. Below the cap the row stays 'new' and a healthy future run retries it —
+    a single crash still proves nothing (the 06-26..07-06 misfiling incident)."""
+    stats["probe_failed"] += 1
+    attempts = (r.confirm_attempts or 0) + 1
+    with begin(engine) as conn:
+        if attempts >= attempt_cap:
+            mark_funnel_confirmed(conn, r.id, kind="unknown", status="dropped",
+                                  drop_reason="probe_unreachable")
+            stats["dropped"] += 1
+            stats["probe_capped"] += 1
+        else:
+            conn.execute(text("UPDATE discovery.funnel_candidates "
+                              "SET confirm_attempts = :a WHERE id = :i"),
+                         {"a": attempts, "i": r.id})
+
+
+def _confirm_looks_stalled(stats) -> bool:
+    """True when a confirm pass rendered almost nothing successfully — a signal the landing
+    probe itself is broken (dead browser/proxy) rather than just a low-yield night. MMP
+    page->app recoveries count as confirmed, so a page-map-only night doesn't false-alarm."""
+    ex = stats.get("examined", 0)
+    return (ex >= 10 and stats.get("confirmed", 0) == 0
+            and stats.get("probe_failed", 0) >= int(0.9 * ex))
+
+
+def run_funnel_confirm(engine, *, resolve, probe, ids=None, limit=None,
+                       attempt_cap=None) -> dict:
     """Confirm every 'new' funnel candidate (optionally restricted to `ids`). Commits per row.
     resolve(landing_url) -> obj{kind,store_id}; probe(landing_url) -> obj{landing_html,quiz_steps}."""
+    attempt_cap = _DEFAULT_ATTEMPT_CAP if attempt_cap is None else attempt_cap
     with engine.connect() as conn:
         rows = _new_rows(conn, ids)
     if limit is not None:
         rows = rows[:limit]
     stats = {"examined": len(rows), "confirmed": 0, "dropped": 0, "probe_failed": 0,
+             "mmp_recovered": 0, "probe_capped": 0,
              "kinds": {"install": 0, "subscribe": 0, "unknown": 0},
              "bridged_app_new": 0, "bridged_app_seen": 0}
     for r in rows:
+        # MMP app deeplinks (onelink/adjust/branch/…) can't be rendered by a headless
+        # browser — they device-gate and only ERR_ABORT. Recover the app WITHOUT probing
+        # via the page->app map or the link's store-fallback params; if neither resolves,
+        # don't hand it to the probe (a guaranteed 30s timeout) — count it unreachable so
+        # the attempt cap drops it. This keeps a valuable app-advertiser class the probe
+        # would otherwise churn on forever.
+        if _is_mmp(r.landing_domain, r.landing_url):
+            store, store_id = _resolve_mmp_app(engine, r)
+            if store_id:
+                with begin(engine) as conn:
+                    mark_funnel_confirmed(conn, r.id, kind="install", status="confirmed",
+                                          store=store, store_id=store_id, payoff_kind="app")
+                    bridge_row = build_funnel_bridge_row(r, store=store, store_id=store_id,
+                                                         technique="funnel_mmp")
+                    _, was_new = upsert_sweep_candidate(conn, bridge_row)
+                    stats["bridged_app_new" if was_new else "bridged_app_seen"] += 1
+                stats["confirmed"] += 1
+                stats["kinds"]["install"] += 1
+                stats["mmp_recovered"] += 1
+            else:
+                _register_probe_failure(engine, r, stats, attempt_cap)
+            continue
+
         try:
             resolved = resolve(r.landing_url)
         except Exception:
@@ -117,11 +230,7 @@ def run_funnel_confirm(engine, *, resolve, probe, ids=None, limit=None) -> dict:
             probed = probe(r.landing_url)
             html, quiz_steps = probed.landing_html, probed.quiz_steps
         except Exception:
-            # A CRASHED probe (browser missing/dead, not a slow page) proves nothing
-            # about the funnel — classifying html='' would file every candidate under
-            # payoff 'leadgen', a discarded bucket (the 06-26..07-06 prod incident:
-            # 2,341 misfiled). Leave the row 'new' so a healthy run retries it.
-            stats["probe_failed"] += 1
+            _register_probe_failure(engine, r, stats, attempt_cap)
             continue
         kind, status, store, store_id, reason, payoff_kind = classify_funnel(
             html, resolved, r.funnel_host, quiz_steps)

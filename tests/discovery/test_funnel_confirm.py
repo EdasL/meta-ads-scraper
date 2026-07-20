@@ -2,7 +2,8 @@
 from types import SimpleNamespace
 from sqlalchemy import text
 
-from agf.discovery.funnel_confirm import classify_funnel, run_funnel_confirm
+from agf.discovery.funnel_confirm import (classify_funnel, run_funnel_confirm,
+                                          _confirm_looks_stalled)
 
 
 def _resolved(kind, store_id=None):
@@ -276,6 +277,160 @@ def test_run_funnel_confirm_bridges_app(_migrated_engine):
         with eng.begin() as conn:
             conn.execute(text("DELETE FROM discovery.funnel_candidates WHERE page_id = 'FBRIDGE_PKIND'"))
             conn.execute(text("DELETE FROM discovery.candidates WHERE page_id = 'FBRIDGE_PKIND'"))
+
+
+def _boom_probe(url):
+    raise AssertionError("probe must not be called for cheaply-resolvable / capped MMP rows")
+
+
+# --- stall guard (pure) ------------------------------------------------------
+def test_confirm_looks_stalled_fires_on_all_probe_fail():
+    assert _confirm_looks_stalled({"examined": 50, "probe_failed": 50, "confirmed": 0})
+    assert _confirm_looks_stalled({"examined": 50, "probe_failed": 49, "confirmed": 0, "dropped": 1})
+
+
+def test_confirm_looks_stalled_quiet_on_healthy_or_low_yield():
+    # healthy: probes mostly succeed (drops are classify-drops, not probe failures)
+    assert not _confirm_looks_stalled({"examined": 50, "probe_failed": 17, "confirmed": 3, "dropped": 30})
+    # a page->app-only night (MMP recoveries confirm) does not false-alarm
+    assert not _confirm_looks_stalled({"examined": 50, "probe_failed": 40, "confirmed": 10})
+    # too few rows to judge
+    assert not _confirm_looks_stalled({"examined": 3, "probe_failed": 3, "confirmed": 0})
+
+
+def test_run_funnel_confirm_recovers_mmp_via_params(_migrated_engine):
+    """An MMP app-deeplink (onelink/adjust) can't render in a headless browser (it gates
+    on a real device+click). If the link carries a store-fallback param, recover the app
+    WITHOUT probing — classify install/app + bridge to discovery.candidates."""
+    eng = _migrated_engine
+    from agf.db.funnel_candidates import upsert_funnel_candidate
+    BASE = dict(page_name="MMP", page_like_count=5, cta_type="INSTALL_MOBILE_APP",
+                utm_source=None, utm_medium=None, utm_campaign=None, utm_content=None,
+                ad_start_date=None, source_keyword="habit app", technique="funnel_phrase")
+    url = ("https://myapp.onelink.me/abc?pid=metaweb_int&"
+           "af_dp=https%3A%2F%2Fapps.apple.com%2Fus%2Fapp%2Fmyapp%2Fid555000")
+    with eng.begin() as conn:
+        conn.execute(text("DELETE FROM discovery.funnel_candidates WHERE page_id LIKE 'FMMPP%'"))
+        conn.execute(text("DELETE FROM discovery.candidates WHERE page_id LIKE 'FMMPP%'"))
+        upsert_funnel_candidate(conn, {**BASE, "page_id": "FMMPP1", "funnel_host": None,
+                                       "landing_url": url, "landing_domain": "myapp.onelink.me"})
+    try:
+        stats = run_funnel_confirm(eng, resolve=lambda _: _resolved("web"),
+                                   probe=_boom_probe, ids=_ids(eng, "FMMPP"))
+        assert stats["confirmed"] == 1
+        assert stats.get("mmp_recovered", 0) == 1
+        with eng.connect() as c:
+            fc = c.execute(text("SELECT status, payoff_kind, store, store_id "
+                                "FROM discovery.funnel_candidates WHERE page_id='FMMPP1'")).one()
+            cand = c.execute(text("SELECT store, store_id FROM discovery.candidates "
+                                  "WHERE page_id='FMMPP1'")).first()
+        assert (fc.status, fc.payoff_kind, fc.store, fc.store_id) == ("confirmed", "app", "ios", "555000")
+        assert cand is not None and (cand.store, cand.store_id) == ("ios", "555000")
+    finally:
+        with eng.begin() as conn:
+            conn.execute(text("DELETE FROM discovery.funnel_candidates WHERE page_id LIKE 'FMMPP%'"))
+            conn.execute(text("DELETE FROM discovery.candidates WHERE page_id LIKE 'FMMPP%'"))
+
+
+def test_run_funnel_confirm_recovers_mmp_via_page_map(_migrated_engine):
+    """An MMP deeplink with no usable param still recovers if the advertiser's Meta page
+    already maps to a known app candidate (page_id -> ios/store_id). No probe needed."""
+    eng = _migrated_engine
+    from agf.db.funnel_candidates import upsert_funnel_candidate
+    from agf.db.candidates import upsert_sweep_candidate
+    BASE = dict(page_name="MMP2", page_like_count=5, cta_type="INSTALL_MOBILE_APP",
+                utm_source=None, utm_medium=None, utm_campaign=None, utm_content=None,
+                ad_start_date=None, source_keyword="fitness app", technique="funnel_phrase")
+    with eng.begin() as conn:
+        conn.execute(text("DELETE FROM discovery.funnel_candidates WHERE page_id LIKE 'FMMPG%'"))
+        conn.execute(text("DELETE FROM discovery.candidates WHERE page_id LIKE 'FMMPG%'"))
+        # a prior app-store sweep already resolved this page to an Android app
+        upsert_sweep_candidate(conn, dict(page_id="FMMPG1", page_name="MMP2", page_like_count=5,
+                                          store="android", store_id="com.myapp.fit",
+                                          link_url="https://play.google.com/store/apps/details?id=com.myapp.fit",
+                                          cta_type=None, ad_start_date=None,
+                                          source_keyword="seed", technique="sweep"))
+        upsert_funnel_candidate(conn, {**BASE, "page_id": "FMMPG1", "funnel_host": None,
+                                       "landing_url": "https://myapp.onelink.me/xyz?pid=metaweb_int",
+                                       "landing_domain": "myapp.onelink.me"})
+    try:
+        stats = run_funnel_confirm(eng, resolve=lambda _: _resolved("web"),
+                                   probe=_boom_probe, ids=_ids(eng, "FMMPG"))
+        assert stats["confirmed"] == 1 and stats.get("mmp_recovered", 0) == 1
+        with eng.connect() as c:
+            fc = c.execute(text("SELECT status, payoff_kind, store, store_id "
+                                "FROM discovery.funnel_candidates WHERE page_id='FMMPG1'")).one()
+        assert (fc.status, fc.payoff_kind, fc.store, fc.store_id) == ("confirmed", "app", "android", "com.myapp.fit")
+    finally:
+        with eng.begin() as conn:
+            conn.execute(text("DELETE FROM discovery.funnel_candidates WHERE page_id LIKE 'FMMPG%'"))
+            conn.execute(text("DELETE FROM discovery.candidates WHERE page_id LIKE 'FMMPG%'"))
+
+
+def test_run_funnel_confirm_caps_repeated_probe_failures(_migrated_engine):
+    """A non-MMP landing that keeps failing the probe must be DROPPED as
+    'probe_unreachable' once confirm_attempts hits the cap, so it stops re-selecting and
+    blocking the oldest-first queue. Below the cap it stays 'new' (retryable)."""
+    eng = _migrated_engine
+    from agf.db.funnel_candidates import upsert_funnel_candidate
+    BASE = dict(page_name="Cap", page_like_count=1, cta_type="LEARN_MORE",
+                utm_source=None, utm_medium=None, utm_campaign=None, utm_content=None,
+                ad_start_date=None, source_keyword="q", technique="funnel_phrase")
+    with eng.begin() as conn:
+        conn.execute(text("DELETE FROM discovery.funnel_candidates WHERE page_id LIKE 'FCAP%'"))
+        upsert_funnel_candidate(conn, {**BASE, "page_id": "FCAP1", "funnel_host": None,
+                                       "landing_url": "https://dead.example/s",
+                                       "landing_domain": "dead.example"})
+
+    def dead_probe(url):
+        raise TimeoutError("Page.goto: Timeout 30000ms exceeded")
+
+    try:
+        # cap=2: first run -> attempts 1, stays 'new'
+        s1 = run_funnel_confirm(eng, resolve=lambda _: _resolved("web"), probe=dead_probe,
+                                ids=_ids(eng, "FCAP"), attempt_cap=2)
+        assert s1["probe_failed"] == 1 and s1["dropped"] == 0
+        with eng.connect() as c:
+            assert c.execute(text("SELECT status FROM discovery.funnel_candidates "
+                                  "WHERE page_id='FCAP1'")).scalar() == "new"
+        # second run -> attempts 2 >= cap -> dropped probe_unreachable
+        s2 = run_funnel_confirm(eng, resolve=lambda _: _resolved("web"), probe=dead_probe,
+                                ids=_ids(eng, "FCAP"), attempt_cap=2)
+        assert s2["dropped"] == 1 and s2.get("probe_capped", 0) == 1
+        with eng.connect() as c:
+            row = c.execute(text("SELECT status, drop_reason FROM discovery.funnel_candidates "
+                                 "WHERE page_id='FCAP1'")).one()
+        assert (row.status, row.drop_reason) == ("dropped", "probe_unreachable")
+    finally:
+        with eng.begin() as conn:
+            conn.execute(text("DELETE FROM discovery.funnel_candidates WHERE page_id LIKE 'FCAP%'"))
+
+
+def test_run_funnel_confirm_unresolvable_mmp_skips_probe_and_caps(_migrated_engine):
+    """An MMP deeplink we can't cheaply resolve must NOT be handed to the browser probe
+    (it will only ERR_ABORT and burn a 30s timeout) — it counts as a probe failure and
+    caps like any other unreachable row."""
+    eng = _migrated_engine
+    from agf.db.funnel_candidates import upsert_funnel_candidate
+    BASE = dict(page_name="MMP3", page_like_count=1, cta_type="INSTALL_MOBILE_APP",
+                utm_source=None, utm_medium=None, utm_campaign=None, utm_content=None,
+                ad_start_date=None, source_keyword="q", technique="funnel_phrase")
+    with eng.begin() as conn:
+        conn.execute(text("DELETE FROM discovery.funnel_candidates WHERE page_id LIKE 'FMMPU%'"))
+        upsert_funnel_candidate(conn, {**BASE, "page_id": "FMMPU1", "funnel_host": None,
+                                       "landing_url": "https://opaque.onelink.me/nope?pid=x",
+                                       "landing_domain": "opaque.onelink.me"})
+    try:
+        stats = run_funnel_confirm(eng, resolve=lambda _: _resolved("web"), probe=_boom_probe,
+                                   ids=_ids(eng, "FMMPU"), attempt_cap=1)
+        assert stats["probe_failed"] == 1 and stats["dropped"] == 1
+        with eng.connect() as c:
+            row = c.execute(text("SELECT status, drop_reason FROM discovery.funnel_candidates "
+                                 "WHERE page_id='FMMPU1'")).one()
+        assert (row.status, row.drop_reason) == ("dropped", "probe_unreachable")
+    finally:
+        with eng.begin() as conn:
+            conn.execute(text("DELETE FROM discovery.funnel_candidates WHERE page_id LIKE 'FMMPU%'"))
 
 
 def test_run_funnel_confirm_physical_no_bridge(_migrated_engine):
