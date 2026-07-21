@@ -185,6 +185,66 @@ def _confirm_looks_stalled(stats) -> bool:
             and stats.get("probe_failed", 0) >= int(0.9 * ex))
 
 
+def _confirm_candidate(engine, r, *, resolve, probe, attempt_cap, stats) -> None:
+    """Confirm ONE funnel-candidate row (mutates stats). Extracted verbatim from the
+    run_funnel_confirm loop so the daemon one-shot and the batch path share logic."""
+    # MMP app deeplinks (onelink/adjust/branch/…) can't be rendered by a headless
+    # browser — they device-gate and only ERR_ABORT. Recover the app WITHOUT probing
+    # via the page->app map or the link's store-fallback params; if neither resolves,
+    # don't hand it to the probe (a guaranteed 30s timeout) — count it unreachable so
+    # the attempt cap drops it. This keeps a valuable app-advertiser class the probe
+    # would otherwise churn on forever.
+    if _is_mmp(r.landing_domain, r.landing_url):
+        store, store_id = _resolve_mmp_app(engine, r)
+        if store_id:
+            with begin(engine) as conn:
+                mark_funnel_confirmed(conn, r.id, kind="install", status="confirmed",
+                                      store=store, store_id=store_id, payoff_kind="app")
+                bridge_row = build_funnel_bridge_row(r, store=store, store_id=store_id,
+                                                     technique="funnel_mmp")
+                _, was_new = upsert_sweep_candidate(conn, bridge_row)
+                stats["bridged_app_new" if was_new else "bridged_app_seen"] += 1
+            stats["confirmed"] += 1
+            stats["kinds"]["install"] += 1
+            stats["mmp_recovered"] += 1
+        else:
+            _register_probe_failure(engine, r, stats, attempt_cap)
+        return
+
+    try:
+        resolved = resolve(r.landing_url)
+    except Exception:
+        resolved = None
+    try:
+        probed = probe(r.landing_url)
+        html, quiz_steps = probed.landing_html, probed.quiz_steps
+    except Exception:
+        _register_probe_failure(engine, r, stats, attempt_cap)
+        return
+    kind, status, store, store_id, reason, payoff_kind = classify_funnel(
+        html, resolved, r.funnel_host, quiz_steps)
+    with begin(engine) as conn:
+        mark_funnel_confirmed(conn, r.id, kind=kind, status=status,
+                              store=store, store_id=store_id, drop_reason=reason,
+                              quiz_steps=quiz_steps, payoff_kind=payoff_kind)
+        if status == "confirmed" and payoff_kind == "app" and store_id:
+            bridge_row = build_funnel_bridge_row(r, store=store, store_id=store_id)
+            _, was_new = upsert_sweep_candidate(conn, bridge_row)
+            stats["bridged_app_new" if was_new else "bridged_app_seen"] += 1
+    if status == "confirmed":
+        stats["confirmed"] += 1
+        stats["kinds"][kind] += 1
+    else:
+        stats["dropped"] += 1
+
+
+def _empty_stats(examined: int) -> dict:
+    return {"examined": examined, "confirmed": 0, "dropped": 0, "probe_failed": 0,
+            "mmp_recovered": 0, "probe_capped": 0,
+            "kinds": {"install": 0, "subscribe": 0, "unknown": 0},
+            "bridged_app_new": 0, "bridged_app_seen": 0}
+
+
 def run_funnel_confirm(engine, *, resolve, probe, ids=None, limit=None,
                        attempt_cap=None) -> dict:
     """Confirm every 'new' funnel candidate (optionally restricted to `ids`). Commits per row.
@@ -194,57 +254,27 @@ def run_funnel_confirm(engine, *, resolve, probe, ids=None, limit=None,
         rows = _new_rows(conn, ids)
     if limit is not None:
         rows = rows[:limit]
-    stats = {"examined": len(rows), "confirmed": 0, "dropped": 0, "probe_failed": 0,
-             "mmp_recovered": 0, "probe_capped": 0,
-             "kinds": {"install": 0, "subscribe": 0, "unknown": 0},
-             "bridged_app_new": 0, "bridged_app_seen": 0}
+    stats = _empty_stats(len(rows))
     for r in rows:
-        # MMP app deeplinks (onelink/adjust/branch/…) can't be rendered by a headless
-        # browser — they device-gate and only ERR_ABORT. Recover the app WITHOUT probing
-        # via the page->app map or the link's store-fallback params; if neither resolves,
-        # don't hand it to the probe (a guaranteed 30s timeout) — count it unreachable so
-        # the attempt cap drops it. This keeps a valuable app-advertiser class the probe
-        # would otherwise churn on forever.
-        if _is_mmp(r.landing_domain, r.landing_url):
-            store, store_id = _resolve_mmp_app(engine, r)
-            if store_id:
-                with begin(engine) as conn:
-                    mark_funnel_confirmed(conn, r.id, kind="install", status="confirmed",
-                                          store=store, store_id=store_id, payoff_kind="app")
-                    bridge_row = build_funnel_bridge_row(r, store=store, store_id=store_id,
-                                                         technique="funnel_mmp")
-                    _, was_new = upsert_sweep_candidate(conn, bridge_row)
-                    stats["bridged_app_new" if was_new else "bridged_app_seen"] += 1
-                stats["confirmed"] += 1
-                stats["kinds"]["install"] += 1
-                stats["mmp_recovered"] += 1
-            else:
-                _register_probe_failure(engine, r, stats, attempt_cap)
-            continue
+        _confirm_candidate(engine, r, resolve=resolve, probe=probe,
+                           attempt_cap=attempt_cap, stats=stats)
+    return stats
 
-        try:
-            resolved = resolve(r.landing_url)
-        except Exception:
-            resolved = None
-        try:
-            probed = probe(r.landing_url)
-            html, quiz_steps = probed.landing_html, probed.quiz_steps
-        except Exception:
-            _register_probe_failure(engine, r, stats, attempt_cap)
-            continue
-        kind, status, store, store_id, reason, payoff_kind = classify_funnel(
-            html, resolved, r.funnel_host, quiz_steps)
-        with begin(engine) as conn:
-            mark_funnel_confirmed(conn, r.id, kind=kind, status=status,
-                                  store=store, store_id=store_id, drop_reason=reason,
-                                  quiz_steps=quiz_steps, payoff_kind=payoff_kind)
-            if status == "confirmed" and payoff_kind == "app" and store_id:
-                bridge_row = build_funnel_bridge_row(r, store=store, store_id=store_id)
-                _, was_new = upsert_sweep_candidate(conn, bridge_row)
-                stats["bridged_app_new" if was_new else "bridged_app_seen"] += 1
-        if status == "confirmed":
-            stats["confirmed"] += 1
-            stats["kinds"][kind] += 1
-        else:
-            stats["dropped"] += 1
+
+def run_funnel_confirm_one(engine, candidate_id, *, resolve, probe,
+                           attempt_cap=None) -> dict:
+    """Confirm exactly one candidate (the daemon one-shot unit). Fetches only that
+    row (no full-'new' scan) and no-ops if it's no longer 'new'."""
+    attempt_cap = _DEFAULT_ATTEMPT_CAP if attempt_cap is None else attempt_cap
+    with engine.connect() as conn:
+        r = conn.execute(text(
+            "SELECT id, landing_url, landing_domain, funnel_host, "
+            "page_id, page_name, page_like_count, source_keyword, confirm_attempts "
+            "FROM discovery.funnel_candidates WHERE id = :i AND status = 'new'"),
+            {"i": candidate_id}).first()
+    if r is None:
+        return _empty_stats(0)
+    stats = _empty_stats(1)
+    _confirm_candidate(engine, r, resolve=resolve, probe=probe,
+                       attempt_cap=attempt_cap, stats=stats)
     return stats

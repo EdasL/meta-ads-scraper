@@ -472,3 +472,34 @@ def test_run_funnel_confirm_physical_no_bridge(_migrated_engine):
         with eng.begin() as conn:
             conn.execute(text("DELETE FROM discovery.funnel_candidates WHERE page_id = 'FPHYS'"))
             conn.execute(text("DELETE FROM discovery.candidates WHERE page_id = 'FPHYS'"))
+
+
+from agf.discovery.funnel_confirm import run_funnel_confirm_one
+
+
+def test_run_funnel_confirm_one_confirms_single_candidate(_migrated_engine):
+    eng = _migrated_engine
+    from agf.db.funnel_candidates import upsert_funnel_candidate
+    with eng.begin() as conn:
+        conn.execute(text("DELETE FROM discovery.funnel_candidates WHERE page_id='FONE1'"))
+        upsert_funnel_candidate(conn, dict(
+            page_id="FONE1", page_name="One", page_like_count=1, cta_type="LEARN_MORE",
+            utm_source=None, utm_medium=None, utm_campaign=None, utm_content=None,
+            ad_start_date=None, source_keyword="q", technique="funnel_phrase",
+            funnel_host="quiz.", landing_url="https://fone.io/quiz/start",
+            landing_domain="fone.io"))
+        cid = conn.execute(text("SELECT id FROM discovery.funnel_candidates WHERE page_id='FONE1'")).scalar_one()
+    try:
+        stats = run_funnel_confirm_one(
+            eng, cid, resolve=lambda _: _resolved("web"),
+            probe=lambda _: _probed("<html>x</html>", quiz_steps=2))
+        assert stats["examined"] == 1 and stats["confirmed"] == 1
+        with eng.connect() as c:
+            st = c.execute(text("SELECT status FROM discovery.funnel_candidates WHERE id=:i"), {"i": cid}).scalar()
+        assert st == "confirmed"
+        # already-processed / non-new id -> no-op, examined 0
+        again = run_funnel_confirm_one(eng, cid, resolve=lambda _: _resolved("web"), probe=lambda _: _probed(""))
+        assert again["examined"] == 0
+    finally:
+        with eng.begin() as conn:
+            conn.execute(text("DELETE FROM discovery.funnel_candidates WHERE page_id='FONE1'"))
