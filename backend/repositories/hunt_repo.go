@@ -143,7 +143,8 @@ func ListHuntResults(ctx context.Context, g *gorm.DB, huntID int, email string) 
 	err := db.WithReadTx(ctx, g, func(tx *gorm.DB) error {
 		return tx.Raw(
 			`SELECT hr.id, hr.round_id, hr.page_id, hr.page_name, hr.store, hr.store_id,
-			        hr.link_url, hr.source_term, hr.was_new, hr.triage, hr.kept_advertiser_id,
+			        hr.link_url, hr.source_term, hr.was_new, hr.triage,
+			        eff.adv_id AS kept_advertiser_id,
 			        hr.relevance, hr.relevance_note, hr.page,
 			        s.gem_score,
 			        esa.app_name, esa.icon_url, esa.tagline, esa.cohort,
@@ -151,12 +152,19 @@ func ListHuntResults(ctx context.Context, g *gorm.DB, huntID int, email string) 
 			        ar.rating
 			 FROM frontend.hunt_results hr
 			 JOIN frontend.hunt_rounds r ON r.id = hr.round_id
-			 LEFT JOIN adtech.advertiser_scores s ON s.advertiser_id = hr.kept_advertiser_id
-			 LEFT JOIN frontend.emerging_scaling_apps esa ON esa.advertiser_id = hr.kept_advertiser_id
+			 LEFT JOIN LATERAL (
+			     SELECT COALESCE(
+			                hr.kept_advertiser_id,
+			                (SELECT a.id FROM public.advertisers a
+			                  WHERE a.page_id = hr.page_id LIMIT 1)
+			            ) AS adv_id
+			 ) eff ON true
+			 LEFT JOIN adtech.advertiser_scores s ON s.advertiser_id = eff.adv_id
+			 LEFT JOIN frontend.emerging_scaling_apps esa ON esa.advertiser_id = eff.adv_id
 			 LEFT JOIN frontend.saved_gems sg
-			        ON sg.advertiser_id = hr.kept_advertiser_id AND lower(sg.user_email) = lower(?)
+			        ON sg.advertiser_id = eff.adv_id AND lower(sg.user_email) = lower(?)
 			 LEFT JOIN frontend.app_ratings ar
-			        ON ar.advertiser_id = hr.kept_advertiser_id AND lower(ar.user_email) = lower(?)
+			        ON ar.advertiser_id = eff.adv_id AND lower(ar.user_email) = lower(?)
 			 WHERE r.hunt_id = ?
 			 ORDER BY hr.id`,
 			email, email, huntID,

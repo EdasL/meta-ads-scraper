@@ -294,6 +294,54 @@ func TestListHuntResultsJoinsGemScore(t *testing.T) {
 	require.Nil(t, pending.GemScore)
 }
 
+func TestListHuntResultsResolvesWebRowByPageID(t *testing.T) {
+	if ratingsDB == nil {
+		t.Skip("AGF_IT_DB_URL not set")
+	}
+	g := ratingsDB
+	ctx := context.Background()
+	cleanHunts(g)
+	t.Cleanup(func() { cleanHunts(g) })
+
+	const pageID = "HUNTB_PAGE_1"
+	// Clean any stray fixtures from a prior run.
+	must(g.Exec(`DELETE FROM frontend.saved_gems WHERE advertiser_id IN (SELECT id FROM public.advertisers WHERE page_id = ?)`, pageID).Error)
+	must(g.Exec(`DELETE FROM adtech.advertiser_scores WHERE advertiser_id IN (SELECT id FROM public.advertisers WHERE page_id = ?)`, pageID).Error)
+	must(g.Exec(`DELETE FROM public.advertisers WHERE page_id = ?`, pageID).Error)
+	t.Cleanup(func() {
+		must(g.Exec(`DELETE FROM frontend.saved_gems WHERE advertiser_id IN (SELECT id FROM public.advertisers WHERE page_id = ?)`, pageID).Error)
+		must(g.Exec(`DELETE FROM adtech.advertiser_scores WHERE advertiser_id IN (SELECT id FROM public.advertisers WHERE page_id = ?)`, pageID).Error)
+		must(g.Exec(`DELETE FROM public.advertisers WHERE page_id = ?`, pageID).Error)
+	})
+
+	// A confirmed web funnel: an advertiser exists on this page_id with a score.
+	var advID int
+	must(g.Raw(`INSERT INTO public.advertisers (page_id, page_name) VALUES (?, 'Web Funnel Co') RETURNING id`, pageID).Scan(&advID).Error)
+	must(g.Exec(`INSERT INTO adtech.advertiser_scores (advertiser_id, cohort, gem_score) VALUES (?, 'HUNTB_TEST', 73)`, advID).Error)
+	must(g.Exec(`INSERT INTO frontend.saved_gems (advertiser_id, user_email, gem_score) VALUES (?, ?, 73)`, advID, huntTestEmail).Error)
+
+	// A hunt + round + a WEB hunt_result with NO kept_advertiser_id, same page_id.
+	huntID, err := repositories.CreateHunt(ctx, g, huntTestEmail, "web funnels")
+	require.NoError(t, err)
+	terms, _ := json.Marshal([]string{"web funnel"})
+	comps, _ := json.Marshal([]string{})
+	roundID, err := repositories.InsertHuntRound(ctx, g, huntID, nil, terms, comps, nil, nil)
+	require.NoError(t, err)
+	must(g.Exec(`INSERT INTO frontend.hunt_results
+		(round_id, page_id, page_name, store, store_id, link_url, source_term, was_new, triage)
+		VALUES (?, ?, 'Web Funnel Co', 'web', 'webfunnelco.com', 'https://webfunnelco.com/', 'web funnel', true, 'kept')`,
+		roundID, pageID).Error)
+
+	rows, err := repositories.ListHuntResults(ctx, g, huntID, huntTestEmail)
+	require.NoError(t, err)
+	require.Len(t, rows, 1, "one web row, no fan-out from the page→advertiser resolution")
+	require.NotNil(t, rows[0].KeptAdvertiserID, "web row resolves its advertiser by page_id")
+	require.Equal(t, advID, *rows[0].KeptAdvertiserID)
+	require.NotNil(t, rows[0].GemScore)
+	require.EqualValues(t, 73, *rows[0].GemScore)
+	require.True(t, rows[0].Saved, "resolved advertiser's saved flag flows through")
+}
+
 func TestHuntRoundSummaries(t *testing.T) {
 	if ratingsDB == nil {
 		t.Skip("AGF_IT_DB_URL not set")
