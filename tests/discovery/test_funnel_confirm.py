@@ -503,3 +503,30 @@ def test_run_funnel_confirm_one_confirms_single_candidate(_migrated_engine):
     finally:
         with eng.begin() as conn:
             conn.execute(text("DELETE FROM discovery.funnel_candidates WHERE page_id='FONE1'"))
+
+
+from agf.discovery.funnel_confirm import funnel_confirm_due
+
+
+def test_funnel_confirm_due_skips_ttl_marked(_migrated_engine):
+    eng = _migrated_engine
+    from agf.db.funnel_candidates import upsert_funnel_candidate
+    from agf.workers.scheduler import mark_crawled
+    base = dict(page_name="Due", page_like_count=1, cta_type="LEARN_MORE",
+                utm_source=None, utm_medium=None, utm_campaign=None, utm_content=None,
+                ad_start_date=None, source_keyword="q", technique="funnel_phrase", funnel_host=None)
+    with eng.begin() as conn:
+        conn.execute(text("DELETE FROM discovery.funnel_candidates WHERE page_id LIKE 'FDUE%'"))
+        for n in (1, 2):
+            upsert_funnel_candidate(conn, {**base, "page_id": f"FDUE{n}",
+                "landing_url": f"https://fdue{n}.io/s", "landing_domain": f"fdue{n}.io"})
+        ids = [r.id for r in conn.execute(text("SELECT id FROM discovery.funnel_candidates WHERE page_id LIKE 'FDUE%' ORDER BY page_id")).all()]
+        mark_crawled(conn, "funnel_confirm", ids[0], "ok")   # fresh marker -> suppressed
+    try:
+        with eng.connect() as conn:
+            due = funnel_confirm_due(conn, ttl_hours=6, limit=200)
+        assert ids[1] in due and ids[0] not in due
+    finally:
+        with eng.begin() as conn:
+            conn.execute(text("DELETE FROM discovery.funnel_candidates WHERE page_id LIKE 'FDUE%'"))
+            conn.execute(text("DELETE FROM logging.crawl_log WHERE entity_type='funnel_confirm' AND entity_id = ANY(CAST(:a AS bigint[]))"), {"a": ids})

@@ -118,7 +118,8 @@ from agf.db.generic_deep_runs import (close_generic_deep_run,
 from agf.db.funnel_candidates import (close_funnel_sweep_run, funnel_deep_ran_within_days,
                                       funnel_sweep_ran_today, funnel_sweep_ran_within,
                                       open_funnel_sweep_run)
-from agf.discovery.funnel_confirm import run_funnel_confirm, _confirm_looks_stalled
+from agf.discovery.funnel_confirm import (run_funnel_confirm, _confirm_looks_stalled,
+                                          funnel_confirm_due)
 import agf.discovery.keyword_redundancy as _kr
 from agf.discovery.keyword_redundancy import (admit_by_novelty,
                                               drop_token_supersets,
@@ -387,7 +388,7 @@ def websub_bridge_per_cycle() -> int:
 # --- funnel stage --------------------------------------------------------------
 def run_funnel_stage(engine, extractor, *, max_pages=8, kw_delay=3.0,
                      confirm_limit=50, deep=False, deep_pages=100,
-                     resolve=None, probe=None) -> dict:
+                     resolve=None, probe=None, confirm_inline: bool = True) -> dict:
     """One funnel sweep+confirm pass — the web2app sibling of the app discovery stage.
     Sweep: the funnel_phrase layer -> discovery.funnel_candidates (Meta via the proxied
     extractor) deep enough to reach the smaller advertisers below the big spenders.
@@ -433,16 +434,19 @@ def run_funnel_stage(engine, extractor, *, max_pages=8, kw_delay=3.0,
             print(f"[worker] funnel deep sweep failed: {exc!r}", file=sys.stderr, flush=True)
             deep_stats = None
         _touch_heartbeat()
-    confirm = run_funnel_confirm(engine, resolve=resolve, probe=probe,
-                                 limit=confirm_limit)
-    _touch_heartbeat()
-    if _confirm_looks_stalled(confirm):
-        # Nearly every landing probe failed and nothing confirmed — the render path is
-        # likely broken (dead browser/proxy). This exact state ran silently 2026-07-12..20
-        # because probe failures were swallowed; surface it loudly so it can't hide again.
-        print(f"[worker] funnel confirm STALLED: {confirm['probe_failed']}/{confirm['examined']} "
-              f"probes failed, 0 confirmed — landing render likely broken",
-              file=sys.stderr, flush=True)
+    if confirm_inline:
+        confirm = run_funnel_confirm(engine, resolve=resolve, probe=probe,
+                                     limit=confirm_limit)
+        _touch_heartbeat()
+        if _confirm_looks_stalled(confirm):
+            # Nearly every landing probe failed and nothing confirmed — the render path is
+            # likely broken (dead browser/proxy). This exact state ran silently 2026-07-12..20
+            # because probe failures were swallowed; surface it loudly so it can't hide again.
+            print(f"[worker] funnel confirm STALLED: {confirm['probe_failed']}/{confirm['examined']} "
+                  f"probes failed, 0 confirmed — landing render likely broken",
+                  file=sys.stderr, flush=True)
+    else:
+        confirm = {"skipped": "daemon"}
     return {"sweep": sweep, "deep": deep_stats, "confirm": confirm}
 
 
@@ -743,6 +747,23 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
             print(f"[worker] keeper enqueue failed: {exc!r}", file=sys.stderr,
                   flush=True)
 
+    # 1.85) funnel confirm — CONTINUOUS: each tick enqueues due 'new' funnel
+    #       candidates (kind='funnel_confirm') and the funnel_confirm daemon drains
+    #       them off the tick (design 2026-07-20). The in-tick confirm stays behind
+    #       AGF_FUNNEL_CONFIRM_INLINE=1 as a fallback. Failure-isolated from the tick.
+    funnel_confirm_enqueued = 0
+    if not dry_run and _env_int("AGF_FUNNEL_CONFIRM_INLINE", 0) == 0:
+        try:
+            with begin(engine) as conn:
+                due_ids = funnel_confirm_due(
+                    conn, ttl_hours=_env_int("AGF_FUNNEL_CONFIRM_TTL_HOURS", 6),
+                    limit=_env_int("AGF_FUNNEL_CONFIRM_JOBS_PER_TICK", 200))
+                funnel_confirm_enqueued = enqueue_jobs(conn, "funnel_confirm", due_ids)
+            if funnel_confirm_enqueued:
+                print(f"[worker] funnel_confirm enqueued {funnel_confirm_enqueued}", flush=True)
+        except Exception as exc:
+            print(f"[worker] funnel_confirm enqueue failed: {exc!r}", file=sys.stderr, flush=True)
+
     keeper_history = None
     if sweep_due and _env_int("AGF_KEEPER_HISTORY_INLINE", 0):
         keeper_history = asyncio.run(pull_keeper_history(
@@ -770,6 +791,7 @@ def run_once(engine, extractor, *, now_epoch, as_of, dry_run, http_client=None,
                 funnel = run_funnel_stage(engine, extractor, max_pages=funnel_pages,
                                           kw_delay=kw_delay,
                                           confirm_limit=funnel_confirm_limit,
+                                          confirm_inline=_env_int("AGF_FUNNEL_CONFIRM_INLINE", 0) == 1,
                                           deep=deep_due, deep_pages=funnel_deep_pages)
                 with begin(engine) as conn:
                     close_funnel_sweep_run(conn, f_run_id, stats=funnel)

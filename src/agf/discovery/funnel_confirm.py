@@ -185,6 +185,25 @@ def _confirm_looks_stalled(stats) -> bool:
             and stats.get("probe_failed", 0) >= int(0.9 * ex))
 
 
+def funnel_confirm_due(conn, *, ttl_hours: int = 6, limit: int = 200) -> list[int]:
+    """Candidate ids status='new' minus those with a logging.crawl_log row of
+    entity_type='funnel_confirm' fresher than ttl_hours (so a candidate that stayed
+    'new' after a below-cap probe fail waits out the TTL instead of hot-looping the
+    queue). Oldest first, bounded by limit. A confirmed/dropped candidate leaves
+    'new' and drops out of the base query — no success bookkeeping needed here."""
+    return [r[0] for r in conn.execute(text("""
+        SELECT fc.id
+        FROM discovery.funnel_candidates fc
+        WHERE fc.status = 'new'
+          AND NOT EXISTS (SELECT 1 FROM logging.crawl_log l
+                          WHERE l.entity_type = 'funnel_confirm'
+                            AND l.entity_id = fc.id
+                            AND l.crawled_at > now() - make_interval(hours => :ttl))
+        ORDER BY fc.first_seen_at, fc.id
+        LIMIT :lim
+    """), {"ttl": ttl_hours, "lim": limit}).all()]
+
+
 def _confirm_candidate(engine, r, *, resolve, probe, attempt_cap, stats) -> None:
     """Confirm ONE funnel-candidate row (mutates stats). Extracted verbatim from the
     run_funnel_confirm loop so the daemon one-shot and the batch path share logic."""
