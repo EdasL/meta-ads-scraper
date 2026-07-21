@@ -170,6 +170,26 @@ services:
       cloud-sql-proxy:
         condition: service_started
 
+  # Funnel-confirm consumer: drains kind='funnel_confirm' pipeline_jobs (the
+  # candidate id travels in the advertiser_id column). Single render lane — the VM
+  # is 2 vCPU and one continuous lane keeps pace with inflow + drains the backlog
+  # without starving the worker. Needs the Playwright/chromium runtime (funnel
+  # render) + proxies (MMP deeplink resolve). design 2026-07-20.
+  funnel-confirm:
+    image: europe-west1-docker.pkg.dev/peon-489013/agf/worker:latest
+    restart: unless-stopped
+    init: true
+    command: python -m agf.discovery.funnel_confirm_daemon
+    environment:
+      AGF_DATABASE_URL: ${AGF_DATABASE_URL}
+      AGF_PROXIES: ${AGF_PROXIES}
+      AGF_FUNNEL_CONFIRM_LANES: ${AGF_FUNNEL_CONFIRM_LANES:-1}
+      AGF_FUNNEL_CONFIRM_ONE_TIMEOUT_SEC: ${AGF_FUNNEL_CONFIRM_ONE_TIMEOUT_SEC:-90}
+      AGF_FUNNEL_CONFIRM_POLL_SEC: ${AGF_FUNNEL_CONFIRM_POLL_SEC:-5}
+    depends_on:
+      cloud-sql-proxy:
+        condition: service_started
+
   # Hunt consumer: drains kind='hunt' pipeline_jobs (round_id travels in the
   # advertiser_id column). Dedicated single-lane service so a founder-started
   # hunt round is claimed within ~AGF_HUNT_POLL_SEC even when keeper/pipeline
