@@ -131,6 +131,44 @@ export function splitByRelevance(results: HuntResult[]): {
   return { onTarget, offTarget };
 }
 
+export interface RolledResult {
+  page_id: string;
+  rep: HuntResult;
+  stores: { store: string; link_url: string | null }[];
+  fold_count: number;
+  triage: "pending" | "kept" | "vetoed";
+}
+
+/** Collapse a round's rows to one entry per page_id, preserving first-seen order.
+ *  rep = the group's resolved row (kept_advertiser_id set) if any, else the first.
+ *  stores = distinct store values (first-seen order) with each store's link.
+ *  triage = "kept" if any row in the group is kept, else rep's triage. */
+export function rollupByPage(results: HuntResult[]): RolledResult[] {
+  const order: string[] = [];
+  const groups = new Map<string, HuntResult[]>();
+  for (const r of results) {
+    const g = groups.get(r.page_id);
+    if (g) g.push(r);
+    else {
+      groups.set(r.page_id, [r]);
+      order.push(r.page_id);
+    }
+  }
+  return order.map((page_id) => {
+    const rows = groups.get(page_id)!;
+    const rep = rows.find((r) => r.kept_advertiser_id != null) ?? rows[0];
+    const seen = new Set<string>();
+    const stores: { store: string; link_url: string | null }[] = [];
+    for (const r of rows) {
+      if (seen.has(r.store)) continue;
+      seen.add(r.store);
+      stores.push({ store: r.store, link_url: r.link_url });
+    }
+    const triage = rows.some((r) => r.triage === "kept") ? "kept" : rep.triage;
+    return { page_id, rep, stores, fold_count: rows.length, triage };
+  });
+}
+
 /** True while any round is still queued or running (drives live polling). */
 export function huntIsActive(rounds: HuntRound[]): boolean {
   return rounds.some((r) => r.status === "queued" || r.status === "running");

@@ -231,3 +231,46 @@ test("splitByRelevance keeps null/relevant on target, moves off_target", () => {
   assert.deepEqual(onTarget.map((r) => r.id), [1, 2]);
   assert.deepEqual(offTarget.map((r) => r.id), [3]);
 });
+
+// --- rollupByPage ------------------------------------------------------------
+
+import { rollupByPage } from "./hunt.ts";
+
+function hr(over: Partial<import("./api").HuntResult>): import("./api").HuntResult {
+  return {
+    id: 1, round_id: 1, page_id: "P", page_name: "Page", store: "web",
+    store_id: "x", link_url: "https://x/", source_term: "t", was_new: false,
+    triage: "kept", kept_advertiser_id: null, gem_score: null, page: null,
+    app_name: null, icon_url: null, tagline: null, cohort: null, saved: false,
+    rating: null, relevance: null, relevance_note: null, ...over,
+  };
+}
+
+test("rollupByPage collapses a page's rows and unions its stores", () => {
+  const rows = [
+    hr({ id: 1, page_id: "A", store: "ios", link_url: "https://ios/a", kept_advertiser_id: 42, gem_score: 41, app_name: "Coopah" }),
+    hr({ id: 2, page_id: "A", store: "android", link_url: "https://and/a" }),
+    hr({ id: 3, page_id: "A", store: "web", link_url: "https://web/a" }),
+    hr({ id: 4, page_id: "B", store: "web", link_url: "https://web/b" }),
+  ];
+  const out = rollupByPage(rows);
+  assert.equal(out.length, 2, "two pages -> two cards");
+  const a = out[0];
+  assert.equal(a.page_id, "A");
+  assert.equal(a.fold_count, 3);
+  assert.deepEqual(a.stores.map((s) => s.store), ["ios", "android", "web"]);
+  assert.equal(a.rep.id, 1, "representative is the resolved row");
+  assert.equal(a.rep.kept_advertiser_id, 42);
+  assert.equal(out[1].fold_count, 1);
+});
+
+test("rollupByPage picks first row when none resolved, and keeps kept triage", () => {
+  const rows = [
+    hr({ id: 1, page_id: "A", store: "web", triage: "vetoed", kept_advertiser_id: null }),
+    hr({ id: 2, page_id: "A", store: "ios", triage: "kept", kept_advertiser_id: null }),
+  ];
+  const out = rollupByPage(rows);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].rep.id, 1, "no resolved row -> first row is representative");
+  assert.equal(out[0].triage, "kept", "any kept -> group triage is kept");
+});
