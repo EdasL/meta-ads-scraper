@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { IconHeart, IconHeartFilled } from "@tabler/icons-react";
 import { ScoreBadge } from "@/components/ui";
-import { formatSettings, latestEvents, splitByRelevance } from "@/lib/hunt";
+import { formatSettings, latestEvents, splitByRelevance, rollupByPage, type RolledResult } from "@/lib/hunt";
 import { setRating } from "@/lib/api";
 import type { HuntResult, HuntRound } from "@/lib/api";
 import { save, unsave, useIsSaved } from "@/lib/useSaved";
@@ -142,7 +142,8 @@ function HeartButton({ result: r, userEmail }: { result: HuntResult; userEmail: 
 /** One found app as a card: icon, name, store badge, GemScore, tagline, and a
  *  save control once the app is kept. All fields are real data from the round;
  *  missing fields render nothing (no placeholders). */
-function ResultCard({ result: r, userEmail }: { result: HuntResult; userEmail: string | null }) {
+function ResultCard({ group: g, userEmail }: { group: RolledResult; userEmail: string | null }) {
+  const r = g.rep;
   const scored = r.gem_score != null && r.kept_advertiser_id != null;
   const name = r.app_name ?? r.page_name ?? r.store_id;
   return (
@@ -174,9 +175,16 @@ function ResultCard({ result: r, userEmail }: { result: HuntResult; userEmail: s
               {name}
             </span>
           )}
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 2 }}>
-            <StoreBadge store={r.store} href={r.link_url} />
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 2, flexWrap: "wrap" }}>
+            {g.stores.map((s) => (
+              <StoreBadge key={s.store} store={s.store} href={s.link_url} />
+            ))}
             {scored && <ScoreBadge score={r.gem_score!} variant="card" />}
+            {g.fold_count > 1 && (
+              <span className="t-xs nums" style={{ color: "var(--muted)" }} title="Ads folded into this page">
+                ·{g.fold_count} ads
+              </span>
+            )}
           </div>
         </div>
         {r.kept_advertiser_id != null && userEmail && <HeartButton result={r} userEmail={userEmail} />}
@@ -203,7 +211,7 @@ function ResultCard({ result: r, userEmail }: { result: HuntResult; userEmail: s
             New
           </span>
         )}
-        <TriageState triage={r.triage} />
+        <TriageState triage={g.triage} />
       </div>
     </div>
   );
@@ -301,8 +309,8 @@ export function RoundBlock({
 
       {onTarget.length > 0 && (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 10 }}>
-          {onTarget.map((r) => (
-            <ResultCard key={r.id} result={r} userEmail={userEmail} />
+          {rollupByPage(onTarget).map((g) => (
+            <ResultCard key={g.page_id} group={g} userEmail={userEmail} />
           ))}
         </div>
       )}
@@ -313,12 +321,12 @@ export function RoundBlock({
             Off target ({offTarget.length})
           </summary>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 10 }}>
-            {offTarget.map((r) => (
-              <div key={r.id}>
-                <ResultCard result={r} userEmail={userEmail} />
-                {r.relevance_note && (
+            {rollupByPage(offTarget).map((g) => (
+              <div key={g.page_id}>
+                <ResultCard group={g} userEmail={userEmail} />
+                {g.rep.relevance_note && (
                   <p className="t-xs" style={{ color: "var(--muted)", margin: "2px 0 0" }}>
-                    {r.relevance_note}
+                    {g.rep.relevance_note}
                   </p>
                 )}
               </div>
