@@ -15,6 +15,7 @@ import {
   sortGroups,
   memberOfFolder,
   countByFolder,
+  membershipKey,
   withFolderId,
   withoutFolderId,
   reconcileGroupMerge,
@@ -152,6 +153,12 @@ test("countByFolder tallies every membership, multi-membership included", () => 
   assert.equal(counts.get(2), 2);
   assert.equal(counts.get(5), 1);
   assert.equal(counts.get(999), undefined);
+});
+
+test("membershipKey is stable and collision-free across pairs", () => {
+  assert.equal(membershipKey(10, 2), "10:2");
+  assert.notEqual(membershipKey(10, 2), membershipKey(102, 0));
+  assert.notEqual(membershipKey(1, 2), membershipKey(2, 1));
 });
 
 test("withFolderId adds once and is immutable; withoutFolderId removes", () => {

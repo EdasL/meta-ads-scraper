@@ -10,6 +10,7 @@ import {
   getGroupsSnapshot,
   getLikedServerSnapshot,
   getLikedSnapshot,
+  getPendingMemberships,
   getServerSnapshot,
   getSnapshot,
   subscribe,
@@ -19,6 +20,9 @@ import {
   type SavedGem,
   type SavedGroup,
 } from "./saved";
+
+const EMPTY_PENDING: ReadonlySet<string> = new Set();
+const getPendingServerSnapshot = () => EMPTY_PENDING;
 
 export function useSavedList(): SavedGem[] {
   return useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
@@ -32,6 +36,11 @@ export function useSavedGroups(): SavedGroup[] {
 /** The built-in Liked collection (rated_at DESC). Empty until hydrated. */
 export function useLikedGems(): LikedGem[] {
   return useSyncExternalStore(subscribeLiked, getLikedSnapshot, getLikedServerSnapshot);
+}
+
+/** In-flight membership writes (`membershipKey` entries), for pending rows. */
+export function usePendingMemberships(): ReadonlySet<string> {
+  return useSyncExternalStore(subscribe, getPendingMemberships, getPendingServerSnapshot);
 }
 
 export function useIsSaved(advertiserId: number): boolean {

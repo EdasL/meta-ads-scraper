@@ -22,6 +22,7 @@ import {
 } from "./api";
 import {
   makeSavedGem,
+  membershipKey,
   rebuildTagRegistry,
   reconcileGroupMerge,
   sortGroups,
@@ -454,32 +455,70 @@ export function deleteGroup(id: number): void {
   removeSavedGroup(id).catch(onSyncError);
 }
 
+/** Membership writes currently in flight (`membershipKey` entries). Replaced
+ * immutably so it can be a useSyncExternalStore snapshot; the menu renders
+ * pending rows from it. */
+let pendingMemberships: ReadonlySet<string> = new Set();
+
+export function getPendingMemberships(): ReadonlySet<string> {
+  return pendingMemberships;
+}
+
+function markMembershipPending(key: string, pending: boolean) {
+  const next = new Set(pendingMemberships);
+  if (pending) next.add(key);
+  else next.delete(key);
+  pendingMemberships = next;
+  notify();
+}
+
+/** Run one membership write with pending-set bookkeeping. The returned promise
+ * REJECTS on failure so the menu can show its error state; the store-level
+ * rollback (onSyncError rehydrate) is attached here, and so is a no-op catch —
+ * callers that ignore the promise never cause an unhandled rejection. */
+function persistMembership(key: string, write: () => Promise<void>): Promise<void> {
+  markMembershipPending(key, true);
+  const p = write()
+    .catch((e: unknown) => {
+      onSyncError(e);
+      throw e;
+    })
+    .finally(() => markMembershipPending(key, false));
+  p.catch(() => {});
+  return p;
+}
+
 /** Add a gem to a folder (playlist model — idempotent, additive). For a temp
  * folder the persist waits for reconcileGroup, which re-homes the membership
- * onto the real id the moment the create answers. */
-export function addToFolder(advertiserId: number, folderId: number): void {
+ * onto the real id the moment the create answers. Resolves when the write
+ * lands; rejects on failure (local state rolls back via rehydrate). */
+export function addToFolder(advertiserId: number, folderId: number): Promise<void> {
   const map = ensureCache();
   const gem = map[advertiserId];
-  if (!gem || gem.groupIds.includes(folderId)) return;
+  if (!gem || gem.groupIds.includes(folderId)) return Promise.resolve();
   cache = { ...map, [advertiserId]: withFolderId(gem, folderId) };
   recompute();
   notify();
-  if (!userEmail || isTemp(folderId)) return;
-  addSavedGroupGem(folderId, advertiserId).catch(onSyncError);
+  if (!userEmail || isTemp(folderId)) return Promise.resolve();
+  return persistMembership(membershipKey(advertiserId, folderId), () =>
+    addSavedGroupGem(folderId, advertiserId),
+  );
 }
 
 /** Remove a gem from a folder. A temp folder has no backend rows yet — the
  * local removal is enough (reconcileGroup only re-homes memberships that are
  * still present). */
-export function removeFromFolder(advertiserId: number, folderId: number): void {
+export function removeFromFolder(advertiserId: number, folderId: number): Promise<void> {
   const map = ensureCache();
   const gem = map[advertiserId];
-  if (!gem || !gem.groupIds.includes(folderId)) return;
+  if (!gem || !gem.groupIds.includes(folderId)) return Promise.resolve();
   cache = { ...map, [advertiserId]: withoutFolderId(gem, folderId) };
   recompute();
   notify();
-  if (!userEmail || isTemp(folderId)) return;
-  removeSavedGroupGem(folderId, advertiserId).catch(onSyncError);
+  if (!userEmail || isTemp(folderId)) return Promise.resolve();
+  return persistMembership(membershipKey(advertiserId, folderId), () =>
+    removeSavedGroupGem(folderId, advertiserId),
+  );
 }
 
 // --- external store (for useSyncExternalStore) ---

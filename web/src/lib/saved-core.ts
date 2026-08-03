@@ -149,6 +149,12 @@ export function countByFolder(gems: SavedGem[]): Map<number, number> {
   return counts;
 }
 
+/** Key for one in-flight membership write, for the pending set the menu
+ * renders from. One string so a Set can hold advertiser+folder pairs. */
+export function membershipKey(advertiserId: number, folderId: number): string {
+  return `${advertiserId}:${folderId}`;
+}
+
 /** Immutably add a folder membership (deduped). */
 export function withFolderId(gem: SavedGem, folderId: number): SavedGem {
   if (gem.groupIds.includes(folderId)) return gem;
