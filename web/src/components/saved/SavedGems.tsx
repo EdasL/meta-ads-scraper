@@ -14,7 +14,7 @@ import { createGroup, deleteGroup, renameGroup, useLikedGems, useSavedGroups, us
 import { EmptyState } from "@/components/ui";
 import { FolderMenu } from "./FolderMenu";
 import { FolderTiles } from "./FolderTiles";
-import { LikedCard, SavedCard } from "./SavedCard";
+import { LikedRow, SavedCard } from "./SavedCard";
 
 const page: React.CSSProperties = { maxWidth: 1100, margin: "0 auto", padding: "24px 22px 80px" };
 const selectStyle: React.CSSProperties = {
@@ -236,9 +236,9 @@ export function SavedGems() {
           </p>
         ) : (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(230px, 1fr))", gap: 12 }}>
-            {rows.map(({ item, gem }) =>
-              gem ? <SavedCard key={item.advertiserId} gem={gem} /> : <LikedCard key={item.advertiserId} item={item} />,
-            )}
+            {rows.map(({ item, gem }) => (
+              <LikedRow key={item.advertiserId} item={item} gem={gem} />
+            ))}
           </div>
         )}
       </main>

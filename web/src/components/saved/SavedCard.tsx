@@ -75,11 +75,16 @@ export function SavedCard({ gem }: { gem: SavedGem }) {
   );
 }
 
-/** A liked-but-unsaved app in the Liked view: same card shape, but only the
- * pieces that exist without a saved row — icon, name, GemScore, the save
- * heart, and when it was liked. Saving it upgrades it to a full SavedCard. */
-export function LikedCard({ item }: { item: LikedGem }) {
-  const name = item.appName ?? item.pageName;
+/** One row of the Liked view — BOTH variants of a liked app, saved and not.
+ * A single component (not LikedCard/SavedCard swapped by type) so the
+ * FolderPicker keeps the same element type at the same child position when a
+ * heart press saves the gem: React's index-based reconciliation then updates
+ * the existing picker instance in place and the popover the press just opened
+ * stays open across the upgrade. The saved variant grows the SavedCard body
+ * (metric, tags, note) BELOW the picker's position; the header never changes
+ * shape. */
+export function LikedRow({ item, gem }: { item: LikedGem; gem?: SavedGem }) {
+  const name = gem ? (gem.appName ?? gem.pageName) : (item.appName ?? item.pageName);
   // The heart saves through the store, which snapshots a ShortlistRow. The
   // liked row only carries identity + score; the axes it lacks freeze as 0.
   const row = {
@@ -101,11 +106,12 @@ export function LikedCard({ item }: { item: LikedGem }) {
     growth: null,
     hero_creative: null,
   } as ShortlistRow;
+  const iconUrl = gem?.iconUrl ?? item.iconUrl;
 
   return (
     <div style={{ border: "1.5px solid var(--ink)", background: "var(--paper)", boxShadow: "var(--shadow-hard)", padding: 10, display: "flex", flexDirection: "column", gap: 8 }}>
       <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
-        <AppIcon src={item.iconUrl} name={name} size={44} />
+        <AppIcon src={iconUrl} name={name} size={44} />
         <Link
           href={`/gems/${item.advertiserId}`}
           className="t-sm w-strong"
@@ -126,9 +132,31 @@ export function LikedCard({ item }: { item: LikedGem }) {
         </Link>
         <FolderPicker advertiserId={item.advertiserId} row={row} variant="heart" size="sm" />
       </div>
+      {gem && (
+        <>
+          <div>
+            <div className="eyebrow" style={{ marginBottom: 2 }}>Ads at save</div>
+            <Trend glyph={null} label={`${gem.scoreSnapshot.activeAdCount} ads live`} tone="flat" />
+          </div>
+          {gem.tags.length > 0 && (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              {gem.tags.map((t) => (
+                <span key={t} className="font-mono" style={{ fontSize: "var(--fs-xs)", color: "var(--muted)", border: "1px solid var(--line)", padding: "1px 6px" }}>#{t}</span>
+              ))}
+            </div>
+          )}
+          {gem.note ? (
+            <p className="t-sm" style={{ color: "var(--ink-soft)", margin: 0, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{gem.note}</p>
+          ) : (
+            <Link href={`/gems/${item.advertiserId}`} className="t-sm" style={{ color: "var(--muted)" }}>No note yet — add one.</Link>
+          )}
+        </>
+      )}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginTop: "auto", paddingTop: 8, borderTop: "1px solid var(--line)" }}>
-        <span className="t-md w-heavy nums">{Math.round(item.gemScore)}</span>
-        <span className="font-mono nums" style={{ fontSize: "var(--fs-xs)", color: "var(--muted)", whiteSpace: "nowrap" }}>Liked {fmtDate(item.ratedAt)}</span>
+        <span className="t-md w-heavy nums">{Math.round(gem?.scoreSnapshot.gemScore ?? item.gemScore)}</span>
+        <span className="font-mono nums" style={{ fontSize: "var(--fs-xs)", color: "var(--muted)", whiteSpace: "nowrap" }}>
+          {gem ? `Saved ${fmtDate(gem.savedAt)}` : `Liked ${fmtDate(item.ratedAt)}`}
+        </span>
       </div>
     </div>
   );
