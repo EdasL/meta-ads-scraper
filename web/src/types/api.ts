@@ -250,15 +250,15 @@ export interface ApiSavedGem {
   stage: string;
   verdict: string | null;
   confidence: number | null;
-  /** Board column this gem is filed under; null = never filed. */
+  /** Folder this gem is filed under; null = unfiled (visible under All only). */
   group_id: number | null;
   saved_at: string | null;
   updated_at: string | null;
 }
 
-/** `SavedGroupRow` (backend models.go) — one column of the /saved board. Groups
- * are per user (identity comes from the session token, never a param) and the
- * backend seeds four defaults the first time a user lists them. */
+/** `SavedGroupRow` (backend models.go) — one folder on /saved. Folders are per
+ * user (identity comes from the session token, never a param); a new user has
+ * none until they create one. */
 export interface ApiSavedGroup {
   id: number;
   name: string;
@@ -290,8 +290,9 @@ export interface ApiSavedGemIn {
   stage: string;
   verdict: string | null;
   confidence: number | null;
-  /** Board column. The backend applies this with COALESCE, so `null` means
-   * "keep whatever is stored" — it does NOT clear the assignment. */
+  /** Folder. The backend applies this with COALESCE, so `null` means "keep
+   * whatever is stored" — it does NOT clear the assignment. Sending the
+   * sentinel `0` unfiles the gem (writes NULL; 0 is never a real id). */
   group_id: number | null;
 }
 

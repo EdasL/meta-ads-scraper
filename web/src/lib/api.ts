@@ -194,18 +194,18 @@ export async function removeSavedGem(advertiserId: number, userEmail: string): P
   });
 }
 
-// --- Saved groups (the /saved board columns) ---
+// --- Saved groups (the /saved folders) ---
 // Unlike the saved-gem calls above, these take NO user_email: the owner is the
 // session identity the proxy attaches (X-User-Email), so a caller cannot read
-// or write another user's board.
+// or write another user's folders.
 
-/** List the signed-in user's board columns. The backend seeds four defaults on
- *  a first call, so this never comes back empty. */
+/** List the signed-in user's folders. Empty for a user who has never created
+ *  one — the backend does not seed defaults. */
 export async function getSavedGroups(): Promise<ApiSavedGroup[]> {
   return live<ApiSavedGroup[]>(`/saved-groups`);
 }
 
-/** Append a column at the right edge; returns the created row (real id). */
+/** Append a folder at the end; returns the created row (real id). */
 export async function createSavedGroup(name: string): Promise<ApiSavedGroup> {
   return live<ApiSavedGroup>(`/saved-groups`, {
     method: "POST",
@@ -213,13 +213,13 @@ export async function createSavedGroup(name: string): Promise<ApiSavedGroup> {
   });
 }
 
-/** Rename and/or reposition one column. */
+/** Rename and/or reposition one folder. */
 export async function updateSavedGroup(id: number, patch: ApiSavedGroupPatch): Promise<void> {
   await live(`/saved-groups/${id}/update`, { method: "POST", body: JSON.stringify(patch) });
 }
 
-/** Delete a column; its gems move to the first remaining one. Deleting the last
- *  column is refused by the backend (409). */
+/** Delete a folder; the backend unfiles its gems (group_id → NULL). Deleting
+ *  down to zero folders is allowed. */
 export async function removeSavedGroup(id: number): Promise<void> {
   await live(`/saved-groups/${id}/remove`, { method: "POST", body: "{}" });
 }
