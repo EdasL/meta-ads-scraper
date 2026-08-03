@@ -233,6 +233,47 @@ export function FolderPicker({
 
   return (
     <span ref={wrapRef} style={{ display: "inline-flex" }}>
+      {/* Rendered unconditionally: the trigger needs .fp-press before the
+          first open, not only once the popover has mounted. */}
+      <style>{`
+        .fp-press { transition: transform 0.15s ease-out; }
+        .fp-press:active { transform: scale(0.97); }
+        .fp-row { transition: opacity 0.15s ease-out; }
+        .fp-fill {
+          width: 100%;
+          height: 100%;
+          background: var(--ink);
+          transform: scale(1);
+          opacity: 1;
+          transition: transform 0.2s ease-out, opacity 0.2s ease-out;
+        }
+        @starting-style {
+          .fp-fill { transform: scale(0.9); opacity: 0; }
+        }
+        .fp-pending-dot {
+          width: 6px;
+          height: 6px;
+          background: var(--muted);
+        }
+        @keyframes fp-shake {
+          0% { transform: translateX(0); }
+          12.5% { transform: translateX(-3px); }
+          37.5% { transform: translateX(3px); }
+          62.5% { transform: translateX(-3px); }
+          87.5% { transform: translateX(3px); }
+          100% { transform: translateX(0); }
+        }
+        .fp-shake { animation: fp-shake 0.25s ease-out; }
+        @media (prefers-reduced-motion: reduce) {
+          .fp-press { transition: none; }
+          .fp-press:active { transform: none; }
+          .fp-fill { transition: opacity 0.2s ease-out; transform: none; }
+          @starting-style {
+            .fp-fill { transform: none; opacity: 0; }
+          }
+          .fp-shake { animation: none; }
+        }
+      `}</style>
       {variant === "heart" ? (
         <button
           ref={btnRef}
@@ -306,45 +347,6 @@ export function FolderPicker({
             boxShadow: "var(--shadow-hard)",
           }}
         >
-          <style>{`
-            .fp-press { transition: transform 0.15s ease-out; }
-            .fp-press:active { transform: scale(0.97); }
-            .fp-row { transition: opacity 0.15s ease-out; }
-            .fp-fill {
-              width: 100%;
-              height: 100%;
-              background: var(--ink);
-              transform: scale(1);
-              opacity: 1;
-              transition: transform 0.2s ease-out, opacity 0.2s ease-out;
-            }
-            @starting-style {
-              .fp-fill { transform: scale(0.9); opacity: 0; }
-            }
-            .fp-pending-dot {
-              width: 6px;
-              height: 6px;
-              background: var(--muted);
-            }
-            @keyframes fp-shake {
-              0% { transform: translateX(0); }
-              12.5% { transform: translateX(-3px); }
-              37.5% { transform: translateX(3px); }
-              62.5% { transform: translateX(-3px); }
-              87.5% { transform: translateX(3px); }
-              100% { transform: translateX(0); }
-            }
-            .fp-shake { animation: fp-shake 0.25s ease-out; }
-            @media (prefers-reduced-motion: reduce) {
-              .fp-press { transition: none; }
-              .fp-press:active { transform: none; }
-              .fp-fill { transition: opacity 0.2s ease-out; transform: none; }
-              @starting-style {
-                .fp-fill { transform: none; opacity: 0; }
-              }
-              .fp-shake { animation: none; }
-            }
-          `}</style>
           {pickerRow(
             LIKED_ROW,
             "Liked",

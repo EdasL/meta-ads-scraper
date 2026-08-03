@@ -22,24 +22,32 @@ const selectStyle: React.CSSProperties = {
  */
 export function GemNotes({ row }: { row: ShortlistRow }) {
   const saved = useSavedGem(row.advertiser_id);
+  const suggestions = saved ? allTags() : [];
 
-  if (!saved) {
-    return (
-      <section style={{ border: "1px dashed var(--line)", padding: 18, textAlign: "center", display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}>
-        <p className="t-sm" style={{ color: "var(--muted)", margin: 0 }}>Save it to keep notes and tags.</p>
-        <FolderPicker advertiserId={row.advertiser_id} row={row} variant="heart" />
-      </section>
-    );
-  }
-
-  const suggestions = allTags();
+  // ONE FolderPicker element for both states: the section, the header row,
+  // and the picker's child position never change across the save transition,
+  // so React's index-based reconciliation keeps the SAME component instance
+  // (same type, same position, only props change) — the picker a heart press
+  // just opened survives the unsaved→saved branch swap instead of remounting
+  // closed. Only the sibling text and the section chrome vary.
   return (
-    <section style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+    <section
+      style={
+        saved
+          ? { display: "flex", flexDirection: "column", gap: 14 }
+          : { border: "1px dashed var(--line)", padding: 18, display: "flex", flexDirection: "column", gap: 12 }
+      }
+    >
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
-        <h2 className="t-md w-strong" style={{ margin: 0 }}>Your notes</h2>
-        <FolderPicker advertiserId={row.advertiser_id} row={row} variant="heart" size="sm" />
+        {saved ? (
+          <h2 className="t-md w-strong" style={{ margin: 0 }}>Your notes</h2>
+        ) : (
+          <p className="t-sm" style={{ color: "var(--muted)", margin: 0 }}>Save it to keep notes and tags.</p>
+        )}
+        <FolderPicker advertiserId={row.advertiser_id} row={row} variant="heart" size={saved ? "sm" : "md"} />
       </div>
 
+      {saved && (<>
       <NoteEditor key={saved.advertiserId} value={saved.note} onSave={(v) => setNote(saved.advertiserId, v)} />
 
       <TagInput
@@ -64,6 +72,7 @@ export function GemNotes({ row }: { row: ShortlistRow }) {
           </select>
         </label>
       </div>
+      </>)}
     </section>
   );
 }
