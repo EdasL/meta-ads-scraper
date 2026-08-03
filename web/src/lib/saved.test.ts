@@ -14,6 +14,7 @@ import {
   rebuildTagRegistry,
   sortGroups,
   bucketByGroup,
+  reconcileGroupMerge,
   type SavedGroup,
 } from "./saved-core.ts";
 
@@ -183,4 +184,59 @@ test("bucketByGroup sorts each bucket by savedAt DESC", () => {
 test("bucketByGroup returns an empty map when there are no groups", () => {
   const buckets = bucketByGroup([gem(10, null, "2026-06-01T00:00:00Z")], []);
   assert.equal(buckets.size, 0);
+});
+
+// --- reconciling an optimistic create ---
+// The board opens a new column straight into rename mode, so an edit against the
+// temp id during the create round-trip is the common case, not the rare one.
+
+const submitted = group(-1, "New group", 4);
+const serverRow = group(77, "New group", 4);
+
+test("reconcileGroupMerge takes the server row when nothing changed mid-flight", () => {
+  const { row, needsPersist } = reconcileGroupMerge(submitted, submitted, serverRow);
+  assert.deepEqual(row, { id: 77, name: "New group", position: 4 });
+  assert.equal(needsPersist, false);
+});
+
+test("reconcileGroupMerge keeps a mid-flight rename and flags it for persist", () => {
+  const local = { ...submitted, name: "Paid social" };
+  const { row, needsPersist } = reconcileGroupMerge(local, submitted, serverRow);
+  assert.equal(row.id, 77); // real id, always
+  assert.equal(row.name, "Paid social"); // the user's typing survives
+  assert.equal(row.position, 4); // untouched → server's value
+  assert.equal(needsPersist, true);
+});
+
+test("reconcileGroupMerge keeps a mid-flight move and flags it for persist", () => {
+  const local = { ...submitted, position: 0 };
+  const { row, needsPersist } = reconcileGroupMerge(local, submitted, serverRow);
+  assert.equal(row.position, 0);
+  assert.equal(row.name, "New group");
+  assert.equal(needsPersist, true);
+});
+
+test("reconcileGroupMerge lets the server win on fields the user never touched", () => {
+  // The backend trimmed the name and appended at a different slot than guessed.
+  const server = group(77, "New group", 9);
+  const { row, needsPersist } = reconcileGroupMerge(submitted, submitted, server);
+  assert.equal(row.position, 9);
+  assert.equal(row.name, "New group");
+  assert.equal(needsPersist, false);
+});
+
+test("reconcileGroupMerge skips the persist when the local edit matches the server", () => {
+  // Renamed mid-flight to exactly what the backend already stored.
+  const server = group(77, "Paid social", 4);
+  const local = { ...submitted, name: "Paid social" };
+  const { row, needsPersist } = reconcileGroupMerge(local, submitted, server);
+  assert.equal(row.name, "Paid social");
+  assert.equal(needsPersist, false);
+});
+
+test("reconcileGroupMerge carries both edits at once", () => {
+  const local = { ...submitted, name: "Paid social", position: 0 };
+  const { row, needsPersist } = reconcileGroupMerge(local, submitted, serverRow);
+  assert.deepEqual(row, { id: 77, name: "Paid social", position: 0 });
+  assert.equal(needsPersist, true);
 });

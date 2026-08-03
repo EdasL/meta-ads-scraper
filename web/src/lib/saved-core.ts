@@ -97,6 +97,44 @@ export function makeSavedGem(row: ShortlistRow, savedAt: string): SavedGem {
   };
 }
 
+/** Outcome of merging an optimistic group with the row the backend created:
+ *  the group to keep, and whether it still owes the server a write. */
+export interface GroupReconcile {
+  row: SavedGroup;
+  needsPersist: boolean;
+}
+
+/**
+ * Merge an optimistically-created column with the row the backend answered with.
+ *
+ * A create is a round-trip, and the board opens a brand-new column straight into
+ * rename mode — so a rename (or a move) lands while the temp id is still in
+ * flight. Those edits could not be persisted at the time (a negative id is not a
+ * real row), so they exist ONLY here: taking the server row wholesale would
+ * silently revert the user's typing on every single group creation.
+ *
+ * `submitted` is what `createGroup` sent. Any field the user has since changed
+ * away from it wins over the server's value and is flagged for a follow-up
+ * write; untouched fields take the server's value (it is authoritative — it may
+ * have trimmed the name or picked a different position). `needsPersist` stays
+ * false when the local value happens to match what the server already stored.
+ */
+export function reconcileGroupMerge(
+  local: SavedGroup,
+  submitted: SavedGroup,
+  serverRow: SavedGroup,
+): GroupReconcile {
+  const renamed = local.name !== submitted.name;
+  const moved = local.position !== submitted.position;
+  const row: SavedGroup = {
+    id: serverRow.id,
+    name: renamed ? local.name : serverRow.name,
+    position: moved ? local.position : serverRow.position,
+  };
+  const needsPersist = row.name !== serverRow.name || row.position !== serverRow.position;
+  return { row, needsPersist };
+}
+
 /** Board order: by position, then id as a stable tiebreak. Returns a new array. */
 export function sortGroups(groups: SavedGroup[]): SavedGroup[] {
   return [...groups].sort((a, b) => a.position - b.position || a.id - b.id);

@@ -20,6 +20,7 @@ import {
 import {
   makeSavedGem,
   rebuildTagRegistry,
+  reconcileGroupMerge,
   sortGroups,
   withTag,
   withoutTag,
@@ -277,10 +278,27 @@ function persistGroup(id: number, patch: ApiSavedGroupPatch) {
   updateSavedGroup(id, patch).catch(onSyncError);
 }
 
-/** Swap the optimistic temp group for the real backend row and move any gems
- *  that were dropped into it while the create was in flight. */
-function reconcileGroup(tempId: number, row: SavedGroup) {
+/**
+ * Swap the optimistic temp group for the real backend row, keeping anything the
+ * user changed during the round-trip (see `reconcileGroupMerge`) and moving any
+ * gems dropped into the column while the create was in flight.
+ */
+function reconcileGroup(submitted: SavedGroup, serverRow: SavedGroup) {
+  const tempId = submitted.id;
+  const local = groups.find((g) => g.id === tempId);
+  if (!local) {
+    // The column was deleted mid-flight. Drop the row the backend just made so
+    // it cannot reappear on the next hydrate.
+    removeSavedGroup(serverRow.id).catch(onSyncError);
+    return;
+  }
+
+  const { row, needsPersist } = reconcileGroupMerge(local, submitted, serverRow);
   setGroups(groups.map((g) => (g.id === tempId ? row : g)));
+  // A rename/move made against the temp id could not be sent at the time — now
+  // that the column has a real id, it finally reaches the server.
+  if (needsPersist) persistGroup(row.id, { name: row.name, position: row.position });
+
   const map = ensureCache();
   const moved: SavedGem[] = [];
   const next: SavedMap = { ...map };
@@ -306,10 +324,15 @@ export function createGroup(name: string): void {
   if (!trimmed) return;
   const tempId = nextTempId--;
   const position = groups.reduce((max, g) => Math.max(max, g.position), -1) + 1;
-  setGroups([...groups, { id: tempId, name: trimmed, position }]);
+  // Kept verbatim: reconciliation diffs the live column against what was sent
+  // to tell a mid-flight user edit apart from an untouched field.
+  const submitted: SavedGroup = { id: tempId, name: trimmed, position };
+  setGroups([...groups, submitted]);
   if (!userEmail) return;
   createSavedGroup(trimmed)
-    .then((row) => reconcileGroup(tempId, { id: row.id, name: row.name, position: row.position }))
+    .then((row) =>
+      reconcileGroup(submitted, { id: row.id, name: row.name, position: row.position }),
+    )
     .catch(onSyncError);
 }
 
