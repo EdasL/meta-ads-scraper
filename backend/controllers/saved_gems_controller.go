@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -48,6 +49,12 @@ func (c *SavedGemsController) Save(ctx *gin.Context) {
 	rctx, cancel := reqCtx(ctx)
 	defer cancel()
 	if err := repositories.UpsertSavedGem(rctx, db.DB(), body, id); err != nil {
+		// A group_id that is unknown or owned by somebody else is the caller's
+		// mistake, not a server fault.
+		if errors.Is(err, repositories.ErrGroupNotOwned) {
+			helpers.Detail(ctx, http.StatusBadRequest, "group not found.")
+			return
+		}
 		helpers.Detail(ctx, http.StatusInternalServerError, "could not save gem.")
 		return
 	}

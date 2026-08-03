@@ -25,6 +25,7 @@ func Init(r *gin.Engine) {
 	review := controllers.NewReviewController()
 	enrich := controllers.NewEnrichController()
 	saved := controllers.NewSavedGemsController()
+	savedGroups := controllers.NewSavedGroupsController()
 	ratings := controllers.NewRatingsController()
 	preference := controllers.NewPreferenceController()
 	health := controllers.NewHealthController()
@@ -61,6 +62,12 @@ func Init(r *gin.Engine) {
 		api.GET("/saved-gems", saved.List)
 		api.POST("/saved-gems/:advertiser_id", middlewares.RequireToken(), saved.Save)
 		api.POST("/saved-gems/:advertiser_id/remove", middlewares.RequireToken(), saved.Remove)
+		// Board columns for /saved. Identity comes from KeyAuth (never a param);
+		// an unknown or foreign :id is a 404 so existence stays hidden.
+		api.GET("/saved-groups", savedGroups.List)
+		api.POST("/saved-groups", middlewares.RequireToken(), savedGroups.Create)
+		api.POST("/saved-groups/:id/update", middlewares.RequireToken(), savedGroups.Update)
+		api.POST("/saved-groups/:id/remove", middlewares.RequireToken(), savedGroups.Remove)
 		// Per-user app ratings (like/neutral/dislike + comment). Writes are
 		// token-guarded like saved gems and review decisions.
 		api.GET("/ratings", ratings.List)
