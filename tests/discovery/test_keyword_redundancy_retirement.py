@@ -160,15 +160,33 @@ def test_static_pass_suppresses_redundant_keyword(pg_conn, seed_catch):
     assert "rare niche phrase" not in loaded
 
 
+def _suppression(conn, keyword):
+    return conn.execute(text(
+        "SELECT kept_n, crowded_share FROM discovery.keyword_suppressions "
+        "WHERE keyword = :kw"), {"kw": keyword}).one()
+
+
 def test_static_pass_is_idempotent(pg_conn, seed_catch):
-    """Re-running upserts the metrics and reports nothing NEWLY suppressed — the
-    caller logs the return, so a daily pass must not re-announce old victims."""
+    """Re-running reports nothing NEWLY suppressed — the caller logs the return, so
+    a daily pass must not re-announce old victims — while the stored metrics track
+    the keyword's CURRENT catch. Between the two calls the catch grows by 15 mostly-
+    uncrowded rows: 40 kept, 30 crowded (0.75) is still over the bar, so the row
+    stays but must show the refreshed numbers, not the first pass's 25 / 1.0."""
     seed_catch("try the app free", kept=25, crowding=0.95)
 
     assert suppress_redundant_static_keywords(pg_conn, ["try the app free"]) == \
         ["try the app free"]
+    first = _suppression(pg_conn, "try the app free")
+    assert first.kept_n == 25
+    assert first.crowded_share == pytest.approx(1.0, abs=1e-6)
+
+    seed_catch("try the app free", kept=15, crowding=[0.95] * 5 + [0.10] * 10)
+
     assert suppress_redundant_static_keywords(pg_conn, ["try the app free"]) == []
 
+    refreshed = _suppression(pg_conn, "try the app free")
+    assert refreshed.kept_n == 40
+    assert refreshed.crowded_share == pytest.approx(0.75, abs=1e-6)
     n = pg_conn.execute(text(
         "SELECT count(*) FROM discovery.keyword_suppressions "
         "WHERE keyword = 'try the app free'")).scalar_one()
