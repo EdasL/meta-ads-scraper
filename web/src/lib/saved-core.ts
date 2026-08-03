@@ -133,30 +133,14 @@ export function sortGroups(groups: SavedGroup[]): SavedGroup[] {
 }
 
 /**
- * Split gems into one bucket per group, keyed by group id and ordered like the
- * board (`sortGroups`). A gem whose `groupId` is null — or points at a group the
- * user no longer has — lands in the FIRST column rather than disappearing.
- * Each bucket is sorted savedAt DESC (newest first), matching the list view.
- * With no groups there is nowhere to file anything, so the map comes back empty.
+ * Grid filter for the folder chips. `folderId === null` means "All": every
+ * gem passes. A concrete folder id keeps only gems filed exactly there —
+ * unfiled gems (NULL groupId) belong to All alone, never to a folder.
+ * Order is untouched (the store list is already savedAt DESC).
  */
-export function bucketByGroup(
-  gems: SavedGem[],
-  groups: SavedGroup[],
-): Map<number, SavedGem[]> {
-  const buckets = new Map<number, SavedGem[]>();
-  const ordered = sortGroups(groups);
-  if (ordered.length === 0) return buckets;
-  for (const g of ordered) buckets.set(g.id, []);
-
-  const fallback = ordered[0].id;
-  for (const gem of gems) {
-    const key = gem.groupId != null && buckets.has(gem.groupId) ? gem.groupId : fallback;
-    buckets.get(key)!.push(gem);
-  }
-  for (const list of buckets.values()) {
-    list.sort((a, b) => b.savedAt.localeCompare(a.savedAt));
-  }
-  return buckets;
+export function filterByGroup(gems: SavedGem[], folderId: number | null): SavedGem[] {
+  if (folderId === null) return gems;
+  return gems.filter((g) => g.groupId === folderId);
 }
 
 /** Immutably add a normalized tag (deduped). */

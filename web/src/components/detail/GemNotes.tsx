@@ -52,14 +52,15 @@ export function GemNotes({ row }: { row: ShortlistRow }) {
       <div style={{ display: "flex", gap: 18, flexWrap: "wrap" }}>
         {groups.length > 0 && (
           <label className="eyebrow" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-            Group
+            Folder
             <select
-              // NULL/unknown groupId renders in the first column on the board
-              // (bucketByGroup); the picker shows the same group it lives in.
-              value={groups.some((g) => g.id === saved.groupId) ? String(saved.groupId) : String(groups[0].id)}
+              // Unfiled (NULL/unknown groupId) shows as "No folder"; picking it
+              // sends the wire sentinel 0 → the backend writes NULL.
+              value={groups.some((g) => g.id === saved.groupId) ? String(saved.groupId) : "0"}
               onChange={(e) => setGroup(saved.advertiserId, Number(e.target.value))}
               style={selectStyle}
             >
+              <option value="0">No folder</option>
               {groups.map((g) => (
                 <option key={g.id} value={g.id}>{g.name}</option>
               ))}

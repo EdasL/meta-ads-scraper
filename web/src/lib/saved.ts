@@ -408,15 +408,14 @@ export function moveGroupRight(id: number): void {
 }
 
 export function deleteGroup(id: number): void {
-  if (groups.length <= 1) return; // the board keeps at least one column (backend 409s)
   const remaining = sortGroups(groups.filter((g) => g.id !== id));
   if (remaining.length === groups.length) return; // unknown id
-  // Refile the column's gems locally; the backend does the same server-side.
-  const target = remaining[0].id;
+  // Unfile the folder's gems locally; the backend does the same (group_id →
+  // NULL). Folders are optional organization — deleting down to zero is fine.
   const map = ensureCache();
   const next: SavedMap = { ...map };
   for (const gem of Object.values(map)) {
-    if (gem.groupId === id) next[gem.advertiserId] = { ...gem, groupId: target };
+    if (gem.groupId === id) next[gem.advertiserId] = { ...gem, groupId: null };
   }
   cache = next;
   recompute();
@@ -431,18 +430,27 @@ export function deleteGroup(id: number): void {
   removeSavedGroup(id).catch(onSyncError);
 }
 
-/** File a saved gem under a column. Rides the saved-gem upsert. */
-export function setGroup(advertiserId: number, groupId: number): void {
+/** File a gem into a folder, or unfile it (`groupId` null or 0 → no folder).
+ * Unfiling sends the wire sentinel `group_id: 0` — the backend writes NULL for
+ * 0 and keeps its current value for null/absent, so a plain re-save can never
+ * silently unfile. */
+export function setGroup(advertiserId: number, groupId: number | null): void {
+  const target = groupId ? groupId : null;
   const map = ensureCache();
   const gem = map[advertiserId];
-  if (!gem || gem.groupId === groupId) return;
-  const updated: SavedGem = { ...gem, groupId };
+  if (!gem || gem.groupId === target) return;
+  const updated: SavedGem = { ...gem, groupId: target };
   cache = { ...map, [advertiserId]: updated };
   recompute();
   notify();
-  // A temp column is not a real row yet and the backend would reject it (400);
+  if (!userEmail) return;
+  if (target === null) {
+    upsertSavedGem(advertiserId, { ...toUpsert(updated, userEmail), group_id: 0 }).catch(onSyncError);
+    return;
+  }
+  // A temp folder is not a real row yet and the backend would reject it (400);
   // reconcileGroup() persists these gems once the create response lands.
-  if (!isTemp(groupId)) persist(updated);
+  if (!isTemp(target)) persist(updated);
 }
 
 // --- external store (for useSyncExternalStore) ---
