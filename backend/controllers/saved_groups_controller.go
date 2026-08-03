@@ -135,8 +135,8 @@ func (c *SavedGroupsController) Update(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
-// Remove handles POST /api/saved-groups/:id/remove. Gems in the folder are
-// unfiled, not deleted; a user may remove every folder they have.
+// Remove handles POST /api/saved-groups/:id/remove. The folder's memberships go
+// with it; the gems themselves stay saved. A user may remove every folder.
 func (c *SavedGroupsController) Remove(ctx *gin.Context) {
 	email, ok := c.caller(ctx)
 	if !ok {
@@ -154,6 +154,75 @@ func (c *SavedGroupsController) Remove(ctx *gin.Context) {
 		return
 	}
 	if !deleted {
+		helpers.Detail(ctx, http.StatusNotFound, "no such group.")
+		return
+	}
+	ctx.JSON(http.StatusOK, gin.H{"status": "ok"})
+}
+
+type savedGroupMemberIn struct {
+	AdvertiserID int64 `json:"advertiser_id"`
+}
+
+// memberArgs parses the folder id and the body's advertiser_id, writing the
+// response and returning ok=false when either is unusable.
+func (c *SavedGroupsController) memberArgs(ctx *gin.Context) (id int64, advertiserID int64, ok bool) {
+	id, ok = c.groupID(ctx)
+	if !ok {
+		return 0, 0, false
+	}
+	var body savedGroupMemberIn
+	if err := ctx.ShouldBindJSON(&body); err != nil || body.AdvertiserID <= 0 {
+		helpers.Detail(ctx, http.StatusUnprocessableEntity, "advertiser_id is required.")
+		return 0, 0, false
+	}
+	return id, body.AdvertiserID, true
+}
+
+// AddGem handles POST /api/saved-groups/:id/gems — puts a gem in a folder. A gem
+// can be in many folders, and adding one twice is a no-op.
+func (c *SavedGroupsController) AddGem(ctx *gin.Context) {
+	email, ok := c.caller(ctx)
+	if !ok {
+		return
+	}
+	id, advertiserID, ok := c.memberArgs(ctx)
+	if !ok {
+		return
+	}
+	rctx, cancel := reqCtx(ctx)
+	defer cancel()
+	found, err := repositories.AddSavedGroupMember(rctx, db.DB(), email, id, advertiserID)
+	if err != nil {
+		helpers.Detail(ctx, http.StatusInternalServerError, "could not add to group.")
+		return
+	}
+	if !found {
+		helpers.Detail(ctx, http.StatusNotFound, "no such group.")
+		return
+	}
+	ctx.JSON(http.StatusOK, gin.H{"status": "ok"})
+}
+
+// RemoveGem handles POST /api/saved-groups/:id/gems/remove — takes a gem out of
+// one folder. The gem stays saved and stays in any other folder.
+func (c *SavedGroupsController) RemoveGem(ctx *gin.Context) {
+	email, ok := c.caller(ctx)
+	if !ok {
+		return
+	}
+	id, advertiserID, ok := c.memberArgs(ctx)
+	if !ok {
+		return
+	}
+	rctx, cancel := reqCtx(ctx)
+	defer cancel()
+	found, err := repositories.RemoveSavedGroupMember(rctx, db.DB(), email, id, advertiserID)
+	if err != nil {
+		helpers.Detail(ctx, http.StatusInternalServerError, "could not remove from group.")
+		return
+	}
+	if !found {
 		helpers.Detail(ctx, http.StatusNotFound, "no such group.")
 		return
 	}

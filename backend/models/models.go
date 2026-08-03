@@ -412,6 +412,52 @@ func (s StringList) MarshalJSON() ([]byte, error) {
 	return json.Marshal([]string(s))
 }
 
+// IDList is a []int64 scanned from an aggregated JSON array (json_agg), the same
+// JSON-in-JSON-out trick as StringList — no Postgres array plumbing. It marshals
+// as [] rather than null so a gem in no folders reads as an empty list on the
+// wire, never a null the client has to guard.
+type IDList []int64
+
+func (s *IDList) Scan(v any) error {
+	if v == nil {
+		*s = IDList{}
+		return nil
+	}
+	var b []byte
+	switch x := v.(type) {
+	case []byte:
+		b = x
+	case string:
+		b = []byte(x)
+	default:
+		return fmt.Errorf("IDList: cannot scan %T", v)
+	}
+	if len(b) == 0 {
+		*s = IDList{}
+		return nil
+	}
+	return json.Unmarshal(b, (*[]int64)(s))
+}
+
+// Value exists so GORM can type the field. Nothing writes an IDList — folder
+// membership is written row-by-row into saved_group_members — but without a
+// Valuer, GORM's schema parser rejects the slice ("unsupported data type") and
+// logs on every scan.
+func (s IDList) Value() (driver.Value, error) {
+	b, err := json.Marshal([]int64(s))
+	if err != nil {
+		return nil, err
+	}
+	return string(b), nil
+}
+
+func (s IDList) MarshalJSON() ([]byte, error) {
+	if s == nil {
+		return []byte("[]"), nil
+	}
+	return json.Marshal([]int64(s))
+}
+
 // SavedGemRow is one row of frontend.saved_gems (a user's watchlist entry). The
 // score axes are the snapshot frozen at save time; tags/note/stage/verdict are
 // the user's mutable annotations.
@@ -432,9 +478,12 @@ type SavedGemRow struct {
 	Stage           string     `json:"stage" gorm:"column:stage"`
 	Verdict         *string    `json:"verdict" gorm:"column:verdict"`
 	Confidence      *int       `json:"confidence" gorm:"column:confidence"`
-	GroupID         *int64     `json:"group_id" gorm:"column:group_id"`
-	SavedAt         *APITime   `json:"saved_at" gorm:"column:saved_at"`
-	UpdatedAt       *APITime   `json:"updated_at" gorm:"column:updated_at"`
+	// GroupIDs are the folders this gem belongs to (playlist semantics: many
+	// folders per gem), aggregated from frontend.saved_group_members and sorted
+	// by id. The legacy saved_gems.group_id column is neither read nor written.
+	GroupIDs  IDList   `json:"group_ids" gorm:"column:group_ids"`
+	SavedAt   *APITime `json:"saved_at" gorm:"column:saved_at"`
+	UpdatedAt *APITime `json:"updated_at" gorm:"column:updated_at"`
 }
 
 // SavedGroupRow is one column of the /saved board — a user-defined group that
@@ -463,9 +512,6 @@ type SavedGemIn struct {
 	Stage           string     `json:"stage" binding:"omitempty,oneof=just_saw watching looks_real building"`
 	Verdict         *string    `json:"verdict" binding:"omitempty,oneof=build clone pass revisit"`
 	Confidence      *int       `json:"confidence" binding:"omitempty,min=1,max=5"`
-	// GroupID files the gem into a folder. Omitted or null keeps the folder the
-	// row already has; 0 unfiles it (0 is never a real id).
-	GroupID *int64 `json:"group_id"`
 }
 
 // SavedGemRemoveIn carries the owner for an unsave (mirrors the reviewer pattern).

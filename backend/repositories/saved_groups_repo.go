@@ -2,16 +2,11 @@ package repositories
 
 import (
 	"context"
-	"errors"
 
 	"github.com/edaslakavicius/emerging-app-finder/backend/db"
 	"github.com/edaslakavicius/emerging-app-finder/backend/models"
 	"gorm.io/gorm"
 )
-
-// ErrGroupNotOwned is returned when a write references a saved group that does
-// not exist or belongs to another user. Controllers map it to a 400.
-var ErrGroupNotOwned = errors.New("saved group not found for this user")
 
 // ListSavedGroups returns a user's folders in display order.
 //
@@ -73,31 +68,13 @@ func UpdateSavedGroup(ctx context.Context, g *gorm.DB, userEmail string, id int6
 	return affected > 0, err
 }
 
-// DeleteSavedGroup removes a folder and UNFILES its gems (group_id → NULL), so
-// they stay saved and show up under "All". Deleting down to zero folders is
-// allowed. Reports deleted=false when the id is unknown or owned by somebody
-// else.
+// DeleteSavedGroup removes a folder. Its membership rows go with it (the FK
+// cascades) and the saved gems themselves are untouched — deleting a playlist
+// does not delete the songs. Deleting down to zero folders is allowed. Reports
+// deleted=false when the id is unknown or owned by somebody else.
 func DeleteSavedGroup(ctx context.Context, g *gorm.DB, userEmail string, id int64) (bool, error) {
 	var deleted bool
 	err := db.WithWriteTx(ctx, g, func(tx *gorm.DB) error {
-		var owned int64
-		if err := tx.Raw(
-			`SELECT count(*) FROM frontend.saved_groups WHERE id = ? AND user_email = ?`,
-			id, userEmail,
-		).Scan(&owned).Error; err != nil {
-			return err
-		}
-		if owned == 0 {
-			return nil // unknown id or foreign owner
-		}
-
-		if err := tx.Exec(
-			`UPDATE frontend.saved_gems SET group_id = NULL, updated_at = clock_timestamp()
-			 WHERE user_email = ? AND group_id = ?`,
-			userEmail, id,
-		).Error; err != nil {
-			return err
-		}
 		res := tx.Exec(
 			`DELETE FROM frontend.saved_groups WHERE id = ? AND user_email = ?`,
 			id, userEmail,
@@ -111,6 +88,64 @@ func DeleteSavedGroup(ctx context.Context, g *gorm.DB, userEmail string, id int6
 	return deleted, err
 }
 
+// AddSavedGroupMember files a gem into a folder. Idempotent: adding a gem that
+// is already there succeeds and changes nothing. Reports found=false when the
+// folder is unknown or owned by somebody else, which controllers answer with a
+// 404 — the same "never confirm another user's ids exist" rule as the rest of
+// this repo.
+func AddSavedGroupMember(ctx context.Context, g *gorm.DB, userEmail string, groupID int64, advertiserID int64) (bool, error) {
+	var found bool
+	err := db.WithWriteTx(ctx, g, func(tx *gorm.DB) error {
+		var owned int64
+		if err := tx.Raw(
+			`SELECT count(*) FROM frontend.saved_groups WHERE id = ? AND user_email = ?`,
+			groupID, userEmail,
+		).Scan(&owned).Error; err != nil {
+			return err
+		}
+		if owned == 0 {
+			return nil
+		}
+		found = true
+		// The ownership check and the insert share one tx, so a concurrent
+		// folder delete cannot slip between them.
+		return tx.Exec(
+			`INSERT INTO frontend.saved_group_members (user_email, group_id, advertiser_id)
+			 VALUES (?, ?, ?)
+			 ON CONFLICT (group_id, advertiser_id) DO NOTHING`,
+			userEmail, groupID, advertiserID,
+		).Error
+	})
+	return found, err
+}
+
+// RemoveSavedGroupMember takes a gem out of a folder, leaving the gem saved.
+// Idempotent: removing something that is not in the folder still succeeds.
+// found=false means the folder is unknown or foreign (404), never "the gem was
+// not a member".
+func RemoveSavedGroupMember(ctx context.Context, g *gorm.DB, userEmail string, groupID int64, advertiserID int64) (bool, error) {
+	var found bool
+	err := db.WithWriteTx(ctx, g, func(tx *gorm.DB) error {
+		var owned int64
+		if err := tx.Raw(
+			`SELECT count(*) FROM frontend.saved_groups WHERE id = ? AND user_email = ?`,
+			groupID, userEmail,
+		).Scan(&owned).Error; err != nil {
+			return err
+		}
+		if owned == 0 {
+			return nil
+		}
+		found = true
+		return tx.Exec(
+			`DELETE FROM frontend.saved_group_members
+			 WHERE group_id = ? AND advertiser_id = ? AND user_email = ?`,
+			groupID, advertiserID, userEmail,
+		).Error
+	})
+	return found, err
+}
+
 // savedGroupOwned answers whether the group exists under this user.
 func savedGroupOwned(ctx context.Context, g *gorm.DB, userEmail string, id int64) (bool, error) {
 	var n int64
@@ -121,24 +156,4 @@ func savedGroupOwned(ctx context.Context, g *gorm.DB, userEmail string, id int64
 		).Scan(&n).Error
 	})
 	return n > 0, err
-}
-
-// assertGroupOwned guards a saved-gem write against filing a gem into another
-// user's column. Runs inside the caller's tx so the check and the write cannot
-// straddle a concurrent group delete.
-func assertGroupOwned(tx *gorm.DB, userEmail string, groupID *int64) error {
-	if groupID == nil {
-		return nil
-	}
-	var n int64
-	if err := tx.Raw(
-		`SELECT count(*) FROM frontend.saved_groups WHERE id = ? AND user_email = ?`,
-		*groupID, userEmail,
-	).Scan(&n).Error; err != nil {
-		return err
-	}
-	if n == 0 {
-		return ErrGroupNotOwned
-	}
-	return nil
 }
