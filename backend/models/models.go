@@ -428,8 +428,17 @@ type SavedGemRow struct {
 	Stage           string     `json:"stage" gorm:"column:stage"`
 	Verdict         *string    `json:"verdict" gorm:"column:verdict"`
 	Confidence      *int       `json:"confidence" gorm:"column:confidence"`
+	GroupID         *int64     `json:"group_id" gorm:"column:group_id"`
 	SavedAt         *APITime   `json:"saved_at" gorm:"column:saved_at"`
 	UpdatedAt       *APITime   `json:"updated_at" gorm:"column:updated_at"`
+}
+
+// SavedGroupRow is one column of the /saved board — a user-defined group that
+// saved gems are filed under. Groups are per user and ordered by position.
+type SavedGroupRow struct {
+	ID       int64  `gorm:"column:id" json:"id"`
+	Name     string `gorm:"column:name" json:"name"`
+	Position int    `gorm:"column:position" json:"position"`
 }
 
 // SavedGemIn is the upsert body. On a re-save (conflict) only the mutable fields
@@ -450,6 +459,7 @@ type SavedGemIn struct {
 	Stage           string     `json:"stage" binding:"omitempty,oneof=just_saw watching looks_real building"`
 	Verdict         *string    `json:"verdict" binding:"omitempty,oneof=build clone pass revisit"`
 	Confidence      *int       `json:"confidence" binding:"omitempty,min=1,max=5"`
+	GroupID         *int64     `json:"group_id"`
 }
 
 // SavedGemRemoveIn carries the owner for an unsave (mirrors the reviewer pattern).

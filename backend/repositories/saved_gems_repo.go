@@ -16,7 +16,7 @@ func ListSavedGems(ctx context.Context, g *gorm.DB, userEmail string) ([]models.
 			`SELECT user_email, advertiser_id, page_name, app_name, icon_url, cohort,
 			        gem_score, scaling_velocity, under_radar, funnel_intent,
 			        active_ad_count, tags, note, stage, verdict, confidence,
-			        saved_at, updated_at
+			        group_id, saved_at, updated_at
 			 FROM frontend.saved_gems
 			 WHERE user_email = ?
 			 ORDER BY saved_at DESC, advertiser_id`,
@@ -38,13 +38,17 @@ func UpsertSavedGem(ctx context.Context, g *gorm.DB, in models.SavedGemIn, adver
 		stage = "just_saw"
 	}
 	return db.WithWriteTx(ctx, g, func(tx *gorm.DB) error {
+		// Filing a gem into a column requires owning that column.
+		if err := assertGroupOwned(tx, in.UserEmail, in.GroupID); err != nil {
+			return err
+		}
 		return tx.Exec(
 			`INSERT INTO frontend.saved_gems
 			   (user_email, advertiser_id, page_name, app_name, icon_url, cohort,
 			    gem_score, scaling_velocity, under_radar, funnel_intent,
-			    active_ad_count, tags, note, stage, verdict, confidence,
+			    active_ad_count, tags, note, stage, verdict, confidence, group_id,
 			    saved_at, updated_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
 			         clock_timestamp(), clock_timestamp())
 			 ON CONFLICT (user_email, advertiser_id) DO UPDATE SET
 			   tags       = EXCLUDED.tags,
@@ -52,10 +56,13 @@ func UpsertSavedGem(ctx context.Context, g *gorm.DB, in models.SavedGemIn, adver
 			   stage      = EXCLUDED.stage,
 			   verdict    = EXCLUDED.verdict,
 			   confidence = EXCLUDED.confidence,
+			   -- A re-save that carries no group (e.g. the Discover save button)
+			   -- must not knock the card out of its board column.
+			   group_id   = COALESCE(EXCLUDED.group_id, frontend.saved_gems.group_id),
 			   updated_at = clock_timestamp()`,
 			in.UserEmail, advertiserID, in.PageName, in.AppName, in.IconURL, in.Cohort,
 			in.GemScore, in.ScalingVelocity, in.UnderRadar, in.FunnelIntent,
-			in.ActiveAdCount, in.Tags, in.Note, stage, in.Verdict, in.Confidence,
+			in.ActiveAdCount, in.Tags, in.Note, stage, in.Verdict, in.Confidence, in.GroupID,
 		).Error
 	})
 }
