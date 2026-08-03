@@ -5,10 +5,24 @@
  * (reactive across the app + across tabs) and call the store actions directly.
  */
 import { useSyncExternalStore } from "react";
-import { getServerSnapshot, getSnapshot, subscribe, type SavedGem } from "./saved";
+import {
+  getGroupsServerSnapshot,
+  getGroupsSnapshot,
+  getServerSnapshot,
+  getSnapshot,
+  subscribe,
+  subscribeGroups,
+  type SavedGem,
+  type SavedGroup,
+} from "./saved";
 
 export function useSavedList(): SavedGem[] {
   return useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
+}
+
+/** The board's columns, in board order. Empty until the store hydrates. */
+export function useSavedGroups(): SavedGroup[] {
+  return useSyncExternalStore(subscribeGroups, getGroupsSnapshot, getGroupsServerSnapshot);
 }
 
 export function useIsSaved(advertiserId: number): boolean {
@@ -30,4 +44,11 @@ export {
   setVerdict,
   setConfidence,
   allTags,
+  listGroups,
+  createGroup,
+  renameGroup,
+  moveGroupLeft,
+  moveGroupRight,
+  deleteGroup,
+  setGroup,
 } from "./saved";

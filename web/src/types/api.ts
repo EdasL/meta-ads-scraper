@@ -250,8 +250,26 @@ export interface ApiSavedGem {
   stage: string;
   verdict: string | null;
   confidence: number | null;
+  /** Board column this gem is filed under; null = never filed. */
+  group_id: number | null;
   saved_at: string | null;
   updated_at: string | null;
+}
+
+/** `SavedGroupRow` (backend models.go) — one column of the /saved board. Groups
+ * are per user (identity comes from the session token, never a param) and the
+ * backend seeds four defaults the first time a user lists them. */
+export interface ApiSavedGroup {
+  id: number;
+  name: string;
+  position: number;
+}
+
+/** Body for POST /saved-groups/:id/update — rename and/or reorder; both fields
+ * are optional and only the ones present are applied. */
+export interface ApiSavedGroupPatch {
+  name?: string;
+  position?: number;
 }
 
 /** `SavedGemIn` (backend) — the upsert body. On a re-save only the mutable
@@ -272,6 +290,9 @@ export interface ApiSavedGemIn {
   stage: string;
   verdict: string | null;
   confidence: number | null;
+  /** Board column. The backend applies this with COALESCE, so `null` means
+   * "keep whatever is stored" — it does NOT clear the assignment. */
+  group_id: number | null;
 }
 
 /** `PreferenceQueueRow` (backend preference_queue.go) — one ranked card from

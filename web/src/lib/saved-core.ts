@@ -48,6 +48,16 @@ export interface SavedGem {
   stage: Stage;
   verdict?: SavedVerdict;
   confidence?: Confidence;
+  /** Board column the gem is filed under. `null` = never filed; the board shows
+   * it in the first column (see `bucketByGroup`). */
+  groupId: number | null;
+}
+
+/** One column of the /saved board (frontend.saved_groups). */
+export interface SavedGroup {
+  id: number;
+  name: string;
+  position: number;
 }
 
 export interface TagCount {
@@ -83,7 +93,40 @@ export function makeSavedGem(row: ShortlistRow, savedAt: string): SavedGem {
     tags: [],
     note: "",
     stage: "just_saw",
+    groupId: null,
   };
+}
+
+/** Board order: by position, then id as a stable tiebreak. Returns a new array. */
+export function sortGroups(groups: SavedGroup[]): SavedGroup[] {
+  return [...groups].sort((a, b) => a.position - b.position || a.id - b.id);
+}
+
+/**
+ * Split gems into one bucket per group, keyed by group id and ordered like the
+ * board (`sortGroups`). A gem whose `groupId` is null — or points at a group the
+ * user no longer has — lands in the FIRST column rather than disappearing.
+ * Each bucket is sorted savedAt DESC (newest first), matching the list view.
+ * With no groups there is nowhere to file anything, so the map comes back empty.
+ */
+export function bucketByGroup(
+  gems: SavedGem[],
+  groups: SavedGroup[],
+): Map<number, SavedGem[]> {
+  const buckets = new Map<number, SavedGem[]>();
+  const ordered = sortGroups(groups);
+  if (ordered.length === 0) return buckets;
+  for (const g of ordered) buckets.set(g.id, []);
+
+  const fallback = ordered[0].id;
+  for (const gem of gems) {
+    const key = gem.groupId != null && buckets.has(gem.groupId) ? gem.groupId : fallback;
+    buckets.get(key)!.push(gem);
+  }
+  for (const list of buckets.values()) {
+    list.sort((a, b) => b.savedAt.localeCompare(a.savedAt));
+  }
+  return buckets;
 }
 
 /** Immutably add a normalized tag (deduped). */

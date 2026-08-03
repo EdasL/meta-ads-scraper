@@ -12,6 +12,9 @@ import {
   withTag,
   withoutTag,
   rebuildTagRegistry,
+  sortGroups,
+  bucketByGroup,
+  type SavedGroup,
 } from "./saved-core.ts";
 
 const row = (over = {}) => ({
@@ -90,4 +93,94 @@ test("rebuildTagRegistry counts and sorts by uses desc", () => {
     { name: "sleep", uses: 2 },
     { name: "ai", uses: 1 },
   ]);
+});
+
+// --- board groups ---------------------------------------------------------
+
+const group = (id: number, name: string, position: number): SavedGroup => ({ id, name, position });
+
+/** A saved gem with an explicit group + save time, for bucketing tests. */
+const gem = (advertiserId: number, groupId: number | null, savedAt: string) => ({
+  ...makeSavedGem(row({ advertiser_id: advertiserId }), savedAt),
+  groupId,
+});
+
+test("makeSavedGem starts a gem ungrouped", () => {
+  assert.equal(makeSavedGem(row(), "2026-06-09T10:00:00Z").groupId, null);
+});
+
+test("sortGroups orders by position, then id, without mutating the input", () => {
+  const input = [group(7, "Later", 2), group(3, "Now", 1), group(2, "Tie", 2), group(9, "First", 0)];
+  const sorted = sortGroups(input);
+  assert.deepEqual(
+    sorted.map((g) => g.id),
+    [9, 3, 2, 7],
+  );
+  // position 2 ties break by id: 2 before 7
+  assert.deepEqual(
+    input.map((g) => g.id),
+    [7, 3, 2, 9],
+  );
+});
+
+test("bucketByGroup keys every group, even the empty ones", () => {
+  const groups = [group(1, "Now", 0), group(2, "Later", 1)];
+  const buckets = bucketByGroup([gem(10, 2, "2026-06-01T00:00:00Z")], groups);
+  assert.deepEqual([...buckets.keys()], [1, 2]);
+  assert.deepEqual(buckets.get(1), []);
+  assert.deepEqual(
+    buckets.get(2)?.map((g) => g.advertiserId),
+    [10],
+  );
+});
+
+test("bucketByGroup files null and unknown group ids into the first group", () => {
+  const groups = [group(1, "Now", 0), group(2, "Later", 1)];
+  const buckets = bucketByGroup(
+    [
+      gem(10, 2, "2026-06-01T00:00:00Z"), // matching group
+      gem(11, null, "2026-06-02T00:00:00Z"), // ungrouped
+      gem(12, 999, "2026-06-03T00:00:00Z"), // group deleted elsewhere
+    ],
+    groups,
+  );
+  assert.deepEqual(
+    buckets.get(1)?.map((g) => g.advertiserId),
+    [12, 11], // savedAt DESC
+  );
+  assert.deepEqual(
+    buckets.get(2)?.map((g) => g.advertiserId),
+    [10],
+  );
+});
+
+test("bucketByGroup uses the lowest-position group as the fallback, not input order", () => {
+  const groups = [group(2, "Later", 1), group(1, "Now", 0)];
+  const buckets = bucketByGroup([gem(10, null, "2026-06-01T00:00:00Z")], groups);
+  assert.deepEqual(
+    buckets.get(1)?.map((g) => g.advertiserId),
+    [10],
+  );
+  assert.deepEqual(buckets.get(2), []);
+});
+
+test("bucketByGroup sorts each bucket by savedAt DESC", () => {
+  const groups = [group(1, "Now", 0)];
+  const buckets = bucketByGroup(
+    [
+      gem(10, 1, "2026-06-01T00:00:00Z"),
+      gem(11, 1, "2026-06-03T00:00:00Z"),
+      gem(12, 1, "2026-06-02T00:00:00Z"),
+    ],
+    groups,
+  );
+  assert.deepEqual(
+    buckets.get(1)?.map((g) => g.advertiserId),
+    [11, 12, 10],
+  );
+});
+
+test("bucketByGroup returns an empty map when there are no groups", () => {
+  const buckets = bucketByGroup([gem(10, null, "2026-06-01T00:00:00Z")], []);
+  assert.equal(buckets.size, 0);
 });
