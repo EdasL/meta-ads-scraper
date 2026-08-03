@@ -20,25 +20,44 @@ var ErrGroupNotOwned = errors.New("saved group not found for this user")
 var defaultGroupNames = []string{"Just saw", "Watching", "Looks real", "Building"}
 
 // ListSavedGroups returns a user's board columns ordered left to right, seeding
-// the four defaults the first time the user is seen. Seeding is a single
-// conditional INSERT inside the write tx, so two concurrent first-loads cannot
-// double-seed.
+// the four defaults the first time the user is seen.
+//
+// Seeding is guarded by a per-user advisory lock held to commit. A bare
+// `INSERT … WHERE NOT EXISTS` is NOT enough: under READ COMMITTED there is no
+// row to lock on an empty table, so two concurrent first-loads (StrictMode
+// double-fetch, two tabs) both pass the check and seed 8 columns. The lock is
+// taken only when the user looks unseeded, so the steady-state read path stays
+// lock-free.
 func ListSavedGroups(ctx context.Context, g *gorm.DB, userEmail string) ([]models.SavedGroupRow, error) {
 	rows := make([]models.SavedGroupRow, 0, len(defaultGroupNames))
 	err := db.WithWriteTx(ctx, g, func(tx *gorm.DB) error {
-		if err := tx.Exec(
-			`INSERT INTO frontend.saved_groups (user_email, name, position)
-			 SELECT ?, d.name, d.position
-			 FROM (VALUES (?, 0), (?, 1), (?, 2), (?, 3)) AS d(name, position)
-			 WHERE NOT EXISTS (
-			     SELECT 1 FROM frontend.saved_groups WHERE user_email = ?
-			 )`,
+		var existing int64
+		if err := tx.Raw(
+			`SELECT count(*) FROM frontend.saved_groups WHERE user_email = ?`,
 			userEmail,
-			defaultGroupNames[0], defaultGroupNames[1],
-			defaultGroupNames[2], defaultGroupNames[3],
-			userEmail,
-		).Error; err != nil {
+		).Scan(&existing).Error; err != nil {
 			return err
+		}
+		if existing == 0 {
+			if err := tx.Exec(`SELECT pg_advisory_xact_lock(hashtext(?))`, userEmail).Error; err != nil {
+				return err
+			}
+			// Re-checked under the lock: a racing seeder has committed by the
+			// time it releases, so NOT EXISTS is now authoritative.
+			if err := tx.Exec(
+				`INSERT INTO frontend.saved_groups (user_email, name, position)
+				 SELECT ?, d.name, d.position
+				 FROM (VALUES (?, 0), (?, 1), (?, 2), (?, 3)) AS d(name, position)
+				 WHERE NOT EXISTS (
+				     SELECT 1 FROM frontend.saved_groups WHERE user_email = ?
+				 )`,
+				userEmail,
+				defaultGroupNames[0], defaultGroupNames[1],
+				defaultGroupNames[2], defaultGroupNames[3],
+				userEmail,
+			).Error; err != nil {
+				return err
+			}
 		}
 		return tx.Raw(
 			`SELECT id, name, "position"

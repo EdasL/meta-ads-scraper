@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -242,6 +243,64 @@ func TestSavedGroupsRepo(t *testing.T) {
 		t.Fatal(err)
 	} else if len(final) != 1 || final[0].ID != survivor.ID {
 		t.Fatalf("final groups = %+v, want just the survivor %d", final, survivor.ID)
+	}
+}
+
+// TestSavedGroupsConcurrentSeed is the regression for double-seeding: two
+// first-loads racing on a brand-new email (StrictMode double-fetch, two tabs)
+// must still produce exactly four columns. Without the advisory lock both
+// transactions pass the NOT EXISTS check under READ COMMITTED and seed 8.
+func TestSavedGroupsConcurrentSeed(t *testing.T) {
+	ctx := context.Background()
+	g := db.DB()
+	me := fmt.Sprintf("groups-race-%d@test.local", time.Now().UnixNano())
+
+	t.Cleanup(func() {
+		if err := g.Exec(`DELETE FROM frontend.saved_groups WHERE user_email = ?`, me).Error; err != nil {
+			t.Errorf("cleanup saved_groups: %v", err)
+		}
+	})
+
+	// Separate goroutines take separate pool connections, so the two seeding
+	// transactions are genuinely concurrent.
+	const racers = 2
+	start := make(chan struct{})
+	errs := make(chan error, racers)
+	counts := make(chan int, racers)
+	var wg sync.WaitGroup
+	for i := 0; i < racers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			rows, err := repositories.ListSavedGroups(ctx, g, me)
+			errs <- err
+			counts <- len(rows)
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	close(counts)
+
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent ListSavedGroups: %v", err)
+		}
+	}
+	for n := range counts {
+		if n != 4 {
+			t.Errorf("a racing ListSavedGroups returned %d groups, want 4", n)
+		}
+	}
+
+	var total int64
+	if err := g.Raw(`SELECT count(*) FROM frontend.saved_groups WHERE user_email = ?`, me).
+		Scan(&total).Error; err != nil {
+		t.Fatal(err)
+	}
+	if total != 4 {
+		t.Fatalf("after a concurrent first-load the user has %d groups, want 4 (double-seed)", total)
 	}
 }
 
