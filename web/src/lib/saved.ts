@@ -25,6 +25,7 @@ import {
   withTag,
   withoutTag,
   type Confidence,
+  type GroupIdRemap,
   type SavedGem,
   type SavedGroup,
   type SavedVerdict,
@@ -126,6 +127,19 @@ const isTemp = (id: number) => id < 0;
  */
 const deletedTempIds = new Set<number>();
 
+/** Append-only log of temp→real id swaps from create reconciliation, so the
+ * board can re-attribute its DOM keys and editing session to the exact column
+ * that reconciled (never by array-order inference). Readers keep a seq cursor
+ * (`applyGroupIdRemaps`) instead of draining: a React render that gets
+ * discarded (StrictMode) re-reads the same entries harmlessly. Bounded per
+ * session — one entry per optimistic create; cleared on user switch. */
+let groupIdRemapLog: readonly GroupIdRemap[] = [];
+let groupIdRemapSeq = 0;
+
+export function getGroupIdRemapLog(): readonly GroupIdRemap[] {
+  return groupIdRemapLog;
+}
+
 function recompute() {
   cachedList = Object.values(cache ?? {}).sort((a, b) => b.savedAt.localeCompare(a.savedAt));
 }
@@ -203,6 +217,7 @@ export function setUser(email: string | null) {
   cache = {};
   groups = [];
   deletedTempIds.clear(); // never carry one user's pending deletes into another's board
+  groupIdRemapLog = []; // stale temp→real mappings mean nothing on another user's board
   recompute();
   notify();
   void hydrate();
@@ -313,6 +328,11 @@ function reconcileGroup(submitted: SavedGroup, serverRow: SavedGroup) {
   if (!local) return;
 
   const { row, needsPersist } = reconcileGroupMerge(local, submitted, serverRow);
+  // Exact temp→real attribution for the board's DOM/editing identity. Append
+  // BEFORE the notify inside setGroups, so any render triggered by the swap
+  // already sees its log entry. (No entry on the tombstone/hydrate-wipe paths:
+  // there is no live column for the UI to re-attribute.)
+  groupIdRemapLog = [...groupIdRemapLog, { tempId, realId: serverRow.id, seq: ++groupIdRemapSeq }];
   setGroups(groups.map((g) => (g.id === tempId ? row : g)));
   // A rename/move made against the temp id could not be sent at the time — now
   // that the column has a real id, it finally reaches the server.

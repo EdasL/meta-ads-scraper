@@ -3,7 +3,14 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { IconChevronLeft, IconChevronRight, IconDots } from "@tabler/icons-react";
-import { bucketByGroup, sortGroups, type SavedGem, type SavedGroup } from "@/lib/saved";
+import {
+  applyGroupIdRemaps,
+  bucketByGroup,
+  getGroupIdRemapLog,
+  sortGroups,
+  type SavedGem,
+  type SavedGroup,
+} from "@/lib/saved";
 import {
   createGroup,
   deleteGroup,
@@ -367,23 +374,27 @@ export function GroupBoard({ gems }: { gems: SavedGem[] }) {
   // in the adjust-during-render block below.
   const [stableKeys, setStableKeys] = useState<ReadonlyMap<number, number>>(new Map());
 
-  // Adjust-during-render (react.dev "adjusting state when props change"):
-  // when the group id set changes, remap or drop an editing id that no longer
-  // exists. A vanished temp id whose replacement just appeared keeps its edit
-  // session and its DOM key; anything else stops editing.
+  // Cursor into the store's temp→real remap log (see getGroupIdRemapLog):
+  // exact attribution, applied at most once per entry via the seq cursor.
+  const [remapSeq, setRemapSeq] = useState(0);
+
+  // Adjust-during-render (react.dev "adjusting state when props change").
+  // Pass 1 — apply any new remap-log entries exactly: the real id inherits its
+  // OWN temp column's DOM key and editing session, no array-order inference,
+  // so two same-batch creates can never cross-contaminate.
+  const remapLog = getGroupIdRemapLog();
+  const applied = applyGroupIdRemaps(remapLog, remapSeq, stableKeys, editingId);
+  if (applied.lastSeq !== remapSeq) {
+    setStableKeys(applied.stableKeys);
+    if (applied.editingId !== editingId) setEditingId(applied.editingId);
+    setRemapSeq(applied.lastSeq);
+  }
+  // Pass 2 — an editing id (post-remap) that no longer exists in groups means
+  // its column was deleted or wiped by a hydrate: stop editing.
   const idsKey = groups.map((g) => g.id).join(",");
   if (idsKey !== prevIdsKey) {
-    const prevIds = new Set(prevIdsKey.split(",").filter(Boolean).map(Number));
-    if (editingId != null && !groups.some((g) => g.id === editingId)) {
-      const appeared = editingId < 0 ? groups.find((g) => g.id > 0 && !prevIds.has(g.id)) : undefined;
-      if (appeared) {
-        const next = new Map(stableKeys);
-        next.set(appeared.id, stableKeys.get(editingId) ?? editingId);
-        setStableKeys(next);
-        setEditingId(appeared.id);
-      } else {
-        setEditingId(null);
-      }
+    if (applied.editingId != null && !groups.some((g) => g.id === applied.editingId)) {
+      setEditingId(null);
     }
     setPrevIdsKey(idsKey);
   }

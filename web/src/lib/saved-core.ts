@@ -189,3 +189,40 @@ export function rebuildTagRegistry(map: Record<string, SavedGem>): TagCount[] {
     .map(([name, uses]) => ({ name, uses }))
     .sort((a, b) => b.uses - a.uses || a.name.localeCompare(b.name));
 }
+
+/** One optimistic-create reconciliation: the temp id the UI knew, the real id
+ * the server minted, and a monotone sequence number so readers can apply each
+ * entry exactly once with a cursor (append-only log — safe to re-read from a
+ * render that React later discards). */
+export interface GroupIdRemap {
+  tempId: number;
+  realId: number;
+  seq: number;
+}
+
+/**
+ * Apply the remap-log entries newer than `sinceSeq` to the board's UI
+ * identity state. Attribution is exact — each entry names which temp id the
+ * real id replaced — so multiple same-batch creates each land on their own
+ * column (no array-order guessing). The real id inherits the temp column's
+ * stable DOM key (chained if the temp already had one), and `editingId`
+ * follows only its own temp id. Pure; returns fresh structures.
+ */
+export function applyGroupIdRemaps(
+  log: readonly GroupIdRemap[],
+  sinceSeq: number,
+  stableKeys: ReadonlyMap<number, number>,
+  editingId: number | null,
+): { stableKeys: ReadonlyMap<number, number>; editingId: number | null; lastSeq: number } {
+  let keys: Map<number, number> | null = null;
+  let editing = editingId;
+  let lastSeq = sinceSeq;
+  for (const entry of log) {
+    if (entry.seq <= sinceSeq) continue;
+    keys = keys ?? new Map(stableKeys);
+    keys.set(entry.realId, keys.get(entry.tempId) ?? entry.tempId);
+    if (editing === entry.tempId) editing = entry.realId;
+    if (entry.seq > lastSeq) lastSeq = entry.seq;
+  }
+  return { stableKeys: keys ?? stableKeys, editingId: editing, lastSeq };
+}

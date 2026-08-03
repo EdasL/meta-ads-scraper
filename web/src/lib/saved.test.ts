@@ -15,6 +15,8 @@ import {
   sortGroups,
   bucketByGroup,
   reconcileGroupMerge,
+  applyGroupIdRemaps,
+  type GroupIdRemap,
   type SavedGroup,
 } from "./saved-core.ts";
 
@@ -239,4 +241,41 @@ test("reconcileGroupMerge carries both edits at once", () => {
   const { row, needsPersist } = reconcileGroupMerge(local, submitted, serverRow);
   assert.deepEqual(row, { id: 77, name: "Paid social", position: 0 });
   assert.equal(needsPersist, true);
+});
+
+const remap = (tempId: number, realId: number, seq: number): GroupIdRemap => ({ tempId, realId, seq });
+
+test("applyGroupIdRemaps attributes each same-batch create to its own column", () => {
+  // Two creates in flight; the user is editing the SECOND one (-2). Both
+  // responses land in one batch. -1 → 71 and -2 → 72 must each keep their own
+  // identity: editing follows -2 to 72, never 71.
+  const log = [remap(-1, 71, 1), remap(-2, 72, 2)];
+  const out = applyGroupIdRemaps(log, 0, new Map(), -2);
+  assert.equal(out.editingId, 72);
+  assert.equal(out.stableKeys.get(71), -1);
+  assert.equal(out.stableKeys.get(72), -2);
+  assert.equal(out.lastSeq, 2);
+});
+
+test("applyGroupIdRemaps applies each entry once via the seq cursor", () => {
+  const log = [remap(-1, 71, 1), remap(-2, 72, 2)];
+  const first = applyGroupIdRemaps(log, 0, new Map(), null);
+  // Re-reading the same log with the advanced cursor is a no-op — the map
+  // reference comes back unchanged and the cursor stays put.
+  const second = applyGroupIdRemaps(log, first.lastSeq, first.stableKeys, null);
+  assert.equal(second.stableKeys, first.stableKeys);
+  assert.equal(second.lastSeq, first.lastSeq);
+});
+
+test("applyGroupIdRemaps chains an existing stable key through the swap", () => {
+  // The temp column already carried a stable key (from a previous life); the
+  // real id inherits that original key, keeping the DOM node's identity.
+  const prior: ReadonlyMap<number, number> = new Map([[-3, -1]]);
+  const out = applyGroupIdRemaps([remap(-3, 90, 5)], 4, prior, null);
+  assert.equal(out.stableKeys.get(90), -1);
+});
+
+test("applyGroupIdRemaps leaves an unrelated editing session alone", () => {
+  const out = applyGroupIdRemaps([remap(-1, 71, 1)], 0, new Map(), 55);
+  assert.equal(out.editingId, 55);
 });
