@@ -98,17 +98,22 @@ func PreferenceQueue(ctx context.Context, g *gorm.DB, userEmail string, limit in
 		model := reco.FitContentModel(liked, disliked)
 
 		// Candidates: every unrated matview app, minus the client's exclude list.
-		q := `SELECT ` + mvCols + `
-		      FROM frontend.emerging_scaling_apps
-		      WHERE NOT EXISTS (
-		        SELECT 1 FROM frontend.app_ratings r
-		        WHERE r.user_email = ?
-		          AND r.advertiser_id = frontend.emerging_scaling_apps.advertiser_id)`
+		// The matview scan is wrapped in a subselect so the unqualified mvCols stay
+		// unambiguous once app_topics joins on; topic_id is the diversity-cap key
+		// (NULL for apps with no embedding cluster yet → keyword fallback).
+		q := `SELECT s.*, t.topic_id
+		      FROM (SELECT ` + mvCols + `
+		            FROM frontend.emerging_scaling_apps
+		            WHERE NOT EXISTS (
+		              SELECT 1 FROM frontend.app_ratings r
+		              WHERE r.user_email = ?
+		                AND r.advertiser_id = frontend.emerging_scaling_apps.advertiser_id)`
 		args := []interface{}{userEmail}
 		if len(exclude) > 0 {
 			q += ` AND frontend.emerging_scaling_apps.advertiser_id NOT IN (?)`
 			args = append(args, exclude)
 		}
+		q += `) s LEFT JOIN frontend.app_topics t ON t.advertiser_id = s.advertiser_id`
 		var scanned []mvScanRow
 		if err := tx.Raw(q, args...).Scan(&scanned).Error; err != nil {
 			return err

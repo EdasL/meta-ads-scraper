@@ -4,6 +4,7 @@ import (
 	"math"
 	"math/rand"
 	"sort"
+	"strconv"
 
 	"github.com/edaslakavicius/emerging-app-finder/backend/models"
 )
@@ -76,8 +77,13 @@ type queueOpts struct {
 	Rng           *rand.Rand
 }
 
-// nicheKey is the diversity-cap key: niche_keyword, else cohort, else exempt.
+// nicheKey is the diversity-cap key: embedding topic, else niche_keyword, else
+// cohort, else exempt. Topic first: keyword "niches" scatter clone clusters
+// across dozens of keys (spec 2026-08-03).
 func nicheKey(c prefCandidate) string {
+	if c.TopicID != nil {
+		return "t:" + strconv.Itoa(*c.TopicID)
+	}
 	if c.NicheKeyword != nil && *c.NicheKeyword != "" {
 		return "n:" + *c.NicheKeyword
 	}

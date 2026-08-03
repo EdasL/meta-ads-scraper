@@ -1,6 +1,7 @@
 package repositories
 
 import (
+	"fmt"
 	"math/rand"
 	"testing"
 
@@ -183,6 +184,37 @@ func TestNicheKey_FallbackAndExempt(t *testing.T) {
 			require.Equal(t, tc.want, nicheKey(c))
 		})
 	}
+}
+
+func TestNicheKeyPrefersTopic(t *testing.T) {
+	topic := 7
+	kw := "on the app store"
+	var c prefCandidate
+	c.TopicID = &topic
+	c.NicheKeyword = &kw
+	require.Equal(t, "t:7", nicheKey(c), "embedding topic wins over niche_keyword")
+	c.TopicID = nil
+	require.Equal(t, "n:on the app store", nicheKey(c), "no topic falls back to niche_keyword")
+}
+
+func TestPerTopicCapAppliesAcrossDifferentKeywords(t *testing.T) {
+	// 6 candidates in ONE topic but with 6 DIFFERENT niche_keywords (the broken
+	// pre-topic state) must be capped at the per-niche cap by topic.
+	topic := 3
+	cands := make([]prefCandidate, 6)
+	for i := range cands {
+		kw := fmt.Sprintf("keyword-%d", i)
+		cands[i].AdvertiserID = i + 1
+		cands[i].TopicID = &topic
+		cands[i].NicheKeyword = &kw
+		cands[i].RankScore = 0.9
+		cands[i].Source = "scored"
+	}
+	got := assembleQueue(cands, queueOpts{
+		Limit: 6, PerNicheCap: 3, ExploitFrac: 1.0,
+		Rng: rand.New(rand.NewSource(1)),
+	})
+	require.Len(t, got, 3, "one topic must not exceed the cap across differing keywords")
 }
 
 func TestWeightedSampleByRank_PermutationAndWeighting(t *testing.T) {
