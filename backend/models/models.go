@@ -98,9 +98,9 @@ type ShortlistRow struct {
 	// Embedding-cluster topic (161_topics_suppressions.sql), joined from
 	// frontend.app_topics by the review-queue query only; other ShortlistRow
 	// queries don't select it and leave it nil. Diversity-cap key, not UI data.
-	TopicID *int `json:"topic_id,omitempty" gorm:"column:topic_id"`
-	InstallsDelta28d     *int64   `json:"installs_delta_28d" gorm:"column:installs_delta_28d"`
-	RatingCountDelta28d  *int64   `json:"rating_count_delta_28d" gorm:"column:rating_count_delta_28d"`
+	TopicID             *int   `json:"topic_id,omitempty" gorm:"column:topic_id"`
+	InstallsDelta28d    *int64 `json:"installs_delta_28d" gorm:"column:installs_delta_28d"`
+	RatingCountDelta28d *int64 `json:"rating_count_delta_28d" gorm:"column:rating_count_delta_28d"`
 	// Store-traction absolutes (118_emerging_matview_store_traction.sql), from
 	// the same public.apps row the icon comes from. installs is Play-only —
 	// iOS rows scan as NULL, never 0.
