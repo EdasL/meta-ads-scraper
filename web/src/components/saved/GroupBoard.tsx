@@ -65,6 +65,27 @@ function ColumnMenu({
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  const enabledItems = () =>
+    Array.from(menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)') ?? []);
+
+  // Menu-pattern keys: arrows wrap across enabled items, Home/End jump.
+  // Escape lives on the document listener below; Tab keeps browser behavior.
+  const onMenuKey = (e: React.KeyboardEvent) => {
+    const items = enabledItems();
+    if (items.length === 0) return;
+    const idx = items.indexOf(document.activeElement as HTMLButtonElement);
+    let next: number | null = null;
+    if (e.key === "ArrowDown") next = idx < 0 ? 0 : (idx + 1) % items.length;
+    else if (e.key === "ArrowUp") next = idx < 0 ? items.length - 1 : (idx - 1 + items.length) % items.length;
+    else if (e.key === "Home") next = 0;
+    else if (e.key === "End") next = items.length - 1;
+    if (next != null) {
+      e.preventDefault();
+      items[next]?.focus();
+    }
+  };
 
   useEffect(() => {
     if (!open) return;
@@ -105,6 +126,8 @@ function ColumnMenu({
       left: Math.min(rect.left, window.innerWidth - width - 8),
     });
     setOpen(true);
+    // Focus the first enabled item once the panel exists (Dropdown's rAF idiom).
+    requestAnimationFrame(() => enabledItems()[0]?.focus());
   };
 
   const item = (label: string, onClick: () => void, disabled: boolean) => (
@@ -150,8 +173,10 @@ function ColumnMenu({
       </button>
       {open && pos && (
         <div
+          ref={menuRef}
           role="menu"
           className="dd-panel"
+          onKeyDown={onMenuKey}
           style={{
             position: "fixed",
             top: pos.top,
@@ -162,7 +187,6 @@ function ColumnMenu({
             background: "var(--surface-4)",
             border: "1.5px solid var(--ink)",
             boxShadow: "var(--shadow-hard)",
-            transformOrigin: "top left",
           }}
         >
           {item("Move left", onMoveLeft, !canMoveLeft)}
