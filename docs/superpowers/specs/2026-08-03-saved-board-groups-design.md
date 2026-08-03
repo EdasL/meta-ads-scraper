@@ -5,6 +5,41 @@ Status: SUPERSEDED by v2 below (Edas 2026-08-03: "i needed only the grid of
 items and then that i could create folders" — "board" meant the CARD GRID,
 not the kanban view; kanban columns were the wrong reading)
 
+## v5 — Spotify-style liking everywhere (Edas 2026-08-03: "pressing like
+also opens dropdown of folders showing liked by default selected")
+
+One unified folder-picker popover, and the heart becomes the entry point
+product-wide (Discover table, gem dossier, Hunt cards — NOT the Review
+deck, whose 👍/👎 triage stays untouched).
+
+- **Heart press, unsaved gem:** optimistically save + record a like
+  (`setRating 'like'`) + open the picker anchored at the heart. The heart
+  fills instantly on press (respond on pointer-down feel).
+- **Heart press, saved gem:** open the picker; no state change. Unsave
+  moves INTO the picker: a plain "Remove from saved" row at the bottom
+  (confirm not needed — it's recoverable by re-saving; it also clears
+  memberships client-side consistent with server truth… memberships
+  survive server-side (no FK); on re-save they resurface — acceptable,
+  disclose) and closes the picker.
+- **The picker (one shared component, replaces AddToFolderMenu):** first
+  row "Liked" with the heart icon — checked ⟺ `app_ratings.rating='like'`;
+  toggling writes like/none via the existing ratings endpoint with the SAME
+  pending/settle/failure feedback as folder rows. Below: every user folder
+  as today (checkbox membership rows, v4 feedback). Bottom: "Remove from
+  saved" (only when saved; separated by the house divider). The /saved
+  cards' "Add to folder" menu becomes this same picker (v4's "Liked
+  excluded from menus" rule is superseded — Liked now appears first).
+- **Store:** a liked-ids set derived from the v4 liked slice +
+  `rateLike(advertiserId)` / `unrateLike(advertiserId)` optimistic actions
+  wrapping `setRating`, updating the liked slice and pending set so Liked
+  rows animate identically. Hunt's RoundBlock heart and GemNotes/GemTable
+  SaveToggle all route through the unified control; RoundBlock's bespoke
+  save+rate logic is replaced by it.
+- **Copy:** rows "Liked", folder names, "Remove from saved". Plain voice.
+- Out of scope: creating folders from inside the picker (offer later),
+  Review deck changes, backend changes (none needed — ratings + membership
+  endpoints exist).
+
 ## v4 — built-in Liked collection + clean slate + membership feedback
 (Edas 2026-08-03: "remove the folders leave only liked ones and all the
 other need to be customly created, move to folder should have some sort of
