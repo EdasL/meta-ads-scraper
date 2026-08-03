@@ -15,6 +15,7 @@ from datetime import date, timedelta
 from agf.db.engine import get_engine, begin
 from agf.tracker.snapshots import snapshot_advertiser_week
 from agf.discovery.crowding_refresh import refresh_crowding
+from agf.scoring.topics import refresh_topics
 
 
 def _added(stats) -> bool:
@@ -26,6 +27,16 @@ def _added(stats) -> bool:
     if isinstance(stats, dict):
         return stats.get("embedded", 0) > 0
     return bool(stats)
+
+
+def _topics_empty(engine) -> bool:
+    """True when frontend.app_topics holds no assignments — the cold-start signal
+    that a topic refresh is owed even on a no-op embed cycle (migration 161)."""
+    from sqlalchemy import text
+    with engine.connect() as conn:
+        return conn.execute(
+            text("SELECT NOT EXISTS (SELECT 1 FROM frontend.app_topics)")
+        ).scalar_one()
 
 
 def run_compute_cycle(engine, http_client, as_of) -> dict:
@@ -60,6 +71,16 @@ def run_compute_cycle(engine, http_client, as_of) -> dict:
             if _added(emb):  # skip the full recompute on a no-op cycle
                 out["embed_crowding"] = refresh_crowding(
                     engine, table="frontend.app_embeddings")
+            # topic clusters ride the same new-embeddings signal, plus a
+            # cold-start pass while app_topics is still empty. Isolated: a
+            # k-means failure must not cost this cycle its other stages.
+            try:
+                if _added(emb) or _topics_empty(engine):
+                    out["topics"] = refresh_topics(engine)
+                    print(f"[compute] topics: {out['topics']}", flush=True)
+            except Exception as exc:
+                print(f"[compute] topic refresh failed: {exc!r}",
+                      file=sys.stderr, flush=True)
             print(f"[compute] embeddings: {emb} "
                   f"crowding={out.get('embed_crowding')}", flush=True)
         except Exception as exc:

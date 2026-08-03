@@ -127,6 +127,15 @@ def test_mint_adapter_calls_frame_mint(_migrated_engine, monkeypatch):
             and kw["new_release"] is False)
 
 
+def test_topics_adapter_calls_refresh_topics(_migrated_engine, monkeypatch):
+    spy = _RecordingStage({"rows": 12, "k": 3})
+    monkeypatch.setattr(rs, "refresh_topics", spy)
+    monkeypatch.setattr(rs, "get_engine", lambda: _migrated_engine)
+    assert rs.main(["topics"]) == 0
+    (a, _), = spy.calls
+    assert a == (_migrated_engine,)
+
+
 def test_triage_adapter_calls_run_triage(_migrated_engine, monkeypatch):
     spy = _RecordingStage({"kept": 0})
     monkeypatch.setattr(rs, "run_triage", spy)

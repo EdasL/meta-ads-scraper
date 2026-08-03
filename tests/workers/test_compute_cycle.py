@@ -43,6 +43,8 @@ def spies(monkeypatch):
     order in which the four stages fire."""
     order = []
     crowding_tables = []
+    topics_calls = []
+    topics_empty = {"value": False}
 
     def snapshot_spy(conn, week_start, only_ids=None):
         order.append("snapshot")
@@ -64,9 +66,17 @@ def spies(monkeypatch):
         crowding_tables.append(table)
         return 1
 
-    # velocity + crowding are imported at module scope in compute_cycle.
+    def refresh_topics_spy(engine, **kwargs):
+        topics_calls.append(kwargs)
+        return {"rows": 9, "k": 3}
+
+    # velocity + crowding + topics are imported at module scope in compute_cycle.
     monkeypatch.setattr(compute_cycle, "snapshot_advertiser_week", snapshot_spy)
     monkeypatch.setattr(compute_cycle, "refresh_crowding", refresh_crowding_spy)
+    monkeypatch.setattr(compute_cycle, "refresh_topics", refresh_topics_spy)
+    # frontend.app_topics is populated by default; the cold-start test flips it.
+    monkeypatch.setattr(compute_cycle, "_topics_empty",
+                        lambda engine: topics_empty["value"])
     monkeypatch.setattr(compute_cycle, "begin", _fake_begin)
     # the two embed stages + preference are imported lazily inside the function,
     # so patch them at their source module.
@@ -81,6 +91,7 @@ def spies(monkeypatch):
         monkeypatch.setenv(var, "1")
 
     return {"order": order, "crowding_tables": crowding_tables,
+            "topics_calls": topics_calls, "topics_empty": topics_empty,
             "monkeypatch": monkeypatch}
 
 
@@ -139,3 +150,60 @@ def test_crowding_runs_when_embeddings_added(spies):
     # both embed spies returned embedded>0 → both crowding refreshes fired.
     assert "frontend.app_embeddings" in spies["crowding_tables"]
     assert "discovery.candidate_embeddings" in spies["crowding_tables"]
+
+
+def _embed_zero(spies):
+    def embed_apps_zero(conn, commit_every=25):
+        spies["order"].append("embed_apps")
+        return {"embedded": 0, "skipped": 42}
+
+    spies["monkeypatch"].setattr("scripts.embed_apps.embed_apps", embed_apps_zero)
+
+
+def test_topics_refreshed_when_embeddings_added(spies):
+    import datetime
+    out = compute_cycle.run_compute_cycle(_FakeEngine(), http_client=object(),
+                                          as_of=datetime.date(2026, 7, 10))
+    # new app embeddings → topic assignments are stale, so k-means reruns.
+    assert out["topics"] == {"rows": 9, "k": 3}
+    assert len(spies["topics_calls"]) == 1
+
+
+def test_topics_skipped_when_no_new_embeddings(spies):
+    import datetime
+    _embed_zero(spies)
+
+    out = compute_cycle.run_compute_cycle(_FakeEngine(), http_client=object(),
+                                          as_of=datetime.date(2026, 7, 10))
+
+    # nothing new to cluster and app_topics already populated → no recompute.
+    assert spies["topics_calls"] == []
+    assert "topics" not in out
+
+
+def test_topics_runs_on_cold_start_with_empty_table(spies):
+    import datetime
+    _embed_zero(spies)
+    spies["topics_empty"]["value"] = True
+
+    out = compute_cycle.run_compute_cycle(_FakeEngine(), http_client=object(),
+                                          as_of=datetime.date(2026, 7, 10))
+
+    # no new embeddings, but app_topics is empty (fresh migration 161) → backfill.
+    assert out["topics"] == {"rows": 9, "k": 3}
+
+
+def test_topic_failure_does_not_abort_later_stages(spies):
+    import datetime
+
+    def boom(engine, **kwargs):
+        raise RuntimeError("kmeans blew up")
+
+    spies["monkeypatch"].setattr(compute_cycle, "refresh_topics", boom)
+
+    out = compute_cycle.run_compute_cycle(_FakeEngine(), http_client=object(),
+                                          as_of=datetime.date(2026, 7, 10))
+
+    assert "score_all_users" in spies["order"]
+    assert "embed_candidates" in spies["order"]
+    assert "topics" not in out

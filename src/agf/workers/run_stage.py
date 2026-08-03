@@ -37,6 +37,7 @@ from agf.discovery.generic_deep import run_generic_deep_stage
 from agf.discovery.frame_mint import mint_keywords_from_releases
 from agf.enrich_full.appstore import lookup_google_play, lookup_itunes_batch
 from agf.scoring.run_scoring import run_scoring
+from agf.scoring.topics import refresh_topics
 from agf.workers.compute_cycle import run_compute_cycle
 from agf.workers.main import (_env_float, _env_int, _gate_keywords,
                              _touch_heartbeat, build_extractor,
@@ -244,6 +245,12 @@ def _stage_score(engine, args):
     return {"scored": run_scoring(engine, date.today())}
 
 
+def _stage_topics(engine, args):
+    """Thin dispatch to the embedding-cluster refresh the compute cycle runs
+    (agf.scoring.topics). No run table."""
+    return refresh_topics(engine)
+
+
 STAGES = {
     "sweep": _stage_sweep,
     "flywheel": _stage_flywheel,
@@ -254,6 +261,7 @@ STAGES = {
     "triage": _stage_triage,
     "compute": _stage_compute,
     "score": _stage_score,
+    "topics": _stage_topics,
 }
 
 
@@ -320,6 +328,7 @@ def _parse(argv):
     _add("triage")
     _add("compute")
     _add("score")
+    _add("topics")
 
     args = p.parse_args(argv)
     # shared knobs read from env once (not per-stage flags — every stage's sweep uses
