@@ -17,6 +17,7 @@ import {
   removeSavedGem as apiRemove,
   removeSavedGroup,
   removeSavedGroupGem,
+  setRating,
   updateSavedGroup,
   upsertSavedGem,
 } from "./api";
@@ -486,6 +487,64 @@ function persistMembership(key: string, write: () => Promise<void>): Promise<voi
     .finally(() => markMembershipPending(key, false));
   p.catch(() => {});
   return p;
+}
+
+/** Sentinel "folder" id for the built-in Liked row in the picker's pending
+ * set. 0 is never a real saved_groups id. */
+const LIKED_PENDING_ID = 0;
+
+export function likedPendingKey(advertiserId: number): string {
+  return membershipKey(advertiserId, LIKED_PENDING_ID);
+}
+
+export function isLiked(advertiserId: number): boolean {
+  return liked.some((l) => l.advertiserId === advertiserId);
+}
+
+/** What the liked slice needs to render an optimistic entry before the
+ * backend echoes it — identity + display fields from the row at hand. */
+export interface LikeSeed {
+  pageName: string;
+  appName: string | null;
+  iconUrl?: string;
+  gemScore: number;
+}
+
+/** Record a like (Spotify-style heart). Optimistic: the liked slice gains the
+ * entry immediately; the write rides the same pending/settle/failure cycle as
+ * folder memberships (rejects on failure, rolls back via rehydrate). */
+export function rateLike(advertiserId: number, seed: LikeSeed): Promise<void> {
+  if (isLiked(advertiserId)) return Promise.resolve();
+  liked = [
+    {
+      advertiserId,
+      pageName: seed.pageName,
+      appName: seed.appName,
+      iconUrl: seed.iconUrl,
+      gemScore: seed.gemScore,
+      ratedAt: new Date().toISOString(),
+      saved: isSaved(advertiserId),
+    },
+    ...liked,
+  ];
+  notify();
+  if (!userEmail) return Promise.resolve();
+  const email = userEmail;
+  return persistMembership(likedPendingKey(advertiserId), () =>
+    setRating(advertiserId, email, "like", ""),
+  );
+}
+
+/** Clear a like (rating → none). Same optimistic + pending semantics. */
+export function unrateLike(advertiserId: number): Promise<void> {
+  if (!isLiked(advertiserId)) return Promise.resolve();
+  liked = liked.filter((l) => l.advertiserId !== advertiserId);
+  notify();
+  if (!userEmail) return Promise.resolve();
+  const email = userEmail;
+  return persistMembership(likedPendingKey(advertiserId), () =>
+    setRating(advertiserId, email, "none", ""),
+  );
 }
 
 /** Add a gem to a folder (playlist model — idempotent, additive). For a temp
