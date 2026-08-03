@@ -13,14 +13,17 @@ unique key.
 Assertions about the retire pass are membership-scoped rather than exact-list —
 it grades EVERY active/resting keyword in the DB, and the shared test DB may
 carry rows another suite committed."""
+import contextlib
 import itertools
 
 import pytest
 from sqlalchemy import text
 
 from agf.db import dynamic_keywords as dk
-from agf.db.keyword_suppressions import (load_suppressed_keywords,
+from agf.db.keyword_suppressions import (drop_suppressed_entries,
+                                         load_suppressed_keywords,
                                          suppress_redundant_static_keywords)
+from agf.discovery.taxonomy import TaxonomyEntry
 
 CAND_BASE = 2_000_000_100     # sentinel candidate ids (one page_id each)
 KW_BASE = 2_000_500           # sentinel dynamic_keywords ids
@@ -181,3 +184,40 @@ def test_static_pass_degrades_open_on_null_crowding(pg_conn, seed_catch):
 
 def test_static_pass_no_keywords(pg_conn):
     assert suppress_redundant_static_keywords(pg_conn, []) == []
+
+
+# --- the sweep-side filter -------------------------------------------------------------
+
+class _ConnEngine:
+    """Engine stand-in handing drop_suppressed_entries the test's rolled-back
+    connection, so the filter runs against real (uncommitted) suppression rows."""
+
+    def __init__(self, conn):
+        self._conn = conn
+
+    def connect(self):
+        return contextlib.nullcontext(self._conn)
+
+
+def _entry(keyword):
+    return TaxonomyEntry(keyword, "funnel_phrase", "KEYWORD_EXACT_PHRASE", 4)
+
+
+def test_drop_suppressed_entries_filters(pg_conn, seed_catch):
+    seed_catch("install the app", kept=25, crowding=0.95)
+    suppress_redundant_static_keywords(pg_conn, ["install the app"])
+    entries = [_entry("install the app"), _entry("take the quiz")]
+
+    kept = drop_suppressed_entries(_ConnEngine(pg_conn), entries)
+
+    assert [e.keyword for e in kept] == ["take the quiz"]
+
+
+def test_drop_suppressed_entries_fails_open(pg_conn):
+    """A dead DB must never cost the sweep its entries."""
+    class _Broken:
+        def connect(self):
+            raise RuntimeError("db down")
+
+    entries = [_entry("take the quiz"), _entry("personalized plan")]
+    assert drop_suppressed_entries(_Broken(), entries) == entries
