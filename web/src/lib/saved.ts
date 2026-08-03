@@ -112,6 +112,20 @@ let groupsHydratedKey: string | null = null;
 let nextTempId = -1;
 const isTemp = (id: number) => id < 0;
 
+/**
+ * Temp ids the user explicitly deleted while their create was still in flight.
+ *
+ * This set is the ONLY signal that a pending column should be deleted
+ * server-side. A temp id merely being ABSENT from `groups` does not mean the
+ * user removed it: `hydrateGroups` replaces `groups` wholesale, and it fires on
+ * any unrelated sync failure (`onSyncError`) or a user switch — server data
+ * never contains negative ids, so any such hydrate wipes the pending column too.
+ * Treating that absence as a delete would destroy a group the backend had just
+ * successfully created. Absence without a tombstone is a no-op; the real column
+ * shows up on the next hydrate by itself.
+ */
+const deletedTempIds = new Set<number>();
+
 function recompute() {
   cachedList = Object.values(cache ?? {}).sort((a, b) => b.savedAt.localeCompare(a.savedAt));
 }
@@ -188,6 +202,7 @@ export function setUser(email: string | null) {
   groupsHydratedKey = null;
   cache = {};
   groups = [];
+  deletedTempIds.clear(); // never carry one user's pending deletes into another's board
   recompute();
   notify();
   void hydrate();
@@ -285,13 +300,17 @@ function persistGroup(id: number, patch: ApiSavedGroupPatch) {
  */
 function reconcileGroup(submitted: SavedGroup, serverRow: SavedGroup) {
   const tempId = submitted.id;
-  const local = groups.find((g) => g.id === tempId);
-  if (!local) {
-    // The column was deleted mid-flight. Drop the row the backend just made so
-    // it cannot reappear on the next hydrate.
+  if (deletedTempIds.delete(tempId)) {
+    // The user deleted the column mid-flight. Drop the row the backend just made
+    // so it cannot reappear on the next hydrate.
     removeSavedGroup(serverRow.id).catch(onSyncError);
     return;
   }
+  const local = groups.find((g) => g.id === tempId);
+  // Absent WITHOUT a tombstone means a hydrate landed mid-flight and wiped the
+  // pending column (see deletedTempIds). Nothing to merge and nothing to delete:
+  // the real row is already on the server and arrives with the next hydrate.
+  if (!local) return;
 
   const { row, needsPersist } = reconcileGroupMerge(local, submitted, serverRow);
   setGroups(groups.map((g) => (g.id === tempId ? row : g)));
@@ -385,7 +404,13 @@ export function deleteGroup(id: number): void {
   cache = next;
   recompute();
   setGroups(remaining);
-  if (!userEmail || isTemp(id)) return; // a temp column was never persisted
+  if (isTemp(id)) {
+    // No backend row to delete yet — the create is still in flight. Tombstone it
+    // so reconcileGroup removes the row the moment the create answers.
+    deletedTempIds.add(id);
+    return;
+  }
+  if (!userEmail) return;
   removeSavedGroup(id).catch(onSyncError);
 }
 
