@@ -67,4 +67,6 @@ export {
   deleteGroup,
   addToFolder,
   removeFromFolder,
+  rateLike,
+  unrateLike,
 } from "./saved";

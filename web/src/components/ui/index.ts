@@ -3,7 +3,6 @@ export { Button, ButtonLink } from "./Button";
 export { ScoreBadge } from "./ScoreBadge";
 export { Trend } from "./Trend";
 export { Sparkline } from "./Sparkline";
-export { SaveToggle } from "./SaveToggle";
 export { EmptyState } from "./EmptyState";
 export { InfoDot } from "./InfoDot";
 export { TagInput } from "./TagInput";

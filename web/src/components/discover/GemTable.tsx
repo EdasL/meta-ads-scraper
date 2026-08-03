@@ -6,7 +6,8 @@ import type { ShortlistRow, ShortlistSort, SortDir } from "@/types/contracts";
 import { growthLine, monthLabel } from "@/lib/why";
 import { compactCount } from "@/lib/format";
 import { SORT_DEFAULT_DIR } from "@/lib/query";
-import { AppIcon, SaveToggle, ScoreBadge, Trend } from "@/components/ui";
+import { AppIcon, ScoreBadge, Trend } from "@/components/ui";
+import { FolderPicker } from "@/components/saved/FolderPicker";
 
 /**
  * The Discover comparison table: one gem per row, the numbers that matter
@@ -185,7 +186,7 @@ function GemRow({
         {monthLabel(row.first_ad_at) ?? "—"}
       </td>
       <td onClick={(e) => e.stopPropagation()}>
-        <SaveToggle row={row} size="sm" />
+        <FolderPicker advertiserId={row.advertiser_id} row={row} variant="heart" size="sm" />
       </td>
     </tr>
   );

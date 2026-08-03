@@ -5,8 +5,8 @@ import { IconX } from "@tabler/icons-react";
 import type { LikedGem, SavedGem } from "@/lib/saved";
 import type { ShortlistRow } from "@/types/contracts";
 import { unsave } from "@/lib/useSaved";
-import { AppIcon, SaveToggle, Trend } from "@/components/ui";
-import { AddToFolderMenu } from "./AddToFolderMenu";
+import { AppIcon, Trend } from "@/components/ui";
+import { FolderPicker } from "./FolderPicker";
 
 function fmtDate(iso: string) {
   return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
@@ -68,7 +68,7 @@ export function SavedCard({ gem }: { gem: SavedGem }) {
       )}
 
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginTop: "auto", paddingTop: 8, borderTop: "1px solid var(--line)" }}>
-        <AddToFolderMenu gem={gem} />
+        <FolderPicker advertiserId={gem.advertiserId} variant="label" />
         <span className="font-mono nums" style={{ fontSize: "var(--fs-xs)", color: "var(--muted)", whiteSpace: "nowrap", marginLeft: "auto" }}>Saved {fmtDate(gem.savedAt)}</span>
       </div>
     </div>
@@ -80,7 +80,7 @@ export function SavedCard({ gem }: { gem: SavedGem }) {
  * heart, and when it was liked. Saving it upgrades it to a full SavedCard. */
 export function LikedCard({ item }: { item: LikedGem }) {
   const name = item.appName ?? item.pageName;
-  // SaveToggle saves through the store, which snapshots a ShortlistRow. The
+  // The heart saves through the store, which snapshots a ShortlistRow. The
   // liked row only carries identity + score; the axes it lacks freeze as 0.
   const row = {
     advertiser_id: item.advertiserId,
@@ -124,7 +124,7 @@ export function LikedCard({ item }: { item: LikedGem }) {
         >
           {name}
         </Link>
-        <SaveToggle row={row} size="sm" />
+        <FolderPicker advertiserId={item.advertiserId} row={row} variant="heart" size="sm" />
       </div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginTop: "auto", paddingTop: 8, borderTop: "1px solid var(--line)" }}>
         <span className="t-md w-heavy nums">{Math.round(item.gemScore)}</span>

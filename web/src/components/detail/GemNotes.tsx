@@ -3,8 +3,8 @@
 import type { ShortlistRow } from "@/types/contracts";
 import { VERDICTS, type SavedVerdict } from "@/lib/saved";
 import { addTag, allTags, removeTag, setNote, setVerdict, useSavedGem } from "@/lib/useSaved";
-import { NoteEditor, SaveToggle, TagInput } from "@/components/ui";
-import { AddToFolderMenu } from "@/components/saved/AddToFolderMenu";
+import { NoteEditor, TagInput } from "@/components/ui";
+import { FolderPicker } from "@/components/saved/FolderPicker";
 
 const selectStyle: React.CSSProperties = {
   background: "var(--surface-3)",
@@ -27,7 +27,7 @@ export function GemNotes({ row }: { row: ShortlistRow }) {
     return (
       <section style={{ border: "1px dashed var(--line)", padding: 18, textAlign: "center", display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}>
         <p className="t-sm" style={{ color: "var(--muted)", margin: 0 }}>Save it to keep notes and tags.</p>
-        <SaveToggle row={row} />
+        <FolderPicker advertiserId={row.advertiser_id} row={row} variant="heart" />
       </section>
     );
   }
@@ -37,7 +37,7 @@ export function GemNotes({ row }: { row: ShortlistRow }) {
     <section style={{ display: "flex", flexDirection: "column", gap: 14 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
         <h2 className="t-md w-strong" style={{ margin: 0 }}>Your notes</h2>
-        <SaveToggle row={row} size="sm" />
+        <FolderPicker advertiserId={row.advertiser_id} row={row} variant="heart" size="sm" />
       </div>
 
       <NoteEditor key={saved.advertiserId} value={saved.note} onSave={(v) => setNote(saved.advertiserId, v)} />
@@ -50,7 +50,6 @@ export function GemNotes({ row }: { row: ShortlistRow }) {
       />
 
       <div style={{ display: "flex", gap: 18, flexWrap: "wrap" }}>
-        <AddToFolderMenu gem={saved} />
         <label className="eyebrow" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
           Verdict
           <select

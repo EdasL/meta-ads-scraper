@@ -1,12 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { IconHeart, IconHeartFilled } from "@tabler/icons-react";
 import { ScoreBadge } from "@/components/ui";
 import { formatSettings, latestEvents, splitByRelevance, rollupByPage, type RolledResult } from "@/lib/hunt";
-import { setRating } from "@/lib/api";
 import type { HuntResult, HuntRound } from "@/lib/api";
-import { save, unsave, useIsSaved } from "@/lib/useSaved";
+import { FolderPicker } from "@/components/saved/FolderPicker";
 import type { ShortlistRow } from "@/types/contracts";
 
 /** Human label for a result's store. Unknown stores fall back to the raw value. */
@@ -96,47 +94,12 @@ function resultToRow(r: HuntResult): ShortlistRow {
   };
 }
 
-/** Save control: one tap saves the app to the Saved page AND records a like
- *  (feeds preference learning). Tapping again removes both. Save/unsave route
- *  through the shared saved-gems store, so /saved and the header count update
- *  immediately; the store owns the optimistic UI and reverts on a backend
- *  error, which also makes it the single source of truth for the filled state. */
-function HeartButton({ result: r, userEmail }: { result: HuntResult; userEmail: string }) {
-  const advertiserId = r.kept_advertiser_id!;
-  const saved = useIsSaved(advertiserId);
-
-  // The rating is a best-effort companion to the save, not part of it. The
-  // save (primary action) has already landed in the store by the time this
-  // runs, so a failed rating write must NOT revert it — log and move on.
-  async function rate(value: "like" | "none") {
-    try {
-      await setRating(advertiserId, userEmail, value, "");
-    } catch (e) {
-      console.error("hunt heart: rating write failed", e);
-    }
-  }
-
-  function toggle() {
-    if (saved) {
-      unsave(advertiserId);
-      void rate("none");
-    } else {
-      save(resultToRow(r));
-      void rate("like");
-    }
-  }
-
-  return (
-    <button
-      type="button"
-      onClick={toggle}
-      aria-pressed={saved}
-      title={saved ? "Remove from Saved" : "Save and like"}
-      style={{ border: "none", background: "transparent", cursor: "pointer", padding: 4, color: saved ? "var(--down)" : "var(--muted)", flex: "0 0 auto" }}
-    >
-      {saved ? <IconHeartFilled size={18} /> : <IconHeart size={18} stroke={1.75} />}
-    </button>
-  );
+/** The unified heart: saving + liking + folder filing in one control. An
+ *  unsaved result saves and records a like on press, then the folder picker
+ *  opens; a saved one goes straight to the picker (unsave lives inside it).
+ *  resultToRow adapts the hunt result for the store's save snapshot. */
+function HeartButton({ result: r }: { result: HuntResult }) {
+  return <FolderPicker advertiserId={r.kept_advertiser_id!} row={resultToRow(r)} variant="heart" size="sm" />;
 }
 
 /** One found app as a card: icon, name, store badge, GemScore, tagline, and a
@@ -187,7 +150,7 @@ function ResultCard({ group: g, userEmail }: { group: RolledResult; userEmail: s
             )}
           </div>
         </div>
-        {r.kept_advertiser_id != null && userEmail && <HeartButton result={r} userEmail={userEmail} />}
+        {r.kept_advertiser_id != null && userEmail && <HeartButton result={r} />}
       </div>
       {r.tagline && (
         <p className="t-xs" style={{ color: "var(--ink-soft)", margin: 0, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
