@@ -13,6 +13,7 @@ import {
   renameGroup,
   setGroup,
   useSavedGroups,
+  useSavedList,
 } from "@/lib/useSaved";
 
 const moveBtn: React.CSSProperties = {
@@ -350,15 +351,46 @@ function GemCard({ gem, groups, groupIdx }: { gem: SavedGem; groups: SavedGroup[
   );
 }
 
-/** Board over the saved gems: one column per user group. */
+/** Board over the saved gems: one column per user group. `gems` may be
+ * tag-filtered by the page; counts and delete semantics always use the full
+ * saved list, so a filter can never hide cards from a delete decision. */
 export function GroupBoard({ gems }: { gems: SavedGem[] }) {
   const groups = sortGroups(useSavedGroups());
+  const allSaved = useSavedList();
   const [editingId, setEditingId] = useState<number | null>(null);
+  const [prevIdsKey, setPrevIdsKey] = useState("");
   const boardRef = useRef<HTMLDivElement>(null);
+  // Stable DOM keys: a column created this session keeps its temp key after
+  // the create response swaps in the real id, so the rename input (and the
+  // typist's focus + draft) survives reconciliation. State, not a ref — it is
+  // read during render (React key) and only ever updated alongside editingId
+  // in the adjust-during-render block below.
+  const [stableKeys, setStableKeys] = useState<ReadonlyMap<number, number>>(new Map());
 
-  if (groups.length === 0) return null; // pre-hydration; the store fills in
+  // Adjust-during-render (react.dev "adjusting state when props change"):
+  // when the group id set changes, remap or drop an editing id that no longer
+  // exists. A vanished temp id whose replacement just appeared keeps its edit
+  // session and its DOM key; anything else stops editing.
+  const idsKey = groups.map((g) => g.id).join(",");
+  if (idsKey !== prevIdsKey) {
+    const prevIds = new Set(prevIdsKey.split(",").filter(Boolean).map(Number));
+    if (editingId != null && !groups.some((g) => g.id === editingId)) {
+      const appeared = editingId < 0 ? groups.find((g) => g.id > 0 && !prevIds.has(g.id)) : undefined;
+      if (appeared) {
+        const next = new Map(stableKeys);
+        next.set(appeared.id, stableKeys.get(editingId) ?? editingId);
+        setStableKeys(next);
+        setEditingId(appeared.id);
+      } else {
+        setEditingId(null);
+      }
+    }
+    setPrevIdsKey(idsKey);
+  }
 
   const buckets = bucketByGroup(gems, groups);
+  // Unfiltered membership: drives the count badge and the delete confirm.
+  const trueBuckets = bucketByGroup(allSaved, groups);
 
   const addGroup = () => {
     const before = new Set(groups.map((g) => g.id));
@@ -377,10 +409,12 @@ export function GroupBoard({ gems }: { gems: SavedGem[] }) {
   const confirmDelete = (group: SavedGroup) => {
     const target = groups.find((g) => g.id !== group.id);
     if (!target) return;
-    const count = buckets.get(group.id)?.length ?? 0;
+    const count = trueBuckets.get(group.id)?.length ?? 0;
     if (count > 0 && !window.confirm(`Delete "${group.name}"? Its cards move to "${target.name}".`)) return;
     deleteGroup(group.id);
   };
+
+  if (groups.length === 0) return null; // pre-hydration; the store fills in
 
   return (
     <div
@@ -404,11 +438,12 @@ export function GroupBoard({ gems }: { gems: SavedGem[] }) {
       `}</style>
       {groups.map((col, idx) => {
         const items = buckets.get(col.id) ?? [];
+        const trueCount = trueBuckets.get(col.id)?.length ?? 0;
         return (
-          <div key={col.id} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <div key={stableKeys.get(col.id) ?? col.id} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             <ColumnHeader
               group={col}
-              count={items.length}
+              count={trueCount}
               editing={editingId === col.id}
               onEditStart={() => setEditingId(col.id)}
               onEditEnd={() => setEditingId(null)}
@@ -421,7 +456,9 @@ export function GroupBoard({ gems }: { gems: SavedGem[] }) {
               <GemCard key={g.advertiserId} gem={g} groups={groups} groupIdx={idx} />
             ))}
             {items.length === 0 && (
-              <div className="t-xs" style={{ color: "var(--muted)" }}>No gems here yet.</div>
+              <div className="t-xs" style={{ color: "var(--muted)" }}>
+                {trueCount > 0 ? "None match the tag filter." : "No gems here yet."}
+              </div>
             )}
           </div>
         );
