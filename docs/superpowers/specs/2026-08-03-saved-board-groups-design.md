@@ -1,7 +1,50 @@
 # Saved board: board-only + custom groups — design
 
 Date: 2026-08-03
-Status: approved (standing approval; interpretation call flagged in chat)
+Status: SUPERSEDED by v2 below (Edas 2026-08-03: "i needed only the grid of
+items and then that i could create folders" — "board" meant the CARD GRID,
+not the kanban view; kanban columns were the wrong reading)
+
+## v2 — card grid + folders (the correct reading)
+
+The /saved page is ONE grid of gem cards (the old list-view grid,
+`repeat(auto-fill, minmax(230px, 1fr))`) with user-created FOLDERS as a
+filter dimension. No kanban columns.
+
+- **Folder row** above the grid: chip "All · N" + one chip per folder
+  ("Name · n"), active chip filled (--ink bg / --bg text). "New folder"
+  control at the end, first-class size. Active folder filters the grid;
+  All shows every gem. Tag filter stays and composes (AND).
+- **Folder management** on the ACTIVE folder chip: inline rename (click
+  name when active → input, Enter/blur commit, Esc cancel) and a ⋯ menu
+  (reuses the shipped keyboard-nav menu) with Delete folder only.
+  Delete confirm: `Delete "<name>"? Its gems stay in All.` — members are
+  UNFILED (group_id → NULL), not reassigned. Deleting the last folder is
+  allowed (folders are optional organization).
+- **Cards**: resurrect the deleted SavedCard structure from git history
+  (icon/initials tile, 2-line clamped name, score, tags, note clamp) MINUS
+  the compare checkbox; add a compact folder `<select>` (selectStyle idiom,
+  label "Folder") with options: each folder + "No folder". The overflow
+  clamp rules from v1 stay.
+- **Store/core**: groups slice unchanged (folders ARE groups). Rendering
+  uses plain filtering (groupId === active folder; All = no filter); the
+  bucketByGroup first-group FALLBACK rule is dead — NULL/unknown groupId
+  is "unfiled", visible only under All. GemNotes picker gains "No folder"
+  and drops the first-group display fallback; label "Folder".
+- **Backend deltas** (folder semantics):
+  1. `ListSavedGroups` no longer seeds defaults (new users start with zero
+     folders; the advisory lock goes away with the seed). Existing users
+     keep their migration-backfilled 4 folders and can delete them.
+  2. `DeleteSavedGroup`: sets members' `group_id = NULL`, deletes the row;
+     no last-group 409 (allowed down to zero).
+  3. Upsert accepts explicit unfile: `group_id: 0` writes NULL (0 is never
+     a real id); absent/null still means "keep server value" (COALESCE).
+- **Copy**: user-facing noun is "folder" everywhere ("New folder",
+  "No folder", "Delete folder", "No gems in this folder yet."). Internal
+  names stay `saved_groups`/`group_id` — no schema churn.
+- Everything else from v1 stands: migration 160 (harmless — backfilled
+  folders are real folders), /api/saved-groups endpoints, remap-log
+  reconcile, tombstone delete, proxy allowlist, stage column legacy.
 
 ## Goal
 
