@@ -5,7 +5,56 @@ Status: SUPERSEDED by v2 below (Edas 2026-08-03: "i needed only the grid of
 items and then that i could create folders" — "board" meant the CARD GRID,
 not the kanban view; kanban columns were the wrong reading)
 
-## v2 — card grid + folders (the correct reading)
+## v3 — real folders, Spotify-playlist model (Edas 2026-08-03: "i want
+actual folders like playlists on spotify"; confirmed multi-membership)
+
+Folders are navigable containers, not filters, and a gem can be in MANY
+folders at once (playlist semantics).
+
+- **Data (migration 162):** `frontend.saved_group_members (user_email TEXT
+  NOT NULL, group_id BIGINT NOT NULL REFERENCES frontend.saved_groups(id)
+  ON DELETE CASCADE, advertiser_id BIGINT NOT NULL, added_at TIMESTAMPTZ
+  NOT NULL DEFAULT now(), PRIMARY KEY (group_id, advertiser_id))` + index
+  `ix_saved_group_members_user (user_email, advertiser_id)`. Backfill:
+  one membership row per existing `saved_gems.group_id`. The `group_id`
+  column stays but is legacy (like `stage`): no longer read or written.
+- **Go:** `ListSavedGems` rows gain `group_ids: [int64]` (aggregated,
+  `[]` not null — raw-key wire test). New membership endpoints (KeyAuth,
+  writes RequireToken, ownership → 404 like the rest):
+  `POST /api/saved-groups/:id/gems {advertiser_id}` (idempotent add,
+  ON CONFLICT DO NOTHING; membership rows carry the owner email) and
+  `POST /api/saved-groups/:id/gems/remove {advertiser_id}` (idempotent).
+  The upsert's `group_id` sentinel handling and `SavedGemIn/Row.GroupID`
+  are REMOVED (web stops sending; columns stay in DB as legacy).
+  Delete-folder semantics: memberships die with the folder (CASCADE);
+  gems themselves are untouched. No seeding (v2 rule stands).
+- **Web — two-level page.** Top level `/saved`: a "Folders" tile row/grid
+  (one tile per folder: name + client-derived gem count; a "New folder"
+  tile that creates + enters rename) above the full "All gems" card grid
+  (unchanged card design). Opening a folder (tile click) shows the folder
+  view: back control ("All gems"), folder name inline-renameable, ⋯ menu
+  with Delete folder (confirm: `Delete "<name>"? Gems stay in your saved
+  list.`), and the grid of member gems. Folder state rides a `?folder=<id>`
+  URL param via history.replaceState (Next 16 router.replace no-op
+  landmine). Unknown/foreign id in the param → top level.
+- **Membership control on cards + GemNotes:** replace the single Folder
+  select with an "Add to folder" control opening the house menu as a
+  checkbox list (menuitemcheckbox per folder, toggling membership,
+  keyboard nav reused). Zero folders → control hidden (create folders from
+  the top level). SavedGem.groupId → `groupIds: number[]`; store gains
+  `addToFolder(advertiserId, groupId)` / `removeFromFolder(advertiserId,
+  groupId)` (optimistic, persisted to the new endpoints, rollback via
+  rehydrate).
+- **Carry-over cleanups from the v2 review:** delete dead
+  moveGroup/moveGroupLeft/moveGroupRight exports; fix stale
+  "column/board/bucketByGroup" comments; createGroup returns the temp id
+  (no id set-difference inference); aria-pressed on folder tiles where
+  applicable.
+- **Copy:** "New folder", "Add to folder", "Delete folder", confirm above,
+  folder-view empty state "No gems in this folder yet." All plain voice.
+
+## v2 — card grid + folders (SUPERSEDED by v3: folders became filters,
+Edas wanted containers)
 
 The /saved page is ONE grid of gem cards (the old list-view grid,
 `repeat(auto-fill, minmax(230px, 1fr))`) with user-created FOLDERS as a
