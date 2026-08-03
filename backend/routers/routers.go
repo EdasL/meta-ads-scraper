@@ -26,6 +26,7 @@ func Init(r *gin.Engine) {
 	enrich := controllers.NewEnrichController()
 	saved := controllers.NewSavedGemsController()
 	savedGroups := controllers.NewSavedGroupsController()
+	likedGems := controllers.NewLikedGemsController()
 	ratings := controllers.NewRatingsController()
 	preference := controllers.NewPreferenceController()
 	health := controllers.NewHealthController()
@@ -71,6 +72,9 @@ func Init(r *gin.Engine) {
 		// Folder membership (playlist semantics: a gem can be in many folders).
 		api.POST("/saved-groups/:id/gems", middlewares.RequireToken(), savedGroups.AddGem)
 		api.POST("/saved-groups/:id/gems/remove", middlewares.RequireToken(), savedGroups.RemoveGem)
+		// The built-in Liked collection: everything the caller rated 'like',
+		// saved or not. Read-only — membership is the rating itself.
+		api.GET("/liked-gems", likedGems.List)
 		// Per-user app ratings (like/neutral/dislike + comment). Writes are
 		// token-guarded like saved gems and review decisions.
 		api.GET("/ratings", ratings.List)

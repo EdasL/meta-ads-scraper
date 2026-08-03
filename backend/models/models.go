@@ -494,6 +494,20 @@ type SavedGroupRow struct {
 	Position int    `gorm:"column:position" json:"position"`
 }
 
+// LikedGemRow is one card in the built-in Liked collection: an app the user
+// rated 'like' anywhere in the product, whether or not they also saved it.
+// Saved reports which of the two it is — an unsaved like has no note, tags or
+// folder membership to render, since all of those hang off a saved_gems row.
+type LikedGemRow struct {
+	AdvertiserID int64    `json:"advertiser_id" gorm:"column:advertiser_id"`
+	PageName     *string  `json:"page_name" gorm:"column:page_name"`
+	AppName      *string  `json:"app_name" gorm:"column:app_name"`
+	IconURL      *string  `json:"icon_url" gorm:"column:icon_url"`
+	GemScore     *float64 `json:"gem_score" gorm:"column:gem_score"`
+	RatedAt      *APITime `json:"rated_at" gorm:"column:rated_at"`
+	Saved        bool     `json:"saved" gorm:"column:saved"`
+}
+
 // SavedGemIn is the upsert body. On a re-save (conflict) only the mutable fields
 // are updated; the snapshot columns keep their original save-time values.
 type SavedGemIn struct {
