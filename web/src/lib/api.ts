@@ -218,10 +218,26 @@ export async function updateSavedGroup(id: number, patch: ApiSavedGroupPatch): P
   await live(`/saved-groups/${id}/update`, { method: "POST", body: JSON.stringify(patch) });
 }
 
-/** Delete a folder; the backend unfiles its gems (group_id → NULL). Deleting
- *  down to zero folders is allowed. */
+/** Delete a folder; its membership rows die with it (CASCADE), the gems stay.
+ *  Deleting down to zero folders is allowed. */
 export async function removeSavedGroup(id: number): Promise<void> {
   await live(`/saved-groups/${id}/remove`, { method: "POST", body: "{}" });
+}
+
+/** Add a gem to a folder (idempotent — re-adding is a no-op server-side). */
+export async function addSavedGroupGem(groupId: number, advertiserId: number): Promise<void> {
+  await live(`/saved-groups/${groupId}/gems`, {
+    method: "POST",
+    body: JSON.stringify({ advertiser_id: advertiserId }),
+  });
+}
+
+/** Remove a gem from a folder (idempotent). */
+export async function removeSavedGroupGem(groupId: number, advertiserId: number): Promise<void> {
+  await live(`/saved-groups/${groupId}/gems/remove`, {
+    method: "POST",
+    body: JSON.stringify({ advertiser_id: advertiserId }),
+  });
 }
 
 /** Status of an on-demand enrichment job for a gem. */

@@ -40,12 +40,12 @@ export interface SavedGem {
   stage: Stage;
   verdict?: SavedVerdict;
   confidence?: Confidence;
-  /** Board column the gem is filed under. `null` = never filed; the board shows
-   * it in the first column (see `bucketByGroup`). */
-  groupId: number | null;
+  /** Folders this gem belongs to (playlist model — many at once, empty = in
+   * none). Mirrors frontend.saved_group_members. */
+  groupIds: number[];
 }
 
-/** One column of the /saved board (frontend.saved_groups). */
+/** One folder on /saved (frontend.saved_groups). */
 export interface SavedGroup {
   id: number;
   name: string;
@@ -85,7 +85,7 @@ export function makeSavedGem(row: ShortlistRow, savedAt: string): SavedGem {
     tags: [],
     note: "",
     stage: "just_saw",
-    groupId: null,
+    groupIds: [],
   };
 }
 
@@ -97,9 +97,9 @@ export interface GroupReconcile {
 }
 
 /**
- * Merge an optimistically-created column with the row the backend answered with.
+ * Merge an optimistically-created folder with the row the backend answered with.
  *
- * A create is a round-trip, and the board opens a brand-new column straight into
+ * A create is a round-trip, and the page opens a brand-new folder straight into
  * rename mode — so a rename (or a move) lands while the temp id is still in
  * flight. Those edits could not be persisted at the time (a negative id is not a
  * real row), so they exist ONLY here: taking the server row wholesale would
@@ -127,20 +127,38 @@ export function reconcileGroupMerge(
   return { row, needsPersist };
 }
 
-/** Board order: by position, then id as a stable tiebreak. Returns a new array. */
+/** Folder display order: by position, then id as a stable tiebreak. Returns a new array. */
 export function sortGroups(groups: SavedGroup[]): SavedGroup[] {
   return [...groups].sort((a, b) => a.position - b.position || a.id - b.id);
 }
 
 /**
- * Grid filter for the folder chips. `folderId === null` means "All": every
- * gem passes. A concrete folder id keeps only gems filed exactly there —
- * unfiled gems (NULL groupId) belong to All alone, never to a folder.
+ * Members of one folder (playlist model: a gem can be in many folders).
  * Order is untouched (the store list is already savedAt DESC).
  */
-export function filterByGroup(gems: SavedGem[], folderId: number | null): SavedGem[] {
-  if (folderId === null) return gems;
-  return gems.filter((g) => g.groupId === folderId);
+export function memberOfFolder(gems: SavedGem[], folderId: number): SavedGem[] {
+  return gems.filter((g) => g.groupIds.includes(folderId));
+}
+
+/** Per-folder gem counts, derived client-side from memberships. */
+export function countByFolder(gems: SavedGem[]): Map<number, number> {
+  const counts = new Map<number, number>();
+  for (const gem of gems) {
+    for (const id of gem.groupIds) counts.set(id, (counts.get(id) ?? 0) + 1);
+  }
+  return counts;
+}
+
+/** Immutably add a folder membership (deduped). */
+export function withFolderId(gem: SavedGem, folderId: number): SavedGem {
+  if (gem.groupIds.includes(folderId)) return gem;
+  return { ...gem, groupIds: [...gem.groupIds, folderId] };
+}
+
+/** Immutably drop a folder membership (absent id → same gem back). */
+export function withoutFolderId(gem: SavedGem, folderId: number): SavedGem {
+  if (!gem.groupIds.includes(folderId)) return gem;
+  return { ...gem, groupIds: gem.groupIds.filter((id) => id !== folderId) };
 }
 
 /** Immutably add a normalized tag (deduped). */
@@ -177,10 +195,10 @@ export interface GroupIdRemap {
 }
 
 /**
- * Apply the remap-log entries newer than `sinceSeq` to the board's UI
+ * Apply the remap-log entries newer than `sinceSeq` to the page's UI
  * identity state. Attribution is exact — each entry names which temp id the
  * real id replaced — so multiple same-batch creates each land on their own
- * column (no array-order guessing). The real id inherits the temp column's
+ * folder (no array-order guessing). The real id inherits the temp folder's
  * stable DOM key (chained if the temp already had one), and `editingId`
  * follows only its own temp id. Pure; returns fresh structures.
  */

@@ -250,8 +250,9 @@ export interface ApiSavedGem {
   stage: string;
   verdict: string | null;
   confidence: number | null;
-  /** Folder this gem is filed under; null = unfiled (visible under All only). */
-  group_id: number | null;
+  /** Folders this gem belongs to (playlist model, aggregated from
+   * frontend.saved_group_members); `[]` when in none — never null. */
+  group_ids: number[];
   saved_at: string | null;
   updated_at: string | null;
 }
@@ -290,10 +291,6 @@ export interface ApiSavedGemIn {
   stage: string;
   verdict: string | null;
   confidence: number | null;
-  /** Folder. The backend applies this with COALESCE, so `null` means "keep
-   * whatever is stored" — it does NOT clear the assignment. Sending the
-   * sentinel `0` unfiles the gem (writes NULL; 0 is never a real id). */
-  group_id: number | null;
 }
 
 /** `PreferenceQueueRow` (backend preference_queue.go) — one ranked card from

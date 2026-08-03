@@ -46,8 +46,7 @@ export {
   listGroups,
   createGroup,
   renameGroup,
-  moveGroupLeft,
-  moveGroupRight,
   deleteGroup,
-  setGroup,
+  addToFolder,
+  removeFromFolder,
 } from "./saved";

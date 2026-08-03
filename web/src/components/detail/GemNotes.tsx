@@ -1,9 +1,10 @@
 "use client";
 
 import type { ShortlistRow } from "@/types/contracts";
-import { VERDICTS, sortGroups, type SavedVerdict } from "@/lib/saved";
-import { addTag, allTags, removeTag, setGroup, setNote, setVerdict, useSavedGem, useSavedGroups } from "@/lib/useSaved";
+import { VERDICTS, type SavedVerdict } from "@/lib/saved";
+import { addTag, allTags, removeTag, setNote, setVerdict, useSavedGem } from "@/lib/useSaved";
 import { NoteEditor, SaveToggle, TagInput } from "@/components/ui";
+import { AddToFolderMenu } from "@/components/saved/AddToFolderMenu";
 
 const selectStyle: React.CSSProperties = {
   background: "var(--surface-3)",
@@ -21,7 +22,6 @@ const selectStyle: React.CSSProperties = {
  */
 export function GemNotes({ row }: { row: ShortlistRow }) {
   const saved = useSavedGem(row.advertiser_id);
-  const groups = sortGroups(useSavedGroups());
 
   if (!saved) {
     return (
@@ -50,23 +50,7 @@ export function GemNotes({ row }: { row: ShortlistRow }) {
       />
 
       <div style={{ display: "flex", gap: 18, flexWrap: "wrap" }}>
-        {groups.length > 0 && (
-          <label className="eyebrow" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-            Folder
-            <select
-              // Unfiled (NULL/unknown groupId) shows as "No folder"; picking it
-              // sends the wire sentinel 0 → the backend writes NULL.
-              value={groups.some((g) => g.id === saved.groupId) ? String(saved.groupId) : "0"}
-              onChange={(e) => setGroup(saved.advertiserId, Number(e.target.value))}
-              style={selectStyle}
-            >
-              <option value="0">No folder</option>
-              {groups.map((g) => (
-                <option key={g.id} value={g.id}>{g.name}</option>
-              ))}
-            </select>
-          </label>
-        )}
+        <AddToFolderMenu gem={saved} />
         <label className="eyebrow" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
           Verdict
           <select

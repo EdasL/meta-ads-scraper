@@ -9,11 +9,13 @@
 import type { ShortlistRow } from "@/types/contracts";
 import type { ApiSavedGem, ApiSavedGemIn, ApiSavedGroupPatch } from "@/types/api";
 import {
+  addSavedGroupGem,
   createSavedGroup,
   getSavedGems,
   getSavedGroups,
   removeSavedGem as apiRemove,
   removeSavedGroup,
+  removeSavedGroupGem,
   updateSavedGroup,
   upsertSavedGem,
 } from "./api";
@@ -22,6 +24,8 @@ import {
   rebuildTagRegistry,
   reconcileGroupMerge,
   sortGroups,
+  withFolderId,
+  withoutFolderId,
   withTag,
   withoutTag,
   type Confidence,
@@ -61,7 +65,7 @@ function fromApi(r: ApiSavedGem): SavedGem {
     stage: (r.stage as Stage) ?? "just_saw",
     verdict: (r.verdict as SavedVerdict) ?? undefined,
     confidence: (r.confidence as Confidence) ?? undefined,
-    groupId: r.group_id ?? null,
+    groupIds: r.group_ids ?? [],
   };
 }
 
@@ -83,11 +87,8 @@ function toUpsert(gem: SavedGem, userEmail: string): ApiSavedGemIn {
     stage: gem.stage,
     verdict: gem.verdict ?? null,
     confidence: gem.confidence ?? null,
-    // Always the gem's CURRENT group. The backend applies this with COALESCE,
-    // so null means "keep the stored value", not "clear it" — sending null for a
-    // gem that has a group would silently leave it where it was. Send the
-    // concrete id whenever we have one and the column always follows the gem.
-    group_id: gem.groupId,
+    // Folder memberships live in frontend.saved_group_members and travel via
+    // the /saved-groups/:id/gems endpoints — never through this upsert.
   };
 }
 
@@ -103,8 +104,8 @@ const listeners = new Set<() => void>();
 let userEmail: string | null = null;
 let hydratedKey: string | null = null;
 
-/** Board columns, always kept in board order. Replaced (never mutated) so the
- *  groups snapshot identity only changes when the board actually changes. */
+/** Folders, always kept in display order. Replaced (never mutated) so the
+ *  groups snapshot identity only changes when the folder set actually changes. */
 let groups: SavedGroup[] = [];
 let groupsHydratedKey: string | null = null;
 
@@ -116,19 +117,19 @@ const isTemp = (id: number) => id < 0;
 /**
  * Temp ids the user explicitly deleted while their create was still in flight.
  *
- * This set is the ONLY signal that a pending column should be deleted
+ * This set is the ONLY signal that a pending folder should be deleted
  * server-side. A temp id merely being ABSENT from `groups` does not mean the
  * user removed it: `hydrateGroups` replaces `groups` wholesale, and it fires on
  * any unrelated sync failure (`onSyncError`) or a user switch — server data
- * never contains negative ids, so any such hydrate wipes the pending column too.
+ * never contains negative ids, so any such hydrate wipes the pending folder too.
  * Treating that absence as a delete would destroy a group the backend had just
- * successfully created. Absence without a tombstone is a no-op; the real column
+ * successfully created. Absence without a tombstone is a no-op; the real folder
  * shows up on the next hydrate by itself.
  */
 const deletedTempIds = new Set<number>();
 
 /** Append-only log of temp→real id swaps from create reconciliation, so the
- * board can re-attribute its DOM keys and editing session to the exact column
+ * page can re-attribute its DOM keys and editing session to the exact folder
  * that reconciled (never by array-order inference). Readers keep a seq cursor
  * (`applyGroupIdRemaps`) instead of draining: a React render that gets
  * discarded (StrictMode) re-reads the same entries harmlessly. Bounded per
@@ -159,7 +160,7 @@ function ensureCache(): SavedMap {
 function onSyncError(e: unknown) {
   console.error("saved: backend sync failed", e);
   // Force a re-hydrate of both halves to resync the optimistic state: a failed
-  // group write can leave gems pointing at a column that never existed.
+  // group write can leave gems pointing at a folder that never existed.
   hydratedKey = null;
   groupsHydratedKey = null;
   void hydrate();
@@ -172,7 +173,7 @@ function persist(changed: SavedGem | null, removedId?: number) {
   else if (changed) upsertSavedGem(changed.advertiserId, toUpsert(changed, userEmail)).catch(onSyncError);
 }
 
-/** Fetch the board columns. Tracked by its own key so a groups failure never
+/** Fetch the folders. Tracked by its own key so a groups failure never
  *  blanks the gems (and vice versa). */
 async function hydrateGroups() {
   const key = userEmail ?? "";
@@ -216,8 +217,8 @@ export function setUser(email: string | null) {
   groupsHydratedKey = null;
   cache = {};
   groups = [];
-  deletedTempIds.clear(); // never carry one user's pending deletes into another's board
-  groupIdRemapLog = []; // stale temp→real mappings mean nothing on another user's board
+  deletedTempIds.clear(); // never carry one user's pending deletes into another's folders
+  groupIdRemapLog = []; // stale temp→real mappings mean nothing on another user's folders
   recompute();
   notify();
   void hydrate();
@@ -290,7 +291,7 @@ export function setConfidence(id: number, confidence: Confidence | undefined): v
 }
 
 // ---------------------------------------------------------------------------
-// Board groups (columns of /saved)
+// Folders (frontend.saved_groups) + memberships (saved_group_members)
 // ---------------------------------------------------------------------------
 
 function setGroups(next: SavedGroup[]) {
@@ -298,7 +299,7 @@ function setGroups(next: SavedGroup[]) {
   notify();
 }
 
-/** Persist one column patch. Temp ids have no backend row yet, so they are
+/** Persist one folder patch. Temp ids have no backend row yet, so they are
  *  skipped — the create response is the source of truth for those. */
 function persistGroup(id: number, patch: ApiSavedGroupPatch) {
   if (!userEmail || isTemp(id)) return;
@@ -306,41 +307,43 @@ function persistGroup(id: number, patch: ApiSavedGroupPatch) {
 }
 
 /**
- * Swap the optimistic temp group for the real backend row, keeping anything the
- * user changed during the round-trip (see `reconcileGroupMerge`) and moving any
- * gems dropped into the column while the create was in flight.
+ * Swap the optimistic temp folder for the real backend row, keeping anything
+ * the user changed during the round-trip (see `reconcileGroupMerge`) and
+ * re-homing any memberships added while the create was in flight.
  */
 function reconcileGroup(submitted: SavedGroup, serverRow: SavedGroup) {
   const tempId = submitted.id;
   if (deletedTempIds.delete(tempId)) {
-    // The user deleted the column mid-flight. Drop the row the backend just made
+    // The user deleted the folder mid-flight. Drop the row the backend just made
     // so it cannot reappear on the next hydrate.
     removeSavedGroup(serverRow.id).catch(onSyncError);
     return;
   }
   const local = groups.find((g) => g.id === tempId);
   // Absent WITHOUT a tombstone means a hydrate landed mid-flight and wiped the
-  // pending column (see deletedTempIds). Nothing to merge and nothing to delete:
+  // pending folder (see deletedTempIds). Nothing to merge and nothing to delete:
   // the real row is already on the server and arrives with the next hydrate.
   if (!local) return;
 
   const { row, needsPersist } = reconcileGroupMerge(local, submitted, serverRow);
-  // Exact temp→real attribution for the board's DOM/editing identity. Append
+  // Exact temp→real attribution for the page's DOM/editing identity. Append
   // BEFORE the notify inside setGroups, so any render triggered by the swap
   // already sees its log entry. (No entry on the tombstone/hydrate-wipe paths:
-  // there is no live column for the UI to re-attribute.)
+  // there is no live folder for the UI to re-attribute.)
   groupIdRemapLog = [...groupIdRemapLog, { tempId, realId: serverRow.id, seq: ++groupIdRemapSeq }];
   setGroups(groups.map((g) => (g.id === tempId ? row : g)));
-  // A rename/move made against the temp id could not be sent at the time — now
-  // that the column has a real id, it finally reaches the server.
+  // A rename made against the temp id could not be sent at the time — now
+  // that the folder has a real id, it finally reaches the server.
   if (needsPersist) persistGroup(row.id, { name: row.name, position: row.position });
 
+  // Memberships added while the create was in flight point at the temp id:
+  // re-home them locally and persist each against the real folder.
   const map = ensureCache();
   const moved: SavedGem[] = [];
   const next: SavedMap = { ...map };
   for (const gem of Object.values(map)) {
-    if (gem.groupId !== tempId) continue;
-    const updated = { ...gem, groupId: row.id };
+    if (!gem.groupIds.includes(tempId)) continue;
+    const updated = withFolderId(withoutFolderId(gem, tempId), row.id);
     next[gem.advertiserId] = updated;
     moved.push(updated);
   }
@@ -348,28 +351,32 @@ function reconcileGroup(submitted: SavedGroup, serverRow: SavedGroup) {
   cache = next;
   recompute();
   notify();
-  for (const gem of moved) persist(gem);
+  for (const gem of moved) addSavedGroupGem(row.id, gem.advertiserId).catch(onSyncError);
 }
 
 export function listGroups(): SavedGroup[] {
   return groups;
 }
 
-export function createGroup(name: string): void {
+/** Create a folder optimistically; returns its TEMP id (negative) so the UI
+ * can activate/rename it directly, or null when the name was empty. The remap
+ * log carries the temp→real swap once the backend answers. */
+export function createGroup(name: string): number | null {
   const trimmed = name.trim();
-  if (!trimmed) return;
+  if (!trimmed) return null;
   const tempId = nextTempId--;
   const position = groups.reduce((max, g) => Math.max(max, g.position), -1) + 1;
-  // Kept verbatim: reconciliation diffs the live column against what was sent
+  // Kept verbatim: reconciliation diffs the live folder against what was sent
   // to tell a mid-flight user edit apart from an untouched field.
   const submitted: SavedGroup = { id: tempId, name: trimmed, position };
   setGroups([...groups, submitted]);
-  if (!userEmail) return;
+  if (!userEmail) return tempId;
   createSavedGroup(trimmed)
     .then((row) =>
       reconcileGroup(submitted, { id: row.id, name: row.name, position: row.position }),
     )
     .catch(onSyncError);
+  return tempId;
 }
 
 export function renameGroup(id: number, name: string): void {
@@ -381,41 +388,15 @@ export function renameGroup(id: number, name: string): void {
   persistGroup(id, { name: trimmed });
 }
 
-/** Move a column one slot along the board. Positions are renumbered to plain
- *  0..n-1 so ties and the gaps a delete leaves behind cannot stall the swap. */
-function moveGroup(id: number, delta: -1 | 1) {
-  const ordered = sortGroups(groups);
-  const i = ordered.findIndex((g) => g.id === id);
-  if (i < 0) return;
-  const j = i + delta;
-  if (j < 0 || j >= ordered.length) return;
-  const swapped = [...ordered];
-  [swapped[i], swapped[j]] = [swapped[j], swapped[i]];
-  const next = swapped.map((g, idx) => ({ ...g, position: idx }));
-  setGroups(next);
-  for (const g of next) {
-    const before = ordered.find((o) => o.id === g.id);
-    if (before && before.position !== g.position) persistGroup(g.id, { position: g.position });
-  }
-}
-
-export function moveGroupLeft(id: number): void {
-  moveGroup(id, -1);
-}
-
-export function moveGroupRight(id: number): void {
-  moveGroup(id, 1);
-}
-
 export function deleteGroup(id: number): void {
   const remaining = sortGroups(groups.filter((g) => g.id !== id));
   if (remaining.length === groups.length) return; // unknown id
-  // Unfile the folder's gems locally; the backend does the same (group_id →
-  // NULL). Folders are optional organization — deleting down to zero is fine.
+  // Strip the folder from every gem's memberships locally; server-side the
+  // membership rows die with the folder (CASCADE). Gems themselves stay.
   const map = ensureCache();
   const next: SavedMap = { ...map };
   for (const gem of Object.values(map)) {
-    if (gem.groupId === id) next[gem.advertiserId] = { ...gem, groupId: null };
+    if (gem.groupIds.includes(id)) next[gem.advertiserId] = withoutFolderId(gem, id);
   }
   cache = next;
   recompute();
@@ -430,27 +411,32 @@ export function deleteGroup(id: number): void {
   removeSavedGroup(id).catch(onSyncError);
 }
 
-/** File a gem into a folder, or unfile it (`groupId` null or 0 → no folder).
- * Unfiling sends the wire sentinel `group_id: 0` — the backend writes NULL for
- * 0 and keeps its current value for null/absent, so a plain re-save can never
- * silently unfile. */
-export function setGroup(advertiserId: number, groupId: number | null): void {
-  const target = groupId ? groupId : null;
+/** Add a gem to a folder (playlist model — idempotent, additive). For a temp
+ * folder the persist waits for reconcileGroup, which re-homes the membership
+ * onto the real id the moment the create answers. */
+export function addToFolder(advertiserId: number, folderId: number): void {
   const map = ensureCache();
   const gem = map[advertiserId];
-  if (!gem || gem.groupId === target) return;
-  const updated: SavedGem = { ...gem, groupId: target };
-  cache = { ...map, [advertiserId]: updated };
+  if (!gem || gem.groupIds.includes(folderId)) return;
+  cache = { ...map, [advertiserId]: withFolderId(gem, folderId) };
   recompute();
   notify();
-  if (!userEmail) return;
-  if (target === null) {
-    upsertSavedGem(advertiserId, { ...toUpsert(updated, userEmail), group_id: 0 }).catch(onSyncError);
-    return;
-  }
-  // A temp folder is not a real row yet and the backend would reject it (400);
-  // reconcileGroup() persists these gems once the create response lands.
-  if (!isTemp(target)) persist(updated);
+  if (!userEmail || isTemp(folderId)) return;
+  addSavedGroupGem(folderId, advertiserId).catch(onSyncError);
+}
+
+/** Remove a gem from a folder. A temp folder has no backend rows yet — the
+ * local removal is enough (reconcileGroup only re-homes memberships that are
+ * still present). */
+export function removeFromFolder(advertiserId: number, folderId: number): void {
+  const map = ensureCache();
+  const gem = map[advertiserId];
+  if (!gem || !gem.groupIds.includes(folderId)) return;
+  cache = { ...map, [advertiserId]: withoutFolderId(gem, folderId) };
+  recompute();
+  notify();
+  if (!userEmail || isTemp(folderId)) return;
+  removeSavedGroupGem(folderId, advertiserId).catch(onSyncError);
 }
 
 // --- external store (for useSyncExternalStore) ---

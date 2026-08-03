@@ -13,7 +13,10 @@ import {
   withoutTag,
   rebuildTagRegistry,
   sortGroups,
-  filterByGroup,
+  memberOfFolder,
+  countByFolder,
+  withFolderId,
+  withoutFolderId,
   reconcileGroupMerge,
   applyGroupIdRemaps,
   type GroupIdRemap,
@@ -102,14 +105,14 @@ test("rebuildTagRegistry counts and sorts by uses desc", () => {
 
 const group = (id: number, name: string, position: number): SavedGroup => ({ id, name, position });
 
-/** A saved gem with an explicit group + save time, for bucketing tests. */
-const gem = (advertiserId: number, groupId: number | null, savedAt: string) => ({
+/** A saved gem with explicit folder memberships + save time. */
+const gem = (advertiserId: number, groupIds: number[], savedAt: string) => ({
   ...makeSavedGem(row({ advertiser_id: advertiserId }), savedAt),
-  groupId,
+  groupIds,
 });
 
-test("makeSavedGem starts a gem ungrouped", () => {
-  assert.equal(makeSavedGem(row(), "2026-06-09T10:00:00Z").groupId, null);
+test("makeSavedGem starts a gem in no folders", () => {
+  assert.deepEqual(makeSavedGem(row(), "2026-06-09T10:00:00Z").groupIds, []);
 });
 
 test("sortGroups orders by position, then id, without mutating the input", () => {
@@ -126,27 +129,42 @@ test("sortGroups orders by position, then id, without mutating the input", () =>
   );
 });
 
-test("filterByGroup with null (All) passes every gem through untouched", () => {
-  const gems = [gem(10, 2, "2026-06-01T00:00:00Z"), gem(11, null, "2026-06-02T00:00:00Z")];
-  assert.equal(filterByGroup(gems, null), gems);
-});
-
-test("filterByGroup keeps only gems filed exactly in the folder", () => {
+test("memberOfFolder keeps only members, in list order", () => {
   const gems = [
-    gem(10, 2, "2026-06-01T00:00:00Z"),
-    gem(11, null, "2026-06-02T00:00:00Z"), // unfiled — All only
-    gem(12, 999, "2026-06-03T00:00:00Z"), // folder deleted elsewhere — All only
-    gem(13, 2, "2026-06-04T00:00:00Z"),
+    gem(10, [2], "2026-06-04T00:00:00Z"),
+    gem(11, [], "2026-06-03T00:00:00Z"), // in no folder
+    gem(12, [2, 5], "2026-06-02T00:00:00Z"), // in several — playlist model
+    gem(13, [5], "2026-06-01T00:00:00Z"),
   ];
   assert.deepEqual(
-    filterByGroup(gems, 2).map((g) => g.advertiserId),
-    [10, 13],
+    memberOfFolder(gems, 2).map((g) => g.advertiserId),
+    [10, 12],
   );
+  assert.deepEqual(memberOfFolder(gems, 999), []);
 });
 
-test("filterByGroup of an empty folder is empty, never a fallback", () => {
-  const gems = [gem(10, null, "2026-06-01T00:00:00Z")];
-  assert.deepEqual(filterByGroup(gems, 1), []);
+test("countByFolder tallies every membership, multi-membership included", () => {
+  const counts = countByFolder([
+    gem(10, [2], "2026-06-01T00:00:00Z"),
+    gem(11, [2, 5], "2026-06-02T00:00:00Z"),
+    gem(12, [], "2026-06-03T00:00:00Z"),
+  ]);
+  assert.equal(counts.get(2), 2);
+  assert.equal(counts.get(5), 1);
+  assert.equal(counts.get(999), undefined);
+});
+
+test("withFolderId adds once and is immutable; withoutFolderId removes", () => {
+  const base = gem(10, [2], "2026-06-01T00:00:00Z");
+  const added = withFolderId(base, 5);
+  assert.deepEqual(added.groupIds, [2, 5]);
+  assert.deepEqual(base.groupIds, [2]);
+  // Re-adding an existing membership returns the same gem back.
+  assert.equal(withFolderId(added, 5), added);
+  const removed = withoutFolderId(added, 2);
+  assert.deepEqual(removed.groupIds, [5]);
+  // Removing an absent membership returns the same gem back.
+  assert.equal(withoutFolderId(removed, 2), removed);
 });
 
 // --- reconciling an optimistic create ---
