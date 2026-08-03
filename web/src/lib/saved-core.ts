@@ -9,14 +9,6 @@ export type Stage = "just_saw" | "watching" | "looks_real" | "building";
 export type SavedVerdict = "build" | "clone" | "pass" | "revisit";
 export type Confidence = 1 | 2 | 3 | 4 | 5;
 
-/** Ordered stage pipeline (product-facing labels). */
-export const STAGES: { id: Stage; label: string }[] = [
-  { id: "just_saw", label: "Just saw" },
-  { id: "watching", label: "Watching" },
-  { id: "looks_real", label: "Looks real" },
-  { id: "building", label: "Building" },
-];
-
 export const VERDICTS: { id: SavedVerdict; label: string }[] = [
   { id: "build", label: "Build" },
   { id: "clone", label: "Clone" },

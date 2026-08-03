@@ -40,7 +40,6 @@ export {
   setNote,
   addTag,
   removeTag,
-  setStage,
   setVerdict,
   setConfidence,
   allTags,

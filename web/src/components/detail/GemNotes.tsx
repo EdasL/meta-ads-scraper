@@ -1,8 +1,8 @@
 "use client";
 
 import type { ShortlistRow } from "@/types/contracts";
-import { STAGES, VERDICTS, type SavedVerdict, type Stage } from "@/lib/saved";
-import { addTag, allTags, removeTag, setNote, setStage, setVerdict, useSavedGem } from "@/lib/useSaved";
+import { VERDICTS, sortGroups, type SavedVerdict } from "@/lib/saved";
+import { addTag, allTags, removeTag, setGroup, setNote, setVerdict, useSavedGem, useSavedGroups } from "@/lib/useSaved";
 import { NoteEditor, SaveToggle, TagInput } from "@/components/ui";
 
 const selectStyle: React.CSSProperties = {
@@ -21,6 +21,7 @@ const selectStyle: React.CSSProperties = {
  */
 export function GemNotes({ row }: { row: ShortlistRow }) {
   const saved = useSavedGem(row.advertiser_id);
+  const groups = sortGroups(useSavedGroups());
 
   if (!saved) {
     return (
@@ -49,14 +50,22 @@ export function GemNotes({ row }: { row: ShortlistRow }) {
       />
 
       <div style={{ display: "flex", gap: 18, flexWrap: "wrap" }}>
-        <label className="eyebrow" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-          Stage
-          <select value={saved.stage} onChange={(e) => setStage(saved.advertiserId, e.target.value as Stage)} style={selectStyle}>
-            {STAGES.map((s) => (
-              <option key={s.id} value={s.id}>{s.label}</option>
-            ))}
-          </select>
-        </label>
+        {groups.length > 0 && (
+          <label className="eyebrow" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+            Group
+            <select
+              // NULL/unknown groupId renders in the first column on the board
+              // (bucketByGroup); the picker shows the same group it lives in.
+              value={groups.some((g) => g.id === saved.groupId) ? String(saved.groupId) : String(groups[0].id)}
+              onChange={(e) => setGroup(saved.advertiserId, Number(e.target.value))}
+              style={selectStyle}
+            >
+              {groups.map((g) => (
+                <option key={g.id} value={g.id}>{g.name}</option>
+              ))}
+            </select>
+          </label>
+        )}
         <label className="eyebrow" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
           Verdict
           <select

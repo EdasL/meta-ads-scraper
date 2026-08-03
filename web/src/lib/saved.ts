@@ -282,9 +282,6 @@ export function addTag(id: number, raw: string): void {
 export function removeTag(id: number, tag: string): void {
   mutate(id, (g) => withoutTag(g, tag));
 }
-export function setStage(id: number, stage: Stage): void {
-  mutate(id, (g) => ({ ...g, stage }));
-}
 export function setVerdict(id: number, verdict: SavedVerdict | undefined): void {
   mutate(id, (g) => ({ ...g, verdict }));
 }
