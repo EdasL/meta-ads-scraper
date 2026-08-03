@@ -230,7 +230,11 @@ async def run_sweep(engine, extractor, *, entries=None, keywords=None,
     ceiling_hit means the loop stopped while Meta still had pages (cap/patience),
     so a to-exhaustion caller can log it instead of silently capping."""
     if entries is None:
-        entries = sweep_entries()
+        # Redundancy suppression (spec 2026-08-03) applies to the DEFAULT taxonomy
+        # only — a caller naming its own entries owns them. The read fails open, so
+        # a dead suppressions table can never cost the sweep its keywords.
+        from agf.db.keyword_suppressions import drop_suppressed_entries
+        entries = drop_suppressed_entries(engine, sweep_entries())
     if keywords is not None:
         entries = [e for e in entries if e.keyword in set(keywords)]
     if patience_pages is None:
@@ -390,7 +394,8 @@ def run_parallel_sweep(engine, extractors, *, entries=None, keywords=None,
     one merged stats dict identical in shape to ``run_sweep``'s.
     """
     if entries is None:
-        entries = sweep_entries()
+        from agf.db.keyword_suppressions import drop_suppressed_entries
+        entries = drop_suppressed_entries(engine, sweep_entries())
     if keywords is not None:
         entries = [e for e in entries if e.keyword in set(keywords)]
     if len(extractors) == 1:

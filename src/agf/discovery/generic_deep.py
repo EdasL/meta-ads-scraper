@@ -11,6 +11,11 @@ Two payoffs per pass, one set of requests:
      repetition in ad copy) -> superset drop -> injected redundancy gate ->
      dynamic_keywords trials (source='generic_deep').
 
+This weekly pass also carries the redundancy-grading cadence (spec 2026-08-03): it
+retires clone-magnet dynamic keywords and refreshes discovery.keyword_suppressions
+before building its own entries, so both this lane and the daily sweep stop paging
+phrases whose kept catch has gone all-clone.
+
 Patience is disabled (the harvest must not stop on candidate-dry pages — copy and
 funnel folds still accrue); depth stops on Meta exhaustion or the deep_pages cap,
 and every cap hit is logged, never silent."""
@@ -34,8 +39,28 @@ def run_generic_deep_stage(engine, extractor, *, deep_pages=150, kw_delay=3.0,
     """One weekly pass. `gate` is the redundancy gate (phrases, limit) -> phrases —
     injected by the worker (workers.main._gate_keywords) to avoid a circular import;
     None passes through capped. `entries` is test-injectable."""
+    from agf.db.dynamic_keywords import retire_redundant_keywords
+    from agf.db.keyword_suppressions import (drop_suppressed_entries,
+                                             suppress_redundant_static_keywords)
+    from agf.discovery.taxonomy import NICHE_TERMS, STORE_FRAGMENTS
+
+    # Weekly redundancy grading (spec 2026-08-03): this pass is the cadence — retire
+    # clone-magnet dynamic keywords and refresh the static suppressions BEFORE the
+    # entries are built, so a phrase graded out today is skipped today. Fail-soft:
+    # grading is an optimization and must never cost the harvest its pass.
+    retired_redundant: list[str] = []
+    suppressed: list[str] = []
+    try:
+        with begin(engine) as conn:
+            retired_redundant = retire_redundant_keywords(conn)
+            suppressed = suppress_redundant_static_keywords(
+                conn, NICHE_TERMS + STORE_FRAGMENTS + GENERIC_DEEP_TERMS)
+    except Exception as exc:
+        print(f"[worker] redundancy grading failed (continuing): {exc!r}",
+              file=sys.stderr, flush=True)
     if entries is None:
         entries = generic_deep_entries(deep_pages)
+    entries = drop_suppressed_entries(engine, entries)
     copy_rows: list[tuple[str, str]] = []
 
     def _collect(ad):
@@ -68,4 +93,5 @@ def run_generic_deep_stage(engine, extractor, *, deep_pages=150, kw_delay=3.0,
         with begin(engine) as conn:
             trials_added = add_trial_keywords(conn, mined, source="generic_deep")
     return {"sweep": sweep, "mined": list(mined), "trials_added": trials_added,
-            "copy_rows": len(copy_rows)}
+            "copy_rows": len(copy_rows), "retired_redundant": retired_redundant,
+            "suppressed": suppressed}
