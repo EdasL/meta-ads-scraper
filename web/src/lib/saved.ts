@@ -11,6 +11,7 @@ import type { ApiSavedGem, ApiSavedGemIn, ApiSavedGroupPatch } from "@/types/api
 import {
   addSavedGroupGem,
   createSavedGroup,
+  getLikedGems,
   getSavedGems,
   getSavedGroups,
   removeSavedGem as apiRemove,
@@ -109,6 +110,21 @@ let hydratedKey: string | null = null;
 let groups: SavedGroup[] = [];
 let groupsHydratedKey: string | null = null;
 
+/** Built-in Liked collection: every app the user liked anywhere (Review 👍,
+ * Hunt heart), saved or not. Read-only client-side; hydrated with the rest. */
+export interface LikedGem {
+  advertiserId: number;
+  pageName: string;
+  appName: string | null;
+  iconUrl?: string;
+  gemScore: number;
+  ratedAt: string;
+  saved: boolean;
+}
+
+let liked: LikedGem[] = [];
+let likedHydratedKey: string | null = null;
+
 /** Optimistically-created groups get a negative id until the backend answers
  *  with the real one. Nothing negative is ever sent to the API. */
 let nextTempId = -1;
@@ -159,10 +175,11 @@ function ensureCache(): SavedMap {
 
 function onSyncError(e: unknown) {
   console.error("saved: backend sync failed", e);
-  // Force a re-hydrate of both halves to resync the optimistic state: a failed
+  // Force a re-hydrate of every slice to resync the optimistic state: a failed
   // group write can leave gems pointing at a folder that never existed.
   hydratedKey = null;
   groupsHydratedKey = null;
+  likedHydratedKey = null;
   void hydrate();
 }
 
@@ -190,8 +207,32 @@ async function hydrateGroups() {
   }
 }
 
+async function hydrateLiked() {
+  const key = userEmail ?? "";
+  if (likedHydratedKey === key) return;
+  likedHydratedKey = key;
+  if (!userEmail) return; // wait until the session user is known
+  try {
+    const rows = await getLikedGems();
+    liked = rows.map((r) => ({
+      advertiserId: r.advertiser_id,
+      pageName: r.page_name ?? "",
+      appName: r.app_name,
+      iconUrl: r.icon_url ?? undefined,
+      gemScore: r.gem_score,
+      ratedAt: r.rated_at,
+      saved: r.saved,
+    }));
+    notify();
+  } catch (e) {
+    likedHydratedKey = null; // allow retry on next subscribe
+    console.error("saved: liked hydrate failed", e);
+  }
+}
+
 async function hydrate() {
   void hydrateGroups();
+  void hydrateLiked();
   const key = userEmail ?? "";
   if (hydratedKey === key) return;
   hydratedKey = key;
@@ -215,8 +256,10 @@ export function setUser(email: string | null) {
   userEmail = email;
   hydratedKey = null;
   groupsHydratedKey = null;
+  likedHydratedKey = null;
   cache = {};
   groups = [];
+  liked = [];
   deletedTempIds.clear(); // never carry one user's pending deletes into another's folders
   groupIdRemapLog = []; // stale temp→real mappings mean nothing on another user's folders
   recompute();
@@ -476,4 +519,21 @@ export function getGroupsSnapshot(): SavedGroup[] {
 const EMPTY_GROUPS: SavedGroup[] = [];
 export function getGroupsServerSnapshot(): SavedGroup[] {
   return EMPTY_GROUPS;
+}
+
+// The Liked collection rides the same listener set with its own snapshot.
+export function subscribeLiked(listener: () => void): () => void {
+  listeners.add(listener);
+  ensureCache();
+  void hydrate();
+  return () => {
+    listeners.delete(listener);
+  };
+}
+export function getLikedSnapshot(): LikedGem[] {
+  return liked;
+}
+const EMPTY_LIKED: LikedGem[] = [];
+export function getLikedServerSnapshot(): LikedGem[] {
+  return EMPTY_LIKED;
 }

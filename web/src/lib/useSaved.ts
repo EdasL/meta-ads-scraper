@@ -8,10 +8,14 @@ import { useSyncExternalStore } from "react";
 import {
   getGroupsServerSnapshot,
   getGroupsSnapshot,
+  getLikedServerSnapshot,
+  getLikedSnapshot,
   getServerSnapshot,
   getSnapshot,
   subscribe,
   subscribeGroups,
+  subscribeLiked,
+  type LikedGem,
   type SavedGem,
   type SavedGroup,
 } from "./saved";
@@ -20,9 +24,14 @@ export function useSavedList(): SavedGem[] {
   return useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
 }
 
-/** The board's columns, in board order. Empty until the store hydrates. */
+/** The user's folders, in display order. Empty until the store hydrates. */
 export function useSavedGroups(): SavedGroup[] {
   return useSyncExternalStore(subscribeGroups, getGroupsSnapshot, getGroupsServerSnapshot);
+}
+
+/** The built-in Liked collection (rated_at DESC). Empty until hydrated. */
+export function useLikedGems(): LikedGem[] {
+  return useSyncExternalStore(subscribeLiked, getLikedSnapshot, getLikedServerSnapshot);
 }
 
 export function useIsSaved(advertiserId: number): boolean {

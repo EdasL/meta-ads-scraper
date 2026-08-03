@@ -273,6 +273,18 @@ export interface ApiSavedGroupPatch {
   position?: number;
 }
 
+/** One row of GET /liked-gems — every app the user has liked anywhere
+ * (Review 👍, Hunt heart), saved or not. Sorted rated_at DESC. */
+export interface ApiLikedGem {
+  advertiser_id: number;
+  page_name: string | null;
+  app_name: string | null;
+  icon_url: string | null;
+  gem_score: number;
+  rated_at: string;
+  saved: boolean;
+}
+
 /** `SavedGemIn` (backend) — the upsert body. On a re-save only the mutable
  * annotations (tags/note/stage/verdict/confidence) are applied server-side. */
 export interface ApiSavedGemIn {

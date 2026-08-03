@@ -12,6 +12,7 @@ import { shortlistParams } from "./query";
 import type {
   ApiAppMetricPoint,
   ApiGemDossier,
+  ApiLikedGem,
   ApiPreferenceCardRow,
   ApiReviewQueueRow,
   ApiSavedGem,
@@ -238,6 +239,11 @@ export async function removeSavedGroupGem(groupId: number, advertiserId: number)
     method: "POST",
     body: JSON.stringify({ advertiser_id: advertiserId }),
   });
+}
+
+/** Every app the user has liked anywhere (identity from the session token). */
+export async function getLikedGems(): Promise<ApiLikedGem[]> {
+  return live<ApiLikedGem[]>(`/liked-gems`);
 }
 
 /** Status of an on-demand enrichment job for a gem. */

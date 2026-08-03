@@ -1,6 +1,6 @@
 "use client";
 
-import { IconFolder, IconFolderPlus } from "@tabler/icons-react";
+import { IconFolder, IconFolderPlus, IconHeart } from "@tabler/icons-react";
 import type { SavedGroup } from "@/lib/saved";
 
 const tile: React.CSSProperties = {
@@ -16,19 +16,24 @@ const tile: React.CSSProperties = {
   textAlign: "left",
 };
 
-/** The "Folders" tile row on /saved: one tile per folder (name + gem count)
- * plus a New folder tile. Tiles navigate into the folder view. */
+/** The "Folders" tile row on /saved: the built-in Liked collection pinned
+ * first, then one tile per folder (name + gem count), then a New folder tile.
+ * Tiles navigate into the folder view. */
 export function FolderTiles({
   folders,
   counts,
+  likedCount,
   keyFor,
   onOpen,
+  onOpenLiked,
   onCreate,
 }: {
   folders: SavedGroup[];
   counts: Map<number, number>;
+  likedCount: number;
   keyFor: (id: number) => number;
   onOpen: (id: number) => void;
+  onOpenLiked: () => void;
   onCreate: () => void;
 }) {
   return (
@@ -41,6 +46,13 @@ export function FolderTiles({
           .ft-press:active { transform: none; }
         }
       `}</style>
+      <button type="button" onClick={onOpenLiked} className="ft-press" style={tile}>
+        <IconHeart size={16} aria-hidden style={{ flexShrink: 0 }} />
+        <span className="t-sm w-strong" style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          Liked
+        </span>
+        <span className="nums t-xs" style={{ color: "var(--muted)", flexShrink: 0 }}>{likedCount}</span>
+      </button>
       {folders.map((f) => (
         <button
           key={keyFor(f.id)}

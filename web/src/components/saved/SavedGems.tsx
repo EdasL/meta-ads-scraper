@@ -10,11 +10,11 @@ import {
   sortGroups,
   type SavedGroup,
 } from "@/lib/saved";
-import { createGroup, deleteGroup, renameGroup, useSavedGroups, useSavedList } from "@/lib/useSaved";
+import { createGroup, deleteGroup, renameGroup, useLikedGems, useSavedGroups, useSavedList } from "@/lib/useSaved";
 import { EmptyState } from "@/components/ui";
 import { FolderMenu } from "./FolderMenu";
 import { FolderTiles } from "./FolderTiles";
-import { SavedCard } from "./SavedCard";
+import { LikedCard, SavedCard } from "./SavedCard";
 
 const page: React.CSSProperties = { maxWidth: 1100, margin: "0 auto", padding: "24px 22px 80px" };
 const selectStyle: React.CSSProperties = {
@@ -26,10 +26,14 @@ const selectStyle: React.CSSProperties = {
   padding: "5px 8px",
 };
 
-function folderFromLocation(): number | null {
+/** The open collection: a folder id, the built-in Liked sentinel, or none. */
+type ActiveView = number | "liked" | null;
+
+function folderFromLocation(): ActiveView {
   if (typeof window === "undefined") return null;
   const raw = new URLSearchParams(window.location.search).get("folder");
   if (!raw) return null;
+  if (raw === "liked") return "liked";
   const id = Number(raw);
   return Number.isFinite(id) && id !== 0 ? id : null;
 }
@@ -109,7 +113,8 @@ export function SavedGems() {
   const saved = useSavedList();
   const folders = sortGroups(useSavedGroups());
   const [tag, setTag] = useState("");
-  const [active, setActive] = useState<number | null>(folderFromLocation);
+  const liked = useLikedGems();
+  const [active, setActive] = useState<ActiveView>(folderFromLocation);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [remapSeq, setRemapSeq] = useState(0);
   const [prevIdsKey, setPrevIdsKey] = useState("");
@@ -120,11 +125,11 @@ export function SavedGems() {
   // Adjust-during-render, pass 1: apply new remap-log entries exactly.
   const remapLog = getGroupIdRemapLog();
   const appliedEdit = applyGroupIdRemaps(remapLog, remapSeq, stableKeys, editingId);
-  const appliedActive = applyGroupIdRemaps(remapLog, remapSeq, new Map(), active);
+  const appliedActive = applyGroupIdRemaps(remapLog, remapSeq, new Map(), typeof active === "number" ? active : null);
   if (appliedEdit.lastSeq !== remapSeq) {
     setStableKeys(appliedEdit.stableKeys);
     if (appliedEdit.editingId !== editingId) setEditingId(appliedEdit.editingId);
-    if (appliedActive.editingId !== active) setActive(appliedActive.editingId);
+    if (typeof active === "number" && appliedActive.editingId !== active) setActive(appliedActive.editingId);
     setRemapSeq(appliedEdit.lastSeq);
   }
   // Pass 2: a post-remap id that no longer exists means its folder was deleted
@@ -134,7 +139,7 @@ export function SavedGems() {
     if (appliedEdit.editingId != null && !folders.some((f) => f.id === appliedEdit.editingId)) {
       setEditingId(null);
     }
-    if (appliedActive.editingId != null && !folders.some((f) => f.id === appliedActive.editingId)) {
+    if (typeof active === "number" && appliedActive.editingId != null && !folders.some((f) => f.id === appliedActive.editingId)) {
       setActive(null);
     }
     setPrevIdsKey(idsKey);
@@ -154,10 +159,12 @@ export function SavedGems() {
   const counts = useMemo(() => countByFolder(saved), [saved]);
 
   // Unknown/foreign ?folder id (or pre-hydration): the top level renders.
-  const openFolder = active != null ? folders.find((f) => f.id === active) : undefined;
+  const openFolder = typeof active === "number" ? folders.find((f) => f.id === active) : undefined;
+  const likedOpen = active === "liked";
 
   const visible = openFolder ? memberOfFolder(saved, openFolder.id) : saved;
   const filtered = tag ? visible.filter((g) => g.tags.includes(tag)) : visible;
+  const savedById = useMemo(() => new Map(saved.map((g) => [g.advertiserId, g])), [saved]);
 
   const addFolder = () => {
     const tempId = createGroup("New folder");
@@ -173,7 +180,9 @@ export function SavedGems() {
     if (active === folder.id) setActive(null);
   };
 
-  if (saved.length === 0) {
+  // The full empty state only when there is truly nothing to show — likes and
+  // folders keep the page alive even with zero saves.
+  if (saved.length === 0 && liked.length === 0 && folders.length === 0) {
     return (
       <main style={page}>
         <h1 className="t-2xl w-heavy" style={{ margin: 0 }}>My gems</h1>
@@ -198,6 +207,43 @@ export function SavedGems() {
       </select>
     </label>
   );
+
+  if (likedOpen) {
+    // Saved members honor the tag filter; liked-but-unsaved rows carry no
+    // tags, so an active tag filter hides them entirely (disclosed choice).
+    const rows = liked
+      .map((item) => ({ item, gem: savedById.get(item.advertiserId) }))
+      .filter(({ gem }) => (tag ? gem?.tags.includes(tag) : true));
+    return (
+      <main style={page}>
+        <button
+          type="button"
+          onClick={() => setActive(null)}
+          className="eyebrow"
+          style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "transparent", border: "none", color: "var(--muted)", padding: 0, cursor: "pointer", marginBottom: 10 }}
+        >
+          <IconArrowLeft size={14} aria-hidden />
+          All gems
+        </button>
+        <header style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 18 }}>
+          <h1 className="t-2xl w-heavy" style={{ margin: 0 }}>Liked</h1>
+          <span className="nums t-sm" style={{ color: "var(--muted)" }}>{liked.length}</span>
+          <span style={{ marginLeft: "auto" }}>{tagFilter}</span>
+        </header>
+        {rows.length === 0 ? (
+          <p className="t-sm" style={{ color: "var(--muted)", marginTop: 8 }}>
+            {tag ? "Nothing matches the current filters." : "Nothing liked yet."}
+          </p>
+        ) : (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(230px, 1fr))", gap: 12 }}>
+            {rows.map(({ item, gem }) =>
+              gem ? <SavedCard key={item.advertiserId} gem={gem} /> : <LikedCard key={item.advertiserId} item={item} />,
+            )}
+          </div>
+        )}
+      </main>
+    );
+  }
 
   if (openFolder) {
     return (
@@ -249,8 +295,10 @@ export function SavedGems() {
       <FolderTiles
         folders={folders}
         counts={counts}
+        likedCount={liked.length}
         keyFor={(id) => stableKeys.get(id) ?? id}
         onOpen={setActive}
+        onOpenLiked={() => setActive("liked")}
         onCreate={addFolder}
       />
 
@@ -259,7 +307,9 @@ export function SavedGems() {
         {tagFilter}
       </div>
       {filtered.length === 0 ? (
-        <p className="t-sm" style={{ color: "var(--muted)", marginTop: 8 }}>Nothing matches the current filters.</p>
+        <p className="t-sm" style={{ color: "var(--muted)", marginTop: 8 }}>
+          {saved.length === 0 ? "No gems saved yet." : "Nothing matches the current filters."}
+        </p>
       ) : (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(230px, 1fr))", gap: 12 }}>
           {filtered.map((g) => (
