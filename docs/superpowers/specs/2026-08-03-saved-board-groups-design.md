@@ -5,6 +5,50 @@ Status: SUPERSEDED by v2 below (Edas 2026-08-03: "i needed only the grid of
 items and then that i could create folders" — "board" meant the CARD GRID,
 not the kanban view; kanban columns were the wrong reading)
 
+## v4 — built-in Liked collection + clean slate + membership feedback
+(Edas 2026-08-03: "remove the folders leave only liked ones and all the
+other need to be customly created, move to folder should have some sort of
+animation feedback"; Liked source confirmed via question = EVERYTHING liked)
+
+- **Clean slate:** the 4 stage-named folders that migrations 160/162
+  backfilled are deleted from prod (one-time data cleanup, backup-gated;
+  memberships die by CASCADE, gems untouched). No code seeds folders —
+  every real folder is user-created. (v2 no-seeding rule already covers
+  new users.)
+- **Liked (built-in):** a pinned, non-renamable, non-deletable collection
+  shown FIRST in the folders row, heart icon instead of folder icon,
+  auto-filled with every app the user has LIKED anywhere — Review 👍 and
+  Hunt heart (`frontend.app_ratings.rating = 'like'`) — including apps
+  never saved. Not a `saved_groups` row: sentinel route `?folder=liked`.
+  - Go: `GET /api/liked-gems` (KeyAuth identity, no user_email param) →
+    rows renderable as cards: `advertiser_id, page_name, app_name,
+    icon_url, gem_score, rated_at, saved (bool)` — app_ratings filtered to
+    like, joined to the same sources the shortlist/hunt rows use for
+    name/icon/score (copy the hunt_repo LEFT JOIN idiom). Raw-key wire
+    test.
+  - Web: Liked tile count from a new liked slice (hydrated with groups).
+    Liked view: saved members render as normal cards; liked-but-unsaved
+    apps render the same card shape with the SaveToggle heart and NO
+    folder menu / note / tags (those need a saved row). Liked is excluded
+    from every "Add to folder" menu and from rename/delete affordances.
+- **Membership toggle feedback (Add to folder menu):** instant press
+  response; while the add/remove POST is in flight the toggled row shows a
+  pending state (checkbox swaps to a small in-flight marker, row dimmed);
+  on success the checkmark settles with a ~200ms critically-damped
+  scale-in (0.9→1 + fade, ease-out, transform/opacity only); on failure
+  the checkbox reverts, the row shakes briefly (2 cycles, ±3px, 250ms
+  total), the menu STAYS OPEN for retry, and the row shows "Couldn't
+  save." in small muted text until the next attempt. The trigger button
+  pulses once (scale 1→1.04→1, 180ms) when a toggle confirms while the
+  menu is closed... (only if trivially cheap — else drop). Store change:
+  `addToFolder`/`removeFromFolder` return the persist Promise and expose a
+  pending membership set the menu subscribes to; optimistic local state
+  stays as-is (rollback via rehydrate on failure still applies).
+  `prefers-reduced-motion`: no scale/shake — opacity crossfade + the
+  error text only.
+- Copy: Liked tile label "Liked". Failure text "Couldn't save." Plain
+  voice throughout.
+
 ## v3 — real folders, Spotify-playlist model (Edas 2026-08-03: "i want
 actual folders like playlists on spotify"; confirmed multi-membership)
 
