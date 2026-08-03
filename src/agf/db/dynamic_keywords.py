@@ -51,6 +51,46 @@ def crowded_candidate_count(conn, keyword: str, *, tail: float) -> int:
         {"kw": keyword, "tail": tail}).scalar_one()
 
 
+def redundant_min_kept() -> int:
+    # A keyword needs this many EMBEDDED kept candidates before the redundancy
+    # grade is trustworthy — protects low-volume keywords from noisy shares.
+    return _env_int("AGF_KW_REDUNDANT_MIN_KEPT", 20)
+
+
+def redundant_share() -> float:
+    # Crowded share (kept candidates with crowding >= crowding_tail()) at or
+    # above which a keyword's catch counts as redundant. 0.6 = today's victims
+    # are unambiguous clone-cluster magnets (measured 2026-08-03).
+    return _env_float("AGF_KW_REDUNDANT_SHARE", 0.6)
+
+
+def retire_redundant_keywords(conn) -> list[str]:
+    """Retire active/resting keywords whose kept catch is mostly clone-cluster
+    (crowded share >= redundant_share() over >= redundant_min_kept() embedded kept
+    candidates). NULL crowding rows count in the denominator only — degrade open.
+    Trials are untouched (the promotion verdict already grades them). Returns the
+    retired keywords. Spec 2026-08-03; complements (never replaces) the dry-streak
+    resting lifecycle."""
+    rows = conn.execute(text(
+        "WITH g AS ("
+        "  SELECT k.id, count(e.candidate_id) AS kept, "
+        "         count(*) FILTER (WHERE e.crowding >= :tail) AS crowded "
+        "  FROM discovery.dynamic_keywords k "
+        "  JOIN discovery.candidates c ON c.source_keyword = k.keyword "
+        "    AND c.status = 'kept' "
+        "  JOIN discovery.candidate_embeddings e ON e.candidate_id = c.id "
+        "  WHERE k.status IN ('active','resting') "
+        "  GROUP BY k.id "
+        "  HAVING count(e.candidate_id) >= :min_kept "
+        "     AND count(*) FILTER (WHERE e.crowding >= :tail)::numeric "
+        "         / count(e.candidate_id) >= :share) "
+        "UPDATE discovery.dynamic_keywords k SET status = 'retired' "
+        "FROM g WHERE k.id = g.id RETURNING k.keyword"),
+        {"tail": crowding_tail(), "min_kept": redundant_min_kept(),
+         "share": redundant_share()}).all()
+    return sorted(r.keyword for r in rows)
+
+
 # Verdict cadence — env-backed so the pool can be made to turn over faster.
 # Lower TRIAL_SWEEPS = quicker verdicts = the trial pool recycles in days, not
 # weeks. Read at call time (not import) so plist/env changes take effect on
