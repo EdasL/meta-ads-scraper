@@ -13,52 +13,15 @@ import (
 // not exist or belongs to another user. Controllers map it to a 400.
 var ErrGroupNotOwned = errors.New("saved group not found for this user")
 
-// defaultGroupNames are the columns a new board starts with. They mirror the
-// legacy stage pipeline and MUST stay identical to the backfill in
-// db/schema/160_saved_groups.sql, so a migrated user and a freshly-seeded user
-// see the same board.
-var defaultGroupNames = []string{"Just saw", "Watching", "Looks real", "Building"}
-
-// ListSavedGroups returns a user's board columns ordered left to right, seeding
-// the four defaults the first time the user is seen.
+// ListSavedGroups returns a user's folders in display order.
 //
-// Seeding is guarded by a per-user advisory lock held to commit. A bare
-// `INSERT … WHERE NOT EXISTS` is NOT enough: under READ COMMITTED there is no
-// row to lock on an empty table, so two concurrent first-loads (StrictMode
-// double-fetch, two tabs) both pass the check and seed 8 columns. The lock is
-// taken only when the user looks unseeded, so the steady-state read path stays
-// lock-free.
+// Folders are optional organization, so nothing is seeded: a user who has never
+// made one gets an empty list, and the grid shows every saved gem unfiled.
+// (Users migrated from the stage board keep their backfilled folders and may
+// delete them all.)
 func ListSavedGroups(ctx context.Context, g *gorm.DB, userEmail string) ([]models.SavedGroupRow, error) {
-	rows := make([]models.SavedGroupRow, 0, len(defaultGroupNames))
-	err := db.WithWriteTx(ctx, g, func(tx *gorm.DB) error {
-		var existing int64
-		if err := tx.Raw(
-			`SELECT count(*) FROM frontend.saved_groups WHERE user_email = ?`,
-			userEmail,
-		).Scan(&existing).Error; err != nil {
-			return err
-		}
-		if existing == 0 {
-			if err := tx.Exec(`SELECT pg_advisory_xact_lock(hashtext(?))`, userEmail).Error; err != nil {
-				return err
-			}
-			// Re-checked under the lock: a racing seeder has committed by the
-			// time it releases, so NOT EXISTS is now authoritative.
-			if err := tx.Exec(
-				`INSERT INTO frontend.saved_groups (user_email, name, position)
-				 SELECT ?, d.name, d.position
-				 FROM (VALUES (?, 0), (?, 1), (?, 2), (?, 3)) AS d(name, position)
-				 WHERE NOT EXISTS (
-				     SELECT 1 FROM frontend.saved_groups WHERE user_email = ?
-				 )`,
-				userEmail,
-				defaultGroupNames[0], defaultGroupNames[1],
-				defaultGroupNames[2], defaultGroupNames[3],
-				userEmail,
-			).Error; err != nil {
-				return err
-			}
-		}
+	rows := make([]models.SavedGroupRow, 0)
+	err := db.WithReadTx(ctx, g, func(tx *gorm.DB) error {
 		return tx.Raw(
 			`SELECT id, name, "position"
 			 FROM frontend.saved_groups
@@ -110,11 +73,12 @@ func UpdateSavedGroup(ctx context.Context, g *gorm.DB, userEmail string, id int6
 	return affected > 0, err
 }
 
-// DeleteSavedGroup removes a column, moving its gems to the user's first
-// remaining column so nothing falls off the board. A user's last group is kept:
-// that call reports deleted=false, lastGroup=true.
-func DeleteSavedGroup(ctx context.Context, g *gorm.DB, userEmail string, id int64) (bool, bool, error) {
-	var deleted, lastGroup bool
+// DeleteSavedGroup removes a folder and UNFILES its gems (group_id → NULL), so
+// they stay saved and show up under "All". Deleting down to zero folders is
+// allowed. Reports deleted=false when the id is unknown or owned by somebody
+// else.
+func DeleteSavedGroup(ctx context.Context, g *gorm.DB, userEmail string, id int64) (bool, error) {
+	var deleted bool
 	err := db.WithWriteTx(ctx, g, func(tx *gorm.DB) error {
 		var owned int64
 		if err := tx.Raw(
@@ -124,35 +88,13 @@ func DeleteSavedGroup(ctx context.Context, g *gorm.DB, userEmail string, id int6
 			return err
 		}
 		if owned == 0 {
-			return nil // unknown id or foreign owner: both false
+			return nil // unknown id or foreign owner
 		}
 
-		var total int64
-		if err := tx.Raw(
-			`SELECT count(*) FROM frontend.saved_groups WHERE user_email = ?`,
-			userEmail,
-		).Scan(&total).Error; err != nil {
-			return err
-		}
-		if total <= 1 {
-			lastGroup = true
-			return nil
-		}
-
-		var fallback int64
-		if err := tx.Raw(
-			`SELECT id FROM frontend.saved_groups
-			 WHERE user_email = ? AND id <> ?
-			 ORDER BY "position", id
-			 LIMIT 1`,
-			userEmail, id,
-		).Scan(&fallback).Error; err != nil {
-			return err
-		}
 		if err := tx.Exec(
-			`UPDATE frontend.saved_gems SET group_id = ?, updated_at = clock_timestamp()
+			`UPDATE frontend.saved_gems SET group_id = NULL, updated_at = clock_timestamp()
 			 WHERE user_email = ? AND group_id = ?`,
-			fallback, userEmail, id,
+			userEmail, id,
 		).Error; err != nil {
 			return err
 		}
@@ -166,7 +108,7 @@ func DeleteSavedGroup(ctx context.Context, g *gorm.DB, userEmail string, id int6
 		deleted = res.RowsAffected > 0
 		return nil
 	})
-	return deleted, lastGroup, err
+	return deleted, err
 }
 
 // savedGroupOwned answers whether the group exists under this user.

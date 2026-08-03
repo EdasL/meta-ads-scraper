@@ -47,8 +47,8 @@ func (c *SavedGroupsController) groupID(ctx *gin.Context) (int64, bool) {
 	return id, true
 }
 
-// List handles GET /api/saved-groups. The repo seeds the four default columns
-// the first time a user is seen, so this never returns an empty board.
+// List handles GET /api/saved-groups. Folders are optional, so a user who has
+// never made one gets an empty list.
 func (c *SavedGroupsController) List(ctx *gin.Context) {
 	email, ok := c.caller(ctx)
 	if !ok {
@@ -135,8 +135,8 @@ func (c *SavedGroupsController) Update(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
-// Remove handles POST /api/saved-groups/:id/remove. Gems in the column move to
-// the user's first remaining column; the last column is kept (409).
+// Remove handles POST /api/saved-groups/:id/remove. Gems in the folder are
+// unfiled, not deleted; a user may remove every folder they have.
 func (c *SavedGroupsController) Remove(ctx *gin.Context) {
 	email, ok := c.caller(ctx)
 	if !ok {
@@ -148,13 +148,9 @@ func (c *SavedGroupsController) Remove(ctx *gin.Context) {
 	}
 	rctx, cancel := reqCtx(ctx)
 	defer cancel()
-	deleted, lastGroup, err := repositories.DeleteSavedGroup(rctx, db.DB(), email, id)
+	deleted, err := repositories.DeleteSavedGroup(rctx, db.DB(), email, id)
 	if err != nil {
 		helpers.Detail(ctx, http.StatusInternalServerError, "could not remove group.")
-		return
-	}
-	if lastGroup {
-		helpers.Detail(ctx, http.StatusConflict, "Keep at least one group.")
 		return
 	}
 	if !deleted {

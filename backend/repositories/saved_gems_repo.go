@@ -32,14 +32,23 @@ func ListSavedGems(ctx context.Context, g *gorm.DB, userEmail string) ([]models.
 // UpsertSavedGem inserts a saved gem (freezing the score snapshot) or, on a
 // re-save, updates ONLY the mutable annotations — the snapshot + saved_at stay
 // at their original values, which is the whole point of the snapshot.
+//
+// Folder assignment has three cases: an omitted/null group_id keeps whatever the
+// row already has, group_id 0 unfiles the gem (0 is never a real BIGSERIAL id),
+// and any other id files it — if the caller owns that folder.
 func UpsertSavedGem(ctx context.Context, g *gorm.DB, in models.SavedGemIn, advertiserID int) error {
 	stage := in.Stage
 	if stage == "" {
 		stage = "just_saw"
 	}
+	groupID := in.GroupID
+	clearGroup := groupID != nil && *groupID == 0
+	if clearGroup {
+		groupID = nil // no folder to own, and the insert path writes NULL
+	}
 	return db.WithWriteTx(ctx, g, func(tx *gorm.DB) error {
-		// Filing a gem into a column requires owning that column.
-		if err := assertGroupOwned(tx, in.UserEmail, in.GroupID); err != nil {
+		// Filing a gem into a folder requires owning that folder.
+		if err := assertGroupOwned(tx, in.UserEmail, groupID); err != nil {
 			return err
 		}
 		return tx.Exec(
@@ -57,12 +66,17 @@ func UpsertSavedGem(ctx context.Context, g *gorm.DB, in models.SavedGemIn, adver
 			   verdict    = EXCLUDED.verdict,
 			   confidence = EXCLUDED.confidence,
 			   -- A re-save that carries no group (e.g. the Discover save button)
-			   -- must not knock the card out of its board column.
-			   group_id   = COALESCE(EXCLUDED.group_id, frontend.saved_gems.group_id),
+			   -- must not knock the card out of its folder, so a NULL means
+			   -- "keep". An explicit unfile therefore cannot ride the COALESCE:
+			   -- the clear flag bypasses it and writes NULL outright.
+			   group_id   = CASE WHEN ?::bool THEN NULL
+			                     ELSE COALESCE(EXCLUDED.group_id, frontend.saved_gems.group_id)
+			                END,
 			   updated_at = clock_timestamp()`,
 			in.UserEmail, advertiserID, in.PageName, in.AppName, in.IconURL, in.Cohort,
 			in.GemScore, in.ScalingVelocity, in.UnderRadar, in.FunnelIntent,
-			in.ActiveAdCount, in.Tags, in.Note, stage, in.Verdict, in.Confidence, in.GroupID,
+			in.ActiveAdCount, in.Tags, in.Note, stage, in.Verdict, in.Confidence, groupID,
+			clearGroup,
 		).Error
 	})
 }

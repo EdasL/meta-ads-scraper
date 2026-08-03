@@ -463,7 +463,9 @@ type SavedGemIn struct {
 	Stage           string     `json:"stage" binding:"omitempty,oneof=just_saw watching looks_real building"`
 	Verdict         *string    `json:"verdict" binding:"omitempty,oneof=build clone pass revisit"`
 	Confidence      *int       `json:"confidence" binding:"omitempty,min=1,max=5"`
-	GroupID         *int64     `json:"group_id"`
+	// GroupID files the gem into a folder. Omitted or null keeps the folder the
+	// row already has; 0 unfiles it (0 is never a real id).
+	GroupID *int64 `json:"group_id"`
 }
 
 // SavedGemRemoveIn carries the owner for an unsave (mirrors the reviewer pattern).
