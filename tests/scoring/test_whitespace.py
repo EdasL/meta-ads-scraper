@@ -2,9 +2,14 @@ from datetime import datetime, timezone
 from sqlalchemy import text
 from agf.parse import AdRecord
 from agf.db import repo
-from agf.scoring.whitespace import load_niche_crowding
+from agf.scoring.whitespace import load_niche_crowding, load_topic_crowding
 
 NOW = int(datetime(2026, 6, 4, tzinfo=timezone.utc).timestamp())
+
+# topic ids far above anything k-means produces, so a leftover app_topics row in the
+# shared test DB cannot collide with these sentinels' (topic_id -> size) mapping
+TOPIC_CROWDED = 90_001
+TOPIC_SPARSE = 90_007
 
 
 def _adv(conn, page_id):
@@ -57,6 +62,32 @@ def test_load_niche_crowding(pg_conn):
     assert a5 not in by_adv
     # one count per distinct niche (the shared test DB may hold other niches)
     assert {1, 2} <= set(counts)
+
+
+def _topic(conn, advertiser_id, topic_id, topic_size):
+    conn.execute(text(
+        "INSERT INTO frontend.app_topics (advertiser_id, topic_id, topic_size) "
+        "VALUES (:a, :t, :n) "
+        "ON CONFLICT (advertiser_id) DO UPDATE "
+        "  SET topic_id=EXCLUDED.topic_id, topic_size=EXCLUDED.topic_size"),
+        {"a": advertiser_id, "t": topic_id, "n": topic_size})
+
+
+def test_load_topic_crowding_maps_and_sizes(pg_conn):
+    a, b, c = (_adv(pg_conn, p) for p in ("WS8", "WS9", "WS10"))
+    d = _adv(pg_conn, "WS11")          # no embedding yet -> no app_topics row
+    _topic(pg_conn, a, TOPIC_CROWDED, 2)
+    _topic(pg_conn, b, TOPIC_CROWDED, 2)
+    _topic(pg_conn, c, TOPIC_SPARSE, 1)
+
+    by_adv, sizes = load_topic_crowding(pg_conn)
+
+    assert by_adv[a] == (TOPIC_CROWDED, 2)
+    assert by_adv[b] == (TOPIC_CROWDED, 2)
+    assert by_adv[c] == (TOPIC_SPARSE, 1)
+    assert d not in by_adv
+    # one size per distinct topic, ascending (the shared DB may hold other topics)
+    assert sizes == sorted(sizes) and {1, 2} <= set(sizes)
 
 
 def test_multi_keyword_advertiser_takes_most_crowded_niche(pg_conn):

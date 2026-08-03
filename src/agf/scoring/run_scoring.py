@@ -8,7 +8,7 @@ from agf.scoring.features import build_features
 from agf.scoring.gemscore import (scaling_velocity, under_radar, funnel_intent,
                                   demand, whitespace, gem_score, WINNER_AGE_CAP_DAYS)
 from agf.scoring.vetoes import apply_vetoes
-from agf.scoring.whitespace import load_niche_crowding
+from agf.scoring.whitespace import load_niche_crowding, load_topic_crowding
 
 # GemScore >= threshold -> review queue. v2 recalibration: the two new axes
 # (demand, whitespace) floor to 0.5 when data is missing, which multiplies every
@@ -103,9 +103,13 @@ def score_all(conn, as_of, only_ids=None) -> int:
     by_cohort = defaultdict(list)
     for fv in fvs:
         by_cohort[fv.cohort].append(fv)
-    # niche crowding is cross-advertiser, so it loads once per run (not per fv);
-    # an advertiser without keyword lineage gets None -> whitespace floors
-    niche_by_aid, niche_counts = load_niche_crowding(conn)
+    # crowding is cross-advertiser, so it loads once per run (not per fv). The
+    # whitespace axis reads TOPIC crowding (embedding clusters, spec 2026-08-03);
+    # the keyword-niche map stays ONLY to fill the niche_keyword /
+    # niche_advertiser_count display columns. An advertiser with no topic row
+    # (no embedding yet) gets None -> whitespace floors to neutral.
+    niche_by_aid, _niche_counts = load_niche_crowding(conn)
+    topic_by_aid, topic_sizes = load_topic_crowding(conn)
 
     n = 0
     for cohort, members in by_cohort.items():
@@ -115,8 +119,9 @@ def score_all(conn, as_of, only_ids=None) -> int:
             fi = funnel_intent(_fi_components(fv))
             d = demand(_d_components(fv, members))
             niche = niche_by_aid.get(fv.advertiser_id)
-            w = whitespace({"crowding": None if niche is None
-                            else 1.0 - pctile(niche[1], niche_counts)})
+            topic = topic_by_aid.get(fv.advertiser_id)
+            w = whitespace({"crowding": None if topic is None
+                            else 1.0 - pctile(topic[1], topic_sizes)})
             ur, d = websub_axis_override(fv.web_payoff_kind, ur, d)
             gs = gem_score(sv, ur, fi, d, w)
             veto = apply_vetoes(fv)

@@ -65,6 +65,16 @@ def _seed(conn):
         "ON CONFLICT (page_id, store, store_id) DO UPDATE "
         "  SET kept_advertiser_id=EXCLUDED.kept_advertiser_id"),
         {"a": ids["P5GEM"]})
+    # the whitespace axis reads the embedding-topic cluster (spec 2026-08-03), so the
+    # gem needs an app_topics row for it to be measurable; the keyword lineage above
+    # only fills the niche_keyword/niche_advertiser_count display columns. The topic id
+    # sits far above anything k-means emits so it cannot collide in the shared DB.
+    conn.execute(text(
+        "INSERT INTO frontend.app_topics (advertiser_id, topic_id, topic_size) "
+        "VALUES (:a, 90001, 1) "
+        "ON CONFLICT (advertiser_id) DO UPDATE "
+        "  SET topic_id=EXCLUDED.topic_id, topic_size=EXCLUDED.topic_size"),
+        {"a": ids["P5GEM"]})
     return ids
 
 
