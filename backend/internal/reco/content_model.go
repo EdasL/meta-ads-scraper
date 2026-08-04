@@ -248,6 +248,9 @@ func FitContentModel(liked, disliked, neutral []LabeledVec, opts FitOpts) *Conte
 	if perC < 1 {
 		perC = 1
 	}
+	// Go clamps floor-then-ceiling, Python (content_preference.py) ceiling-then-
+	// floor; the two orders give the same k for every MaxCentroids >= 1, i.e. any
+	// real setting of AGF_TASTE_CENTROIDS_MAX — verified in review.
 	k := len(liked) / perC
 	if k < 1 {
 		k = 1

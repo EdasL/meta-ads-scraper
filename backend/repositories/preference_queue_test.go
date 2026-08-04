@@ -310,6 +310,35 @@ func TestAssembleQueue_CapFreePassPreventsUnderfill(t *testing.T) {
 	require.Len(t, uniqueIDs(got), 5)
 }
 
+func TestAssembleQueue_SeedExhaustedStillHonoursPerDeckCap(t *testing.T) {
+	// Both niches are seeded past the cap, so the seeded passes admit nothing and
+	// the whole deck comes from the fallback passes. "hot" leads on both bucket
+	// keys (p_like and uncertainty), so an uncapped fallback hands it 4-5 of the 5
+	// slots; the per-deck floor must hold it to defaultPerNicheCap while the deck
+	// still fills from what is left.
+	var cands []prefCandidate
+	for i := 0; i < 6; i++ {
+		cands = append(cands, cand(i, "hot", 0.9, 0.9, "scored"))
+	}
+	for i := 6; i < 8; i++ {
+		cands = append(cands, cand(i, "cool", 0.05, 0.05, "scored"))
+	}
+	for seed := int64(1); seed <= 20; seed++ {
+		opts := baseOpts(5, seed)
+		opts.SeedNicheCounts = map[string]int{"n:hot": 99, "n:cool": 99}
+		got := assembleQueue(cands, opts)
+		require.Len(t, got, 5, "deck must still fill (seed %d)", seed)
+		hot := 0
+		for _, c := range got {
+			if *c.NicheKeyword == "hot" {
+				hot++
+			}
+		}
+		require.LessOrEqual(t, hot, defaultPerNicheCap,
+			"per-deck cap is a floor even when seeds exhaust the capped passes (seed %d)", seed)
+	}
+}
+
 func uniqueIDs(cs []prefCandidate) map[int]bool {
 	out := map[int]bool{}
 	for _, c := range cs {

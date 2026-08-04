@@ -14,7 +14,8 @@ from sqlalchemy import text
 from agf.db.engine import begin, get_engine
 from agf.scoring.content_preference import ContentPreferenceModel
 
-_EMB = text("SELECT advertiser_id, embedding FROM frontend.app_embeddings")
+_EMB = text("SELECT advertiser_id, embedding FROM frontend.app_embeddings "
+            "WHERE dim = 768")
 _NAMES = text("SELECT advertiser_id, app_name, gem_score "
               "FROM frontend.emerging_scaling_apps")
 _LABELS = text("SELECT advertiser_id, rating FROM frontend.app_ratings "

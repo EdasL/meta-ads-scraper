@@ -165,16 +165,37 @@ func assembleQueue(cands []prefCandidate, opts queueOpts) []prefCandidate {
 	picked := make([]prefCandidate, 0, opts.Limit)
 	seenAdv := map[int]bool{}
 	seenApp := map[int]bool{} // collapse multiple Meta pages of the same app
-	nicheCount := map[string]int{}
+
+	// Two niche budgets, checked by different passes.
+	//
+	//   seededCount — the decayed cap: pre-filled from the user's recent ratings,
+	//     so a topic already rated to its cap in the window stops appearing.
+	//   deckCount   — this request only, seeds ignored: the per-deck diversity
+	//     floor (≤ cap cards per niche in one batch), which is what the queue
+	//     guaranteed before seeding existed.
+	//
+	// Every admitted card increments BOTH, whichever budget gated it. Keeping
+	// them in step is what makes the passes compose: a card let through by the
+	// seeded passes still spends its per-deck slot (so the deck floor can't be
+	// exceeded by mixing passes), and a card let through by the deck-floor pass
+	// still spends its seeded slot (so a later pass can't double-spend a niche
+	// the seeded budget had already written off). seededCount is always ≥
+	// deckCount for a given niche, hence the pass order: strictest budget first.
+	seededCount := map[string]int{}
 	for k, v := range opts.SeedNicheCounts {
 		if k != "" && v > 0 {
-			nicheCount[k] = v
+			seededCount[k] = v
 		}
 	}
+	deckCount := map[string]int{}
+
 	cursors := []int{0, 0, 0}
 	got := []int{0, 0, 0}
 
-	tryTake := func(b int, capped bool) bool {
+	// tryTake pulls the next admissible candidate out of bucket b. counter picks
+	// which niche budget gates the choice; nil means no cap at all. Advertiser
+	// and app dedupe are unconditional in every pass.
+	tryTake := func(b int, counter map[string]int) bool {
 		for cursors[b] < len(buckets[b]) {
 			c := buckets[b][cursors[b]]
 			cursors[b]++
@@ -185,7 +206,7 @@ func assembleQueue(cands []prefCandidate, opts queueOpts) []prefCandidate {
 				continue
 			}
 			k := nicheKey(c)
-			if capped && k != "" && nicheCount[k] >= cap {
+			if counter != nil && k != "" && counter[k] >= cap {
 				continue
 			}
 			seenAdv[c.AdvertiserID] = true
@@ -193,7 +214,8 @@ func assembleQueue(cands []prefCandidate, opts queueOpts) []prefCandidate {
 				seenApp[*c.AppID] = true
 			}
 			if k != "" {
-				nicheCount[k]++
+				seededCount[k]++
+				deckCount[k]++
 			}
 			picked = append(picked, c)
 			got[b]++
@@ -202,50 +224,17 @@ func assembleQueue(cands []prefCandidate, opts queueOpts) []prefCandidate {
 		return false
 	}
 
-	// Round-robin to interleave buckets until each hits its target.
-	for len(picked) < opts.Limit {
-		progressed := false
-		for b := 0; b < 3; b++ {
-			if got[b] >= targets[b] {
-				continue
-			}
-			if tryTake(b, true) {
-				progressed = true
-				if len(picked) >= opts.Limit {
-					break
-				}
-			}
-		}
-		if !progressed {
-			break
-		}
-	}
-
-	// Underfill pass: ignore targets, fill from any bucket (still capped/deduped).
-	for len(picked) < opts.Limit {
-		progressed := false
-		for b := 0; b < 3; b++ {
-			if tryTake(b, true) {
-				progressed = true
-				if len(picked) >= opts.Limit {
-					break
-				}
-			}
-		}
-		if !progressed {
-			break
-		}
-	}
-
-	// Cap-free last resort: a heavily seeded cap (or a candidate pool collapsed
-	// into few niches) must never underfill the deck. Cursors reset because the
-	// capped passes already consumed them past skipped candidates.
-	if len(picked) < opts.Limit {
-		cursors = []int{0, 0, 0}
+	// runPass round-robins the three buckets until the deck is full or no bucket
+	// can yield another card. useTargets honours the exploit/uncertain/fresh
+	// blend quotas; the fallback passes draw from wherever a card is available.
+	runPass := func(useTargets bool, counter map[string]int) {
 		for len(picked) < opts.Limit {
 			progressed := false
 			for b := 0; b < 3; b++ {
-				if tryTake(b, false) {
+				if useTargets && got[b] >= targets[b] {
+					continue
+				}
+				if tryTake(b, counter) {
 					progressed = true
 					if len(picked) >= opts.Limit {
 						break
@@ -256,6 +245,31 @@ func assembleQueue(cands []prefCandidate, opts queueOpts) []prefCandidate {
 				break
 			}
 		}
+	}
+
+	// Pass 1: the blend, under the decayed cap. Pass 2: same cap, targets
+	// dropped, so a bucket that ran dry doesn't strand slots.
+	runPass(true, seededCount)
+	runPass(false, seededCount)
+
+	// Pass 3: seeds exhausted the capped passes, so fall back to the per-deck
+	// floor — this niche may be spent for the window, but the batch itself still
+	// gets at most cap cards from it. Without this pass a single topic could take
+	// the whole shortfall.
+	//
+	// Later passes reset the cursors: the earlier passes advanced them past
+	// candidates they skipped, which are exactly the ones now admissible.
+	if len(picked) < opts.Limit {
+		cursors = []int{0, 0, 0}
+		runPass(false, deckCount)
+	}
+
+	// Pass 4, last resort: no cap. Only reachable when the pool holds fewer than
+	// limit cards spread over enough niches — e.g. everything collapsed into one
+	// niche. An underfilled deck is worse than a repetitive one.
+	if len(picked) < opts.Limit {
+		cursors = []int{0, 0, 0}
+		runPass(false, nil)
 	}
 
 	return picked
