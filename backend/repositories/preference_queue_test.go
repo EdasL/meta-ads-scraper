@@ -52,13 +52,27 @@ func TestAssembleQueue_ExcludesNothingAddedAndDedupesAdvertisers(t *testing.T) {
 }
 
 func TestAssembleQueue_PerNicheCap(t *testing.T) {
+	// 20 candidates crowding one niche, plus 20 alternatives each in their own
+	// niche. The cap holds the crowded niche to defaultPerNicheCap while the
+	// deck still fills — the cap-free last resort only fires when the capped
+	// passes cannot reach the limit at all.
 	var cands []prefCandidate
 	for i := 0; i < 20; i++ {
 		cands = append(cands, cand(i+1, "samenicheword", 0.9-float64(i)*0.01, 0.5, "scored"))
 	}
+	for i := 0; i < 20; i++ {
+		cands = append(cands, cand(100+i, fmt.Sprintf("other-%d", i), 0.5, 0.5, "scored"))
+	}
 	out := assembleQueue(cands, baseOpts(20, 7))
-	require.LessOrEqual(t, len(out), defaultPerNicheCap,
-		"a single niche must not exceed the cap")
+	require.Len(t, out, 20, "deck fills while alternatives exist")
+	crowded := 0
+	for _, c := range out {
+		if *c.NicheKeyword == "samenicheword" {
+			crowded++
+		}
+	}
+	require.LessOrEqual(t, crowded, defaultPerNicheCap,
+		"a single niche must not exceed the cap while alternatives exist")
 }
 
 func TestAssembleQueue_FreshReachable(t *testing.T) {
@@ -199,22 +213,121 @@ func TestNicheKeyPrefersTopic(t *testing.T) {
 
 func TestPerTopicCapAppliesAcrossDifferentKeywords(t *testing.T) {
 	// 6 candidates in ONE topic but with 6 DIFFERENT niche_keywords (the broken
-	// pre-topic state) must be capped at the per-niche cap by topic.
+	// pre-topic state) must be capped at the per-niche cap by topic. Six
+	// candidates in other topics stand by so the deck can fill without the
+	// cap-free last resort.
 	topic := 3
-	cands := make([]prefCandidate, 6)
-	for i := range cands {
+	var cands []prefCandidate
+	for i := 0; i < 6; i++ {
 		kw := fmt.Sprintf("keyword-%d", i)
-		cands[i].AdvertiserID = i + 1
-		cands[i].TopicID = &topic
-		cands[i].NicheKeyword = &kw
-		cands[i].RankScore = 0.9
-		cands[i].Source = "scored"
+		var c prefCandidate
+		c.AdvertiserID = i + 1
+		c.TopicID = &topic
+		c.NicheKeyword = &kw
+		c.RankScore = 0.9
+		c.Source = "scored"
+		cands = append(cands, c)
+	}
+	for i := 0; i < 6; i++ {
+		other := 10 + i
+		kw := fmt.Sprintf("alt-%d", i)
+		var c prefCandidate
+		c.AdvertiserID = 100 + i
+		c.TopicID = &other
+		c.NicheKeyword = &kw
+		c.RankScore = 0.5
+		c.Source = "scored"
+		cands = append(cands, c)
 	}
 	got := assembleQueue(cands, queueOpts{
 		Limit: 6, PerNicheCap: 3, ExploitFrac: 1.0,
 		Rng: rand.New(rand.NewSource(1)),
 	})
-	require.Len(t, got, 3, "one topic must not exceed the cap across differing keywords")
+	require.Len(t, got, 6, "deck fills while other topics have candidates")
+	inTopic := 0
+	for _, c := range got {
+		if c.TopicID != nil && *c.TopicID == topic {
+			inTopic++
+		}
+	}
+	require.LessOrEqual(t, inTopic, 3, "one topic must not exceed the cap across differing keywords")
+}
+
+func TestAssembleQueue_SeededNicheCountsSuppressTopic(t *testing.T) {
+	// 6 candidates in niche "hot", 6 spread across distinct niches.
+	var cands []prefCandidate
+	for i := 0; i < 6; i++ {
+		cands = append(cands, cand(i, "hot", 0.9, 0.2, "scored"))
+	}
+	for i := 6; i < 12; i++ {
+		cands = append(cands, cand(i, fmt.Sprintf("cool%d", i), 0.5, 0.5, "scored"))
+	}
+	opts := baseOpts(6, 1)
+	opts.SeedNicheCounts = map[string]int{"n:hot": defaultPerNicheCap}
+	got := assembleQueue(cands, opts)
+	require.Len(t, got, 6)
+	for _, c := range got {
+		require.NotEqual(t, "hot", *c.NicheKeyword,
+			"seeded-at-cap niche must not serve while alternatives exist")
+	}
+}
+
+func TestAssembleQueue_SeedPartialStillServesRemainder(t *testing.T) {
+	var cands []prefCandidate
+	for i := 0; i < 6; i++ {
+		cands = append(cands, cand(i, "hot", 0.9, 0.2, "scored"))
+	}
+	for i := 6; i < 12; i++ {
+		cands = append(cands, cand(i, fmt.Sprintf("cool%d", i), 0.5, 0.5, "scored"))
+	}
+	// Limit 7 = exactly the deduped candidates that fit under the cap (6 cool +
+	// the 1 remaining "hot" slot), so the cap-free last resort stays dormant and
+	// the assertion measures the seeded cap, not the starvation guard.
+	opts := baseOpts(7, 1)
+	opts.SeedNicheCounts = map[string]int{"n:hot": defaultPerNicheCap - 1}
+	got := assembleQueue(cands, opts)
+	hot := 0
+	for _, c := range got {
+		if *c.NicheKeyword == "hot" {
+			hot++
+		}
+	}
+	require.Equal(t, 1, hot, "one slot left under the cap")
+}
+
+func TestAssembleQueue_CapFreePassPreventsUnderfill(t *testing.T) {
+	// Every candidate lives in one niche and the seed already caps it: without
+	// the cap-free pass the deck would be empty.
+	var cands []prefCandidate
+	for i := 0; i < 8; i++ {
+		cands = append(cands, cand(i, "only", 0.9, 0.2, "scored"))
+	}
+	opts := baseOpts(5, 1)
+	opts.SeedNicheCounts = map[string]int{"n:only": 99}
+	got := assembleQueue(cands, opts)
+	require.Len(t, got, 5, "cap-free pass must fill the deck when everything is capped")
+	require.Len(t, uniqueIDs(got), 5)
+}
+
+func uniqueIDs(cs []prefCandidate) map[int]bool {
+	out := map[int]bool{}
+	for _, c := range cs {
+		out[c.AdvertiserID] = true
+	}
+	return out
+}
+
+func TestNicheKeyFromMatchesNicheKey(t *testing.T) {
+	topic := 7
+	kw := "sleep tracker"
+	c := cand(1, kw, 0.5, 0.5, "scored")
+	c.TopicID = &topic
+	c.Cohort = "Fresh"
+	require.Equal(t, nicheKey(c), nicheKeyFrom(&topic, &kw, "Fresh"))
+	require.Equal(t, "t:7", nicheKeyFrom(&topic, &kw, "Fresh"))
+	require.Equal(t, "n:sleep tracker", nicheKeyFrom(nil, &kw, "Fresh"))
+	require.Equal(t, "c:Fresh", nicheKeyFrom(nil, nil, "Fresh"))
+	require.Equal(t, "", nicheKeyFrom(nil, nil, ""))
 }
 
 func TestWeightedSampleByRank_PermutationAndWeighting(t *testing.T) {

@@ -74,23 +74,32 @@ type queueOpts struct {
 	PerNicheCap   int
 	ExploitFrac   float64
 	UncertainFrac float64
-	Rng           *rand.Rand
+	// SeedNicheCounts pre-fills the per-niche counter (decayed cap: the user's
+	// recent ratings count against each niche's budget, so a topic that already
+	// filled its cap in the window stops appearing until the window rolls off).
+	SeedNicheCounts map[string]int
+	Rng             *rand.Rand
 }
 
-// nicheKey is the diversity-cap key: embedding topic, else niche_keyword, else
-// cohort, else exempt. Topic first: keyword "niches" scatter clone clusters
-// across dozens of keys (spec 2026-08-03).
-func nicheKey(c prefCandidate) string {
-	if c.TopicID != nil {
-		return "t:" + strconv.Itoa(*c.TopicID)
+// nicheKeyFrom is the diversity-cap key for raw fields: embedding topic, else
+// niche_keyword, else cohort, else exempt. Topic first: keyword "niches"
+// scatter clone clusters across dozens of keys (spec 2026-08-03). Shared by
+// candidates (nicheKey) and the recent-ratings seed (preference_repo).
+func nicheKeyFrom(topicID *int, nicheKeyword *string, cohort string) string {
+	if topicID != nil {
+		return "t:" + strconv.Itoa(*topicID)
 	}
-	if c.NicheKeyword != nil && *c.NicheKeyword != "" {
-		return "n:" + *c.NicheKeyword
+	if nicheKeyword != nil && *nicheKeyword != "" {
+		return "n:" + *nicheKeyword
 	}
-	if c.Cohort != "" {
-		return "c:" + c.Cohort
+	if cohort != "" {
+		return "c:" + cohort
 	}
 	return "" // empty key is exempt from the cap (unknown niche)
+}
+
+func nicheKey(c prefCandidate) string {
+	return nicheKeyFrom(c.TopicID, c.NicheKeyword, c.Cohort)
 }
 
 // assembleQueue blends exploit/uncertain/fresh buckets to opts.Limit, enforces a
@@ -157,10 +166,15 @@ func assembleQueue(cands []prefCandidate, opts queueOpts) []prefCandidate {
 	seenAdv := map[int]bool{}
 	seenApp := map[int]bool{} // collapse multiple Meta pages of the same app
 	nicheCount := map[string]int{}
+	for k, v := range opts.SeedNicheCounts {
+		if k != "" && v > 0 {
+			nicheCount[k] = v
+		}
+	}
 	cursors := []int{0, 0, 0}
 	got := []int{0, 0, 0}
 
-	tryTake := func(b int) bool {
+	tryTake := func(b int, capped bool) bool {
 		for cursors[b] < len(buckets[b]) {
 			c := buckets[b][cursors[b]]
 			cursors[b]++
@@ -171,7 +185,7 @@ func assembleQueue(cands []prefCandidate, opts queueOpts) []prefCandidate {
 				continue
 			}
 			k := nicheKey(c)
-			if k != "" && nicheCount[k] >= cap {
+			if capped && k != "" && nicheCount[k] >= cap {
 				continue
 			}
 			seenAdv[c.AdvertiserID] = true
@@ -195,7 +209,7 @@ func assembleQueue(cands []prefCandidate, opts queueOpts) []prefCandidate {
 			if got[b] >= targets[b] {
 				continue
 			}
-			if tryTake(b) {
+			if tryTake(b, true) {
 				progressed = true
 				if len(picked) >= opts.Limit {
 					break
@@ -211,7 +225,7 @@ func assembleQueue(cands []prefCandidate, opts queueOpts) []prefCandidate {
 	for len(picked) < opts.Limit {
 		progressed := false
 		for b := 0; b < 3; b++ {
-			if tryTake(b) {
+			if tryTake(b, true) {
 				progressed = true
 				if len(picked) >= opts.Limit {
 					break
@@ -220,6 +234,27 @@ func assembleQueue(cands []prefCandidate, opts queueOpts) []prefCandidate {
 		}
 		if !progressed {
 			break
+		}
+	}
+
+	// Cap-free last resort: a heavily seeded cap (or a candidate pool collapsed
+	// into few niches) must never underfill the deck. Cursors reset because the
+	// capped passes already consumed them past skipped candidates.
+	if len(picked) < opts.Limit {
+		cursors = []int{0, 0, 0}
+		for len(picked) < opts.Limit {
+			progressed := false
+			for b := 0; b < 3; b++ {
+				if tryTake(b, false) {
+					progressed = true
+					if len(picked) >= opts.Limit {
+						break
+					}
+				}
+			}
+			if !progressed {
+				break
+			}
 		}
 	}
 
