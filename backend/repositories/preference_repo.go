@@ -24,7 +24,39 @@ import (
 var (
 	crowdingTail    = envFloat("AGF_CROWDING_TAIL", 0.80)
 	crowdingPenalty = envFloat("AGF_CROWDING_PENALTY_GO", 0.5)
+	// reviewCapHours is the decayed-cap window: the user's ratings from the
+	// last N hours pre-fill the per-niche cap so recently-served topics rest.
+	// 0 disables seeding (per-request cap only, the pre-2026-08 behavior).
+	reviewCapHours = envFloat("AGF_REVIEW_CAP_HOURS", 24)
 )
+
+// prefRatedRow is one of the user's ratings plus the fields the decayed niche
+// cap needs (rated_at + the nicheKeyFrom fallback chain).
+type prefRatedRow struct {
+	AdvertiserID int64     `gorm:"column:advertiser_id"`
+	Rating       string    `gorm:"column:rating"`
+	RatedAt      time.Time `gorm:"column:rated_at"`
+	AppName      string    `gorm:"column:app_name"`
+	TopicID      *int      `gorm:"column:topic_id"`
+	NicheKeyword *string   `gorm:"column:niche_keyword"`
+	Cohort       string    `gorm:"column:cohort"`
+}
+
+// seedNicheCounts counts the user's ratings at or after cutoff per niche key.
+// These pre-fill assembleQueue's cap counter: a niche that already served (and
+// got rated) cap-many cards inside the window rests until it rolls off.
+func seedNicheCounts(rated []prefRatedRow, cutoff time.Time) map[string]int {
+	out := map[string]int{}
+	for _, r := range rated {
+		if r.RatedAt.Before(cutoff) {
+			continue
+		}
+		if k := nicheKeyFrom(r.TopicID, r.NicheKeyword, r.Cohort); k != "" {
+			out[k]++
+		}
+	}
+	return out
+}
 
 func envFloat(key string, def float64) float64 {
 	if v := os.Getenv(key); v != "" {
@@ -63,25 +95,25 @@ func PreferenceQueue(ctx context.Context, g *gorm.DB, userEmail string, limit in
 			return err
 		}
 
-		// The user's labels, with app names for the "similar to <name>" why.
-		// Rated apps may have left the matview, hence the LEFT JOIN + COALESCE
-		// (mirrors the Python loader's meta.get(a, ("", 0)) fallback).
-		var rated []struct {
-			AdvertiserID int64  `gorm:"column:advertiser_id"`
-			Rating       string `gorm:"column:rating"`
-			AppName      string `gorm:"column:app_name"`
-		}
+		// The user's labels, with app names for the "similar to <name>" why,
+		// plus rated_at and the niche-cap keys (topic → niche_keyword → cohort)
+		// for the decayed-cap seed. Rated apps may have left the matview, hence
+		// the LEFT JOINs + COALESCE; a vanished app yields no key and is exempt.
+		var rated []prefRatedRow
 		if err := tx.Raw(
-			`SELECT r.advertiser_id, r.rating,
-			        COALESCE(m.app_name, m.page_name, '') AS app_name
+			`SELECT r.advertiser_id, r.rating, r.rated_at,
+			        COALESCE(m.app_name, m.page_name, '') AS app_name,
+			        t.topic_id, m.niche_keyword, COALESCE(m.cohort, '') AS cohort
 			 FROM frontend.app_ratings r
 			 LEFT JOIN frontend.emerging_scaling_apps m
 			   ON m.advertiser_id = r.advertiser_id
+			 LEFT JOIN frontend.app_topics t
+			   ON t.advertiser_id = r.advertiser_id
 			 WHERE r.user_email = ?`, userEmail,
 		).Scan(&rated).Error; err != nil {
 			return err
 		}
-		var liked, disliked []reco.LabeledVec
+		var liked, disliked, neutral []reco.LabeledVec
 		for _, r := range rated {
 			vec, ok := embs[r.AdvertiserID]
 			if !ok {
@@ -93,9 +125,11 @@ func PreferenceQueue(ctx context.Context, g *gorm.DB, userEmail string, limit in
 				liked = append(liked, lv)
 			case "dislike":
 				disliked = append(disliked, lv)
+			case "neutral":
+				neutral = append(neutral, lv)
 			}
 		}
-		model := reco.FitContentModel(liked, disliked, nil, reco.DefaultFitOpts())
+		model := reco.FitContentModel(liked, disliked, neutral, reco.DefaultFitOpts())
 
 		// Candidates: every unrated matview app, minus the client's exclude list.
 		// The matview scan is wrapped in a subselect so the unqualified mvCols stay
@@ -151,12 +185,18 @@ func PreferenceQueue(ctx context.Context, g *gorm.DB, userEmail string, limit in
 			}
 		}
 
+		var seed map[string]int
+		if reviewCapHours > 0 {
+			cutoff := time.Now().Add(-time.Duration(reviewCapHours * float64(time.Hour)))
+			seed = seedNicheCounts(rated, cutoff)
+		}
 		selected := assembleQueue(cands, queueOpts{
-			Limit:         limit,
-			PerNicheCap:   defaultPerNicheCap,
-			ExploitFrac:   exploitFrac,
-			UncertainFrac: uncertainFrac,
-			Rng:           rand.New(rand.NewSource(time.Now().UnixNano())),
+			Limit:           limit,
+			PerNicheCap:     defaultPerNicheCap,
+			ExploitFrac:     exploitFrac,
+			UncertainFrac:   uncertainFrac,
+			SeedNicheCounts: seed,
+			Rng:             rand.New(rand.NewSource(time.Now().UnixNano())),
 		})
 
 		shortRows := make([]models.ShortlistRow, len(selected))

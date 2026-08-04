@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math/rand"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -328,6 +329,21 @@ func TestNicheKeyFromMatchesNicheKey(t *testing.T) {
 	require.Equal(t, "n:sleep tracker", nicheKeyFrom(nil, &kw, "Fresh"))
 	require.Equal(t, "c:Fresh", nicheKeyFrom(nil, nil, "Fresh"))
 	require.Equal(t, "", nicheKeyFrom(nil, nil, ""))
+}
+
+func TestSeedNicheCounts_WindowAndKeyFallback(t *testing.T) {
+	topic := 3
+	kw := "habit tracker"
+	now := time.Now()
+	rated := []prefRatedRow{
+		{AdvertiserID: 1, Rating: "like", RatedAt: now.Add(-1 * time.Hour), TopicID: &topic},
+		{AdvertiserID: 2, Rating: "neutral", RatedAt: now.Add(-2 * time.Hour), TopicID: &topic},
+		{AdvertiserID: 3, Rating: "dislike", RatedAt: now.Add(-30 * time.Hour), TopicID: &topic}, // outside window
+		{AdvertiserID: 4, Rating: "like", RatedAt: now.Add(-1 * time.Hour), NicheKeyword: &kw},
+		{AdvertiserID: 5, Rating: "like", RatedAt: now.Add(-1 * time.Hour)}, // no keys → exempt
+	}
+	got := seedNicheCounts(rated, now.Add(-24*time.Hour))
+	require.Equal(t, map[string]int{"t:3": 2, "n:habit tracker": 1}, got)
 }
 
 func TestWeightedSampleByRank_PermutationAndWeighting(t *testing.T) {

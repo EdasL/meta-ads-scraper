@@ -146,6 +146,106 @@ func TestPreferenceQueueServeTime(t *testing.T) {
 	}
 }
 
+// seedTopicCapFixture seeds 12 candidates, puts the first 6 in one topic, gives
+// every one an embedding (so none land in the fresh bucket) and lifts the 3
+// UNRATED topic members to the top gem_score. The lift makes both cap
+// assertions below meaningful: absent the cap those apps would lead the deck,
+// so "not served" can only mean the topic rested.
+func seedTopicCapFixture(g *gorm.DB, user string, topicID int) []int64 {
+	ids := seedPrefCandidates(g, 12)
+	must(g.Exec(`DELETE FROM frontend.app_ratings WHERE user_email = ?`, user).Error)
+	must(g.Exec(`DELETE FROM frontend.app_topics WHERE advertiser_id IN ?`, ids).Error)
+	for i, id := range ids {
+		if i < 6 {
+			must(g.Exec(`INSERT INTO frontend.app_topics (advertiser_id, topic_id, topic_size)
+			             VALUES (?, ?, 6)
+			             ON CONFLICT (advertiser_id) DO UPDATE SET topic_id = EXCLUDED.topic_id`,
+				id, topicID).Error)
+		}
+		seedEmbedding(g, id, "{1.0,0.0}")
+	}
+	must(g.Exec(`UPDATE adtech.advertiser_scores SET gem_score = 99
+	             WHERE advertiser_id IN ?`, ids[3:6]).Error)
+	must(g.Exec(`REFRESH MATERIALIZED VIEW frontend.emerging_scaling_apps`).Error)
+	repositories.ResetPrefEmbCacheForTest()
+	return ids
+}
+
+// TestPreferenceQueueDecayedTopicCap: rating 3 apps of a topic recently rests
+// that topic for the whole window — a fresh request serves none of its
+// remaining apps while alternatives exist.
+func TestPreferenceQueueDecayedTopicCap(t *testing.T) {
+	if ratingsDB == nil {
+		t.Skip("AGF_IT_DB_URL not set")
+	}
+	g := ratingsDB
+	user := "cap-test@fielddesk.local"
+	ids := seedTopicCapFixture(g, user, 7001)
+
+	// Rate 3 of the topic apps just now (any rating value counts).
+	for _, id := range ids[:3] {
+		must(g.Exec(`INSERT INTO frontend.app_ratings (user_email, advertiser_id, rating)
+		             VALUES (?, ?, 'neutral')
+		             ON CONFLICT (user_email, advertiser_id) DO UPDATE SET rating = 'neutral'`,
+			user, id).Error)
+	}
+
+	topic := map[int64]bool{}
+	for _, id := range ids[3:6] {
+		topic[id] = true
+	}
+	// Limit 6 = exactly the unrated non-topic sentinels, so the deck fills under
+	// the cap and the cap-free starvation pass stays dormant. Repeated because
+	// the exploit bucket samples stochastically — one clean deck could be luck.
+	for i := 0; i < 5; i++ {
+		rows, err := repositories.PreferenceQueue(context.Background(), g, user, 6, nil)
+		require.NoError(t, err)
+		require.NotEmpty(t, rows)
+		for _, r := range rows {
+			require.False(t, topic[int64(r.AdvertiserID)],
+				"topic 7001 rested by 3 recent ratings, but advertiser %d served", r.AdvertiserID)
+		}
+	}
+}
+
+// TestPreferenceQueueOldRatingsDoNotSeed: the same 3 ratings backdated outside
+// the window leave the topic servable.
+func TestPreferenceQueueOldRatingsDoNotSeed(t *testing.T) {
+	if ratingsDB == nil {
+		t.Skip("AGF_IT_DB_URL not set")
+	}
+	g := ratingsDB
+	user := "cap-old-test@fielddesk.local"
+	ids := seedTopicCapFixture(g, user, 7002)
+
+	for _, id := range ids[:3] {
+		must(g.Exec(`INSERT INTO frontend.app_ratings (user_email, advertiser_id, rating, rated_at)
+		             VALUES (?, ?, 'neutral', now() - interval '48 hours')
+		             ON CONFLICT (user_email, advertiser_id) DO UPDATE
+		               SET rating = 'neutral', rated_at = EXCLUDED.rated_at`,
+			user, id).Error)
+	}
+	// The exploit bucket samples stochastically, so a single deck can miss the
+	// topic by chance; across 10 decks an unrested topic is served many times
+	// while a rested one is served zero times.
+	served := map[int64]bool{}
+	for i := 0; i < 10; i++ {
+		rows, err := repositories.PreferenceQueue(context.Background(), g, user, 6, nil)
+		require.NoError(t, err)
+		for _, r := range rows {
+			served[int64(r.AdvertiserID)] = true
+		}
+	}
+	fromTopic := 0
+	for _, id := range ids[3:6] {
+		if served[id] {
+			fromTopic++
+		}
+	}
+	require.Greater(t, fromTopic, 0,
+		"48h-old ratings must not rest the topic (window is 24h)")
+}
+
 func TestPreferenceQueueColdstart(t *testing.T) {
 	if ratingsDB == nil {
 		t.Skip("AGF_IT_DB_URL not set")
