@@ -87,7 +87,7 @@ func PreferenceQueue(ctx context.Context, g *gorm.DB, userEmail string, limit in
 			if !ok {
 				continue
 			}
-			lv := reco.LabeledVec{Name: r.AppName, Vec: vec}
+			lv := reco.LabeledVec{ID: r.AdvertiserID, Name: r.AppName, Vec: vec}
 			switch r.Rating {
 			case "like":
 				liked = append(liked, lv)
@@ -95,7 +95,7 @@ func PreferenceQueue(ctx context.Context, g *gorm.DB, userEmail string, limit in
 				disliked = append(disliked, lv)
 			}
 		}
-		model := reco.FitContentModel(liked, disliked)
+		model := reco.FitContentModel(liked, disliked, nil, reco.DefaultFitOpts())
 
 		// Candidates: every unrated matview app, minus the client's exclude list.
 		// The matview scan is wrapped in a subselect so the unqualified mvCols stay
