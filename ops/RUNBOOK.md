@@ -274,6 +274,23 @@ account is out of bandwidth — top it up at dataimpulse.com (same account/user)
 doc_id / rate-limit procedures in §1–3 apply; restart the worker container to force a
 token heal.
 
+**DB connection pileup (backends > 60).** Cloud Monitoring alert
+"agf-db connection pileup" (policy `alertPolicies/7643285827140189137`, emails
+elakavicius@gmail.com) fires when `num_backends` on `peon-489013:agf-db` holds
+above 60 for 10 min — normal is 15–25; slots run out near ~100 and then EVERY
+client fails with "remaining connection slots are reserved" (hunt/API/scoring
+all dark while engine_pulse still reads healthy). Both 2026 incidents were a
+`REFRESH MATERIALIZED VIEW CONCURRENTLY frontend.emerging_scaling_apps` pileup:
+one refresh outlived the refresh cadence (sources: worker post-tick, cron */30,
+AND the enrich daemon), so attempts stacked behind the self-excluding lock.
+Recovery without an instance restart: stop 2–3 VM queue daemons
+(`docker compose stop keeper enrich pipeline`) to free headroom → connect →
+`SELECT pid FROM pg_stat_activity WHERE query ILIKE 'REFRESH%'` →
+`pg_terminate_backend` the pile → find what made refresh slow (2026-08-04 root
+cause: regex-selectivity misestimate in the funnels lateral, fixed by migration
+163's single-pass CTE; refresh is ~10 s since). Full postmortem in repo memory
+`matview-refresh-death-spiral-2026-08-04`.
+
 **Rollback to local.** `docker start db-postgres-1`; revert the api plist
 `AGF_DATABASE_URL` to `postgresql://agf:agf@localhost:5433/agf`; reload
 `com.fielddesk.api`; re-`bootstrap` `com.fielddesk.worker` + `com.fielddesk.scoring`.
