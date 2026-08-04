@@ -62,6 +62,12 @@ clusters. Python stays canonical; Go port pinned by regenerated golden vectors.
 - **Scoring:** `dir_k = l2norm(mean(cluster_k) − dis_c)` (shared disliked
   centroid); `raw(vec) = max_k dot(vec, dir_k)`; single Platt calibration fit
   on the labeled set's raw (max) scores. `why` unchanged (nearest liked app).
+- **Structure guard (added after prod measurement):** after computing cluster
+  directions, if any pair has `dot(dir_i, dir_j) > AGF_TASTE_SPLIT_MAX_COS`
+  (default 0.85) the split is fitting noise — collapse to the single global
+  direction. Measured 2026-08-04: the founder's likes are one blob (best-k
+  centroid pair at cosine 0.92), so the guard keeps K=1 today and lets real
+  clusters activate multi-centroid as the decayed cap diversifies ratings.
 - Version string bumps to `content-sim-v2`.
 - Consumers updated: Go serve path (`FitContentModel` signature),
   `scripts/score_content_preferences.py` (Discover for-you gets the fix free
@@ -86,10 +92,23 @@ clusters. Python stays canonical; Go port pinned by regenerated golden vectors.
 
 ## Measurement (prod, 2026-08-04)
 
-PENDING — probe running. Will pin: rating counts by value, liked-embedding
-cluster structure (k-means inertia/silhouette → K policy defaults), candidate
-topic concentration (validates cap effect), neutral topic concentration
-(validates weak-negative effect).
+Founder ratings 1201 (like 97 / neutral 317 / dislike 787), embedding coverage
+100% for all three. Key results:
+
+- **Likes do not cluster.** k-means k=1..8: silhouette never exceeds 0.054, no
+  inertia elbow; best-k=2 centroids sit at cosine 0.9229. Liked mean pairwise
+  cosine 0.6127 vs random-corpus baseline 0.5823 — barely tighter than random.
+  → the structure guard above; multi-centroid must not split today's data.
+- **The centroid is a weak but real ranker:** leave-one-out AUC like-vs-dislike
+  0.743; like-vs-neutral 0.619; neutral-vs-dislike 0.627. Neutral sits cleanly
+  between like and dislike → weak-negative weighting is directionally right
+  (expected effect small: neutrals span the same topics as likes).
+- **Sampling skew is the dominant defect** (validates the decayed cap): pool =
+  6114 matview advertisers, 4956 unrated, 40 topics all present, app_topics
+  coverage 100%, zero NULL topics. Rating coverage per topic: topic 0 (largest,
+  330 unrated) rated 0.6% ever; topics 19/22 ≤2.8%; while topics 26/32/14/13
+  are 30-39% rated. Per-topic like rate is flat (8-21%) — we don't yet know
+  what the founder likes because the queue kept re-serving the same topics.
 
 ## Test plan
 

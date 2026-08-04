@@ -13,7 +13,8 @@
 ## Global Constraints
 
 - No schema migrations. `frontend.app_ratings.rated_at` and `frontend.app_topics` already exist.
-- Env knobs, all optional: `AGF_NEUTRAL_WEIGHT` (default 0.25), `AGF_TASTE_LIKES_PER_CENTROID` (default 12), `AGF_TASTE_CENTROIDS_MAX` (default 4), `AGF_REVIEW_CAP_HOURS` (default 24; 0 disables seeding).
+- Env knobs, all optional: `AGF_NEUTRAL_WEIGHT` (default 0.25), `AGF_TASTE_LIKES_PER_CENTROID` (default 12), `AGF_TASTE_CENTROIDS_MAX` (default 4), `AGF_TASTE_SPLIT_MAX_COS` (default 0.85), `AGF_REVIEW_CAP_HOURS` (default 24; 0 disables seeding).
+- STRUCTURE GUARD (added after the 2026-08-04 prod measurement — founder's likes are ONE blob, best-k centroid pair at cosine 0.92): after computing cluster directions, if ANY pair of directions has dot > `AGF_TASTE_SPLIT_MAX_COS`, the split is noise — collapse `dirs` to the single global direction. Both languages, golden-pinned.
 - Model version string bumps `content-sim-v1` → `content-sim-v2`.
 - `ContentPreferenceModel.direction` (the GLOBAL single like−dislike direction) must keep working — `src/agf/discovery/triage_prior.py` consumes it.
 - Go/Python parity tolerance 1e-6 (existing golden test convention).
@@ -149,6 +150,34 @@ def test_k_policy_clamps():
     assert abs(m.score(m.direction) - float(np.dot(m.direction, m.direction))) < 1e-9
 
 
+def test_structure_guard_collapses_blob():
+    # One blob forced into k=4: every split direction nearly coincides, so the
+    # guard must fall back to the single global direction (identical scores to
+    # an explicit K=1 fit).
+    likes = _mk(12, [1.0, 0.0, 0.05, 0.0], "A", start_id=100)
+    dis = _mk(2, [0.0, 0.0, 0.0, 1.0], "D", start_id=900)
+    m_multi = ContentPreferenceModel.fit(likes, dis, likes_per_centroid=1,
+                                         max_centroids=4, split_max_cos=0.85)
+    m_single = ContentPreferenceModel.fit(likes, dis, likes_per_centroid=12,
+                                          max_centroids=1)
+    for probe in ([1, 0, 0, 0], [0, 1, 0, 0], [0.5, 0.5, 0.5, 0]):
+        v = _unit(probe)
+        assert abs(m_multi.score(v) - m_single.score(v)) < 1e-12
+
+
+def test_structure_guard_keeps_real_clusters():
+    # Genuinely separated clusters stay split: scores must NOT equal the
+    # single-direction fit for a probe aligned with the second cluster.
+    likes = _two_cluster_likes()
+    dis = _mk(2, [0.0, 0.0, 0.0, 1.0], "D", start_id=900)
+    m = ContentPreferenceModel.fit(likes, dis, likes_per_centroid=12,
+                                   max_centroids=4, split_max_cos=0.85)
+    m1 = ContentPreferenceModel.fit(likes, dis, likes_per_centroid=24,
+                                    max_centroids=1)
+    probe = _unit([0, 1, 0, 0])
+    assert m.score(probe) > m1.score(probe) + 0.05
+
+
 def test_coldstart_unchanged():
     likes = _mk(3, [1.0, 0.0, 0.05, 0.0], "A")
     m = ContentPreferenceModel.fit(likes, [])
@@ -260,7 +289,8 @@ class ContentPreferenceModel:
 
     @classmethod
     def fit(cls, liked, disliked, neutral=None, min_likes=MIN_LIKES,
-            neutral_weight=None, likes_per_centroid=None, max_centroids=None):
+            neutral_weight=None, likes_per_centroid=None, max_centroids=None,
+            split_max_cos=None):
         if len(liked) < min_likes:
             return cls("coldstart")
         neutral = neutral or []
@@ -293,6 +323,20 @@ class ContentPreferenceModel:
         for j in sorted(set(assign)):
             idx = [i for i, a in enumerate(assign) if a == j]
             dirs.append(_l2(L[idx].mean(axis=0) - dis_c))
+        # Structure guard: if any two cluster directions nearly coincide, the
+        # split is fitting noise (measured 2026-08-04: founder's likes are one
+        # blob, best-k centroid pair at cosine 0.92) — fall back to the single
+        # global direction until real structure emerges.
+        split_max = (_env_float("AGF_TASTE_SPLIT_MAX_COS", 0.85)
+                     if split_max_cos is None else split_max_cos)
+        if len(dirs) > 1:
+            for i in range(len(dirs)):
+                for j in range(i + 1, len(dirs)):
+                    if float(np.dot(dirs[i], dirs[j])) > split_max:
+                        dirs = [direction]
+                        break
+                if len(dirs) == 1:
+                    break
         D = np.stack(dirs)
 
         labeled = [(v, 1) for _, _, v in liked] + [(v, 0) for _, _, v in disliked]
@@ -390,7 +434,7 @@ disliked = mk(2, [0.0, 0.0, 0.0, 1.0], "D", 900)
 neutral = mk(3, [0.0, 0.0, 1.0, 0.0], "N", 950, wiggle_axis=1)
 m = ContentPreferenceModel.fit(liked, disliked, neutral=neutral,
                                neutral_weight=0.25, likes_per_centroid=12,
-                               max_centroids=4)
+                               max_centroids=4, split_max_cos=0.85)
 assert m.version == "content-sim-v2", m.version
 probes = [unit([1, 0, 0, 0]), unit([0, 1, 0, 0]), unit([1, 1, 0, 0]),
           unit([0, 0, 1, 0]), unit([0, 0, 0, 1]), unit([0.7, 0.1, 0.1, 0.6])]
@@ -437,7 +481,7 @@ whose axis already holds 0.05 (likes) or 0.0 (dislikes/neutrals) — mirror exac
 `0.05*i` on axis 1). If in doubt, print both fixtures and diff.
 
 ```go
-var fitOptsGolden = FitOpts{NeutralWeight: 0.25, LikesPerCentroid: 12, MaxCentroids: 4}
+var fitOptsGolden = FitOpts{NeutralWeight: 0.25, LikesPerCentroid: 12, MaxCentroids: 4, SplitMaxCos: 0.85}
 
 // Golden values from src/agf/scoring/content_preference.py (v2) on
 // goldenFixtureV2 via scratchpad gen_goldens_v2.py, 2026-08-04.
@@ -490,6 +534,28 @@ func TestClusterAssignDeterministicSeparation(t *testing.T) {
 	}
 }
 
+func TestStructureGuardCollapsesBlob(t *testing.T) {
+	// One blob forced into k=4 must collapse to the single global direction:
+	// scores identical to a MaxCentroids=1 fit.
+	var likes, dis []LabeledVec
+	for i := 0; i < 12; i++ {
+		likes = append(likes, LabeledVec{ID: int64(100 + i), Name: fmt.Sprintf("A%d", i),
+			Vec: unitVec([]float64{1.0, 0.0, 0.05 + 0.05*float64(i), 0.0})})
+	}
+	for i := 0; i < 2; i++ {
+		dis = append(dis, LabeledVec{ID: int64(900 + i), Name: fmt.Sprintf("D%d", i),
+			Vec: unitVec([]float64{0.0, 0.0, 0.05 * float64(i), 1.0})})
+	}
+	multi := FitContentModel(likes, dis, nil, FitOpts{NeutralWeight: 0.25, LikesPerCentroid: 1, MaxCentroids: 4, SplitMaxCos: 0.85})
+	single := FitContentModel(likes, dis, nil, FitOpts{NeutralWeight: 0.25, LikesPerCentroid: 12, MaxCentroids: 1, SplitMaxCos: 0.85})
+	for _, probe := range [][]float64{{1, 0, 0, 0}, {0, 1, 0, 0}, {0.5, 0.5, 0.5, 0}} {
+		v := unitVec(probe)
+		if math.Abs(multi.Score(v)-single.Score(v)) > 1e-12 {
+			t.Errorf("guard failed to collapse: %v vs %v", multi.Score(v), single.Score(v))
+		}
+	}
+}
+
 func TestFitOrderInvariantAfterIDSort(t *testing.T) {
 	liked, disliked, neutral := goldenFixtureV2()
 	rev := make([]LabeledVec, len(liked))
@@ -535,6 +601,7 @@ type FitOpts struct {
 	NeutralWeight    float64 // weight of a neutral vec in the negative centroid
 	LikesPerCentroid int     // K = clamp(nLikes/this, 1, MaxCentroids)
 	MaxCentroids     int
+	SplitMaxCos      float64 // structure guard: dirs closer than this collapse to one
 }
 
 func DefaultFitOpts() FitOpts {
@@ -542,6 +609,7 @@ func DefaultFitOpts() FitOpts {
 		NeutralWeight:    envFloat("AGF_NEUTRAL_WEIGHT", 0.25),
 		LikesPerCentroid: envInt("AGF_TASTE_LIKES_PER_CENTROID", 12),
 		MaxCentroids:     envInt("AGF_TASTE_CENTROIDS_MAX", 4),
+		SplitMaxCos:      envFloat("AGF_TASTE_SPLIT_MAX_COS", 0.85),
 	}
 }
 
@@ -703,6 +771,19 @@ func FitContentModel(liked, disliked, neutral []LabeledVec, opts FitOpts) *Conte
 	for i, lv := range liked {
 		vecs[i] = lv.Vec
 	}
+	// Global single direction — the structure guard's fallback (mirrors the
+	// Python model's `direction` property).
+	globalMean := make([]float64, dim)
+	for _, v := range vecs {
+		for d, x := range v {
+			globalMean[d] += x
+		}
+	}
+	for d := range globalMean {
+		globalMean[d] = globalMean[d]/float64(len(vecs)) - disC[d]
+	}
+	globalDir := l2norm(globalMean)
+
 	perC := opts.LikesPerCentroid
 	if perC < 1 {
 		perC = 1
@@ -741,6 +822,21 @@ func FitContentModel(liked, disliked, neutral []LabeledVec, opts FitOpts) *Conte
 			mean[d] = mean[d]/float64(cnt) - disC[d]
 		}
 		dirs = append(dirs, l2norm(mean))
+	}
+
+	// Structure guard: near-coincident split directions mean the clustering cut
+	// one blob, not real taste structure — collapse to the global direction
+	// (2026-08-04 measurement: founder's likes best-k centroid cosine 0.92).
+	if len(dirs) > 1 {
+	guard:
+		for i := range dirs {
+			for j := i + 1; j < len(dirs); j++ {
+				if dot(dirs[i], dirs[j]) > opts.SplitMaxCos {
+					dirs = [][]float64{globalDir}
+					break guard
+				}
+			}
+		}
 	}
 
 	scoreMax := func(v []float64) float64 {
