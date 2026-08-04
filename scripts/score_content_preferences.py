@@ -35,7 +35,9 @@ def score_user(conn, user_email, emb, meta) -> int:
              for a, r in labels.items() if r == "like" and a in emb]
     disliked = [(a, meta.get(a, ("", 0))[0] or "", emb[a])
                 for a, r in labels.items() if r == "dislike" and a in emb]
-    model = ContentPreferenceModel.fit(liked, disliked)
+    neutral = [(a, meta.get(a, ("", 0))[0] or "", emb[a])
+               for a, r in labels.items() if r == "neutral" and a in emb]
+    model = ContentPreferenceModel.fit(liked, disliked, neutral=neutral)
 
     scored = []
     for a, vec in emb.items():
@@ -63,7 +65,7 @@ def score_user(conn, user_email, emb, meta) -> int:
               "u": 1.0 - abs(2.0 * p - 1.0), "q": q, "w": why, "v": model.version}
              for q, (a, p, why, _raw) in enumerate(scored)])
     print(f"[cpref] {user_email}: model={model.version} scored={len(scored)} "
-          f"likes={len(liked)}", flush=True)
+          f"likes={len(liked)} neutrals={len(neutral)}", flush=True)
     return len(scored)
 
 

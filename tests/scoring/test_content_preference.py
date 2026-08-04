@@ -25,7 +25,7 @@ def test_direction_scores_likes_above_dislikes():
     liked = _make(MIN_LIKES, [1, 0, 0], "L")
     disliked = _make(40, [0, 1, 0], "D")
     m = ContentPreferenceModel.fit(liked=liked, disliked=disliked)
-    assert m.version == "content-sim-v1"
+    assert m.version == "content-sim-v2"
     like_score = np.mean([m.score(v) for _, _, v in liked])
     dis_score = np.mean([m.score(v) for _, _, v in disliked])
     assert like_score > dis_score

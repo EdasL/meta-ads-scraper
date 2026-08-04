@@ -51,7 +51,7 @@ def test_rated_excluded_unrated_ranked():
         versions = [r[0] for r in conn.execute(text(
             "SELECT DISTINCT model_version FROM frontend.preference_scores "
             "WHERE user_email=:e"), {"e": EMAIL})]
-        assert versions == ["content-sim-v1"]      # 10 likes -> active model, not coldstart
+        assert versions == ["content-sim-v2"]      # 10 likes -> active model, not coldstart
         rank = {a: q for a, q in conn.execute(text(
             "SELECT advertiser_id, queue_rank FROM frontend.preference_scores "
             "WHERE user_email=:e"), {"e": EMAIL})}
