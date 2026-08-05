@@ -20,6 +20,7 @@ from datetime import date
 from sqlalchemy import text
 
 from agf.db.engine import begin, get_engine
+from agf.discovery.keeper_history import refresh_one_advertiser
 from agf.enrich_full.run_enrich import EnrichDeps, enrich_gem
 from agf.scoring.run_scoring import refresh_emerging_matview, score_all
 from agf.workers.main import prefetch_creative_urls
@@ -82,10 +83,39 @@ def _build_deps(extractor, http_client, creative_urls):
     )
 
 
+def _refresh_ads_listing(engine, advertiser_id, *, extractor,
+                         pages=None, timeout=None):
+    """Fresh-listing phase for "Refresh data": re-scrape the advertiser's Ad
+    Library listing so new ads appear and vanished ones flip inactive, before
+    enrich_gem reads public.ads. Fail-soft by design — a Meta hiccup must never
+    fail the enrich job (it could not before this phase existed). The wait_for
+    budget keeps the phase inside enrich_one's 300s wall clock; EnrichDeadline
+    is a BaseException, so the broad `except Exception` cannot swallow the
+    process-wide deadline."""
+    pages = pages if pages is not None else int(os.environ.get("AGF_ENRICH_ADS_PAGES", "12"))
+    timeout = timeout if timeout is not None else float(os.environ.get("AGF_ENRICH_ADS_TIMEOUT", "120"))
+    with begin(engine) as conn:
+        page_id = conn.execute(
+            text("SELECT page_id FROM public.advertisers WHERE id=:a"),
+            {"a": advertiser_id}).scalar()
+    if not page_id:
+        return None
+    try:
+        return asyncio.run(asyncio.wait_for(
+            refresh_one_advertiser(engine, extractor, advertiser_id, page_id,
+                                   hist_pages=pages, flip_vanished=True),
+            timeout))
+    except Exception as e:
+        print(f"[enrich_one] ads listing refresh skipped: {type(e).__name__}: {e}",
+              file=sys.stderr)
+        return None
+
+
 def _default_enrich(engine, advertiser_id, *, extractor, http_client,
                     top_n=5, media_cap=120):
     """Production enrichment for one advertiser — same call shape as
     make_enrich_handler (asyncio.run around the async enrich_gem)."""
+    _refresh_ads_listing(engine, advertiser_id, extractor=extractor)
     # fbcdn signed URLs expire — prefetch fresh, OUTSIDE the enrich write txn.
     with begin(engine) as conn:
         creative_urls = prefetch_creative_urls(extractor, conn, [advertiser_id])
