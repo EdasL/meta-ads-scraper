@@ -533,6 +533,47 @@ type SavedGemRemoveIn struct {
 	UserEmail string `json:"user_email" binding:"required"`
 }
 
+// SavedAdIn is the upsert body for POST /api/saved-ads/:external_ad_id. The
+// client sends a render snapshot (saved_gems precedent); on a re-save the
+// original snapshot and saved_at win — there are no mutable annotations.
+type SavedAdIn struct {
+	UserEmail    string  `json:"user_email" binding:"required"`
+	AdvertiserID *int64  `json:"advertiser_id"`
+	PageName     *string `json:"page_name"`
+	AppName      *string `json:"app_name"`
+	Title        *string `json:"title"`
+	BodyText     *string `json:"body_text"`
+	MediaType    *string `json:"media_type"`
+	MediaS3Key   *string `json:"media_s3_key"`
+	LinkURL      *string `json:"link_url"`
+	CtaText      *string `json:"cta_text"`
+	AdStartedOn  *string `json:"ad_started_on" binding:"omitempty,datetime=2006-01-02"`
+	AdActive     *bool   `json:"ad_active"`
+}
+
+// SavedAdRemoveIn carries the owner for an unsave (mirrors SavedGemRemoveIn).
+type SavedAdRemoveIn struct {
+	UserEmail string `json:"user_email" binding:"required"`
+}
+
+// SavedAdRow is one saved ad as served by GET /api/saved-ads.
+type SavedAdRow struct {
+	UserEmail    string    `json:"user_email"`
+	ExternalAdID string    `json:"external_ad_id"`
+	AdvertiserID *int64    `json:"advertiser_id"`
+	PageName     *string   `json:"page_name"`
+	AppName      *string   `json:"app_name"`
+	Title        *string   `json:"title"`
+	BodyText     *string   `json:"body_text"`
+	MediaType    *string   `json:"media_type"`
+	MediaS3Key   *string   `json:"media_s3_key"`
+	LinkURL      *string   `json:"link_url"`
+	CtaText      *string   `json:"cta_text"`
+	AdStartedOn  *string   `json:"ad_started_on"`
+	AdActive     *bool     `json:"ad_active"`
+	SavedAt      time.Time `json:"saved_at"`
+}
+
 // RatingIn is the upsert body for POST /api/ratings/:advertiser_id.
 // rating "none" signals a delete (removes the row entirely).
 type RatingIn struct {

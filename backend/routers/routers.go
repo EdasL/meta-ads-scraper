@@ -25,6 +25,7 @@ func Init(r *gin.Engine) {
 	review := controllers.NewReviewController()
 	enrich := controllers.NewEnrichController()
 	saved := controllers.NewSavedGemsController()
+	savedAds := controllers.NewSavedAdsController()
 	savedGroups := controllers.NewSavedGroupsController()
 	likedGems := controllers.NewLikedGemsController()
 	ratings := controllers.NewRatingsController()
@@ -63,6 +64,10 @@ func Init(r *gin.Engine) {
 		api.GET("/saved-gems", saved.List)
 		api.POST("/saved-gems/:advertiser_id", middlewares.RequireToken(), saved.Save)
 		api.POST("/saved-gems/:advertiser_id/remove", middlewares.RequireToken(), saved.Remove)
+		// Saved ads (the ad-level sibling of saved gems). Same auth shape.
+		api.GET("/saved-ads", savedAds.List)
+		api.POST("/saved-ads/:external_ad_id", middlewares.RequireToken(), savedAds.Save)
+		api.POST("/saved-ads/:external_ad_id/remove", middlewares.RequireToken(), savedAds.Remove)
 		// Folders for /saved. Identity comes from KeyAuth (never a param);
 		// an unknown or foreign :id is a 404 so existence stays hidden.
 		api.GET("/saved-groups", savedGroups.List)
