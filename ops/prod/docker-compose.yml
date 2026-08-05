@@ -126,6 +126,34 @@ services:
       cloud-sql-proxy:
         condition: service_started
 
+  # On-demand "Refresh data" consumer: drains 'queued' public.enrich_jobs rows
+  # (inserted by the Go API, which runs in a pod with no Python) and runs the
+  # one-shot enrichment CLI for each. This service was hand-added to the live VM
+  # on 2026-07-10 and only landed here on 2026-08-05 — a fresh provision from
+  # this file before that shipped the daemon dark. Separate from `pipeline`
+  # (public.pipeline_jobs); only this path re-scrapes the Ad Library listing.
+  enrich:
+    image: europe-west1-docker.pkg.dev/peon-489013/agf/worker:latest
+    restart: unless-stopped
+    init: true
+    command: python -m agf.enrich_full.queue_daemon
+    environment:
+      AGF_DATABASE_URL: ${AGF_DATABASE_URL}
+      AGF_PROXIES: ${AGF_PROXIES}
+      AGF_FUNNEL_PROXY: ${AGF_FUNNEL_PROXY:-}
+      S3_ENDPOINT: ${S3_ENDPOINT}
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      S3_BUCKET: ${S3_BUCKET}
+      # Fresh-listing phase of "Refresh data": pages pulled per click and the
+      # budget for the listing fetch itself (the rest of the phase is bounded by
+      # enrich_one's 300s SIGALRM).
+      AGF_ENRICH_ADS_PAGES: ${AGF_ENRICH_ADS_PAGES:-12}
+      AGF_ENRICH_ADS_TIMEOUT: ${AGF_ENRICH_ADS_TIMEOUT:-120}
+    depends_on:
+      cloud-sql-proxy:
+        condition: service_started
+
   # Continuous enrich consumer: drains public.pipeline_jobs (kind='enrich') that the
   # worker tick enqueues, running enrich_one per advertiser as a subprocess (crash
   # isolation) with SKIP-LOCKED claim + lease/reaper crash recovery. Needs the full
