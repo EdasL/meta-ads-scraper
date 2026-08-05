@@ -659,3 +659,45 @@ func countRows(g *gorm.DB, query string, args ...any) int {
 	must(g.Raw(query, args...).Scan(&n).Error)
 	return n
 }
+
+func TestListHuntResultsFallsBackToAppsForIconAndTagline(t *testing.T) {
+	if ratingsDB == nil {
+		t.Skip("AGF_IT_DB_URL not set")
+	}
+	g := ratingsDB
+	ctx := context.Background()
+	cleanHunts(g)
+	t.Cleanup(func() { cleanHunts(g) })
+
+	const store, storeID = "ios", "hunt_fallback_555"
+	must(g.Exec(`DELETE FROM public.apps WHERE store = ? AND store_id = ?`, store, storeID).Error)
+	t.Cleanup(func() {
+		must(g.Exec(`DELETE FROM public.apps WHERE store = ? AND store_id = ?`, store, storeID).Error)
+	})
+	must(g.Exec(`INSERT INTO public.apps (store, store_id, name, icon_url, description)
+		VALUES (?, ?, 'Fallback App', 'https://cdn.example/icon.png', E'First   line of copy\nsecond line')`,
+		store, storeID).Error)
+
+	huntID, err := repositories.CreateHunt(ctx, g, huntTestEmail, "fallback")
+	require.NoError(t, err)
+	terms, _ := json.Marshal([]string{"fallback term"})
+	comps, _ := json.Marshal([]string{})
+	roundID, err := repositories.InsertHuntRound(ctx, g, huntID, nil, terms, comps, nil, nil)
+	require.NoError(t, err)
+
+	// A kept store result with NO advertiser and NO matview row: icon and
+	// tagline must fall back to public.apps matched on (store, store_id), and
+	// the tagline derivation must collapse whitespace and stop at line one.
+	must(g.Exec(`INSERT INTO frontend.hunt_results
+		(round_id, page_id, page_name, store, store_id, link_url, source_term, was_new, triage)
+		VALUES (?, 'HUNTC_PG1', 'Fallback Co', ?, ?, 'https://x', 'fallback term', true, 'kept')`,
+		roundID, store, storeID).Error)
+
+	rows, err := repositories.ListHuntResults(ctx, g, huntID, huntTestEmail)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.NotNil(t, rows[0].IconURL, "icon falls back to public.apps")
+	require.Equal(t, "https://cdn.example/icon.png", *rows[0].IconURL)
+	require.NotNil(t, rows[0].Tagline, "tagline derives from apps.description")
+	require.Equal(t, "First line of copy", *rows[0].Tagline)
+}

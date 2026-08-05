@@ -135,9 +135,11 @@ func ListHuntRounds(ctx context.Context, g *gorm.DB, huntID int) ([]models.HuntR
 
 // ListHuntResults returns every result across a hunt's rounds, joined at read
 // time with the kept advertiser's GemScore, its Discover-feed app data
-// (icon/tagline/cohort; null until the matview carries it), the SERP page depth,
-// and the CALLER's saved/rating state (email-scoped — another user's saves never
-// leak).
+// (icon/tagline/cohort), the SERP page depth, and the CALLER's saved/rating
+// state (email-scoped — another user's saves never leak). Icon and tagline
+// fall back from the matview to public.apps (matched on the result's own
+// store/store_id) so keepers show media as soon as triage promotes them,
+// without waiting for the next matview refresh.
 func ListHuntResults(ctx context.Context, g *gorm.DB, huntID int, email string) ([]models.HuntResultRow, error) {
 	var rows []models.HuntResultRow
 	err := db.WithReadTx(ctx, g, func(tx *gorm.DB) error {
@@ -147,7 +149,12 @@ func ListHuntResults(ctx context.Context, g *gorm.DB, huntID int, email string) 
 			        eff.adv_id AS kept_advertiser_id,
 			        hr.relevance, hr.relevance_note, hr.page,
 			        s.gem_score,
-			        esa.app_name, esa.icon_url, esa.tagline, esa.cohort,
+			        esa.app_name,
+			        COALESCE(esa.icon_url, papp.icon_url) AS icon_url,
+			        COALESCE(esa.tagline, nullif(left(regexp_replace(
+			            split_part(papp.description, E'\n', 1), '\s+', ' ', 'g'
+			        ), 200), '')) AS tagline,
+			        esa.cohort,
 			        (sg.advertiser_id IS NOT NULL) AS saved,
 			        ar.rating
 			 FROM frontend.hunt_results hr
@@ -161,6 +168,7 @@ func ListHuntResults(ctx context.Context, g *gorm.DB, huntID int, email string) 
 			 ) eff ON true
 			 LEFT JOIN adtech.advertiser_scores s ON s.advertiser_id = eff.adv_id
 			 LEFT JOIN frontend.emerging_scaling_apps esa ON esa.advertiser_id = eff.adv_id
+			 LEFT JOIN public.apps papp ON papp.store = hr.store AND papp.store_id = hr.store_id
 			 LEFT JOIN frontend.saved_gems sg
 			        ON sg.advertiser_id = eff.adv_id AND lower(sg.user_email) = lower(?)
 			 LEFT JOIN frontend.app_ratings ar
