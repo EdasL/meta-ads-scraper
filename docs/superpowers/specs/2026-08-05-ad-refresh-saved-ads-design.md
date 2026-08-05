@@ -82,9 +82,9 @@ CREATE TABLE IF NOT EXISTS frontend.saved_ads (
     title           TEXT,
     body_text       TEXT,
     media_type      TEXT,            -- Creative.type, drives card rendering
-    media_s3_key    TEXT,            -- GCS key; Meta snapshot URLs expire, so
-                                     -- the saved card prefers our stored media
-    snapshot_image_url TEXT,
+    media_s3_key    TEXT,            -- our stored media key; the client derives
+                                     -- the display URL via the media proxy
+                                     -- (Meta CDN URLs expire, so no URL column)
     link_url        TEXT,
     cta_text        TEXT,
     ad_started_on   DATE,
