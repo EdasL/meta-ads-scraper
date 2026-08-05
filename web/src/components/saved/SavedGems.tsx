@@ -11,9 +11,11 @@ import {
   type SavedGroup,
 } from "@/lib/saved";
 import { createGroup, deleteGroup, renameGroup, useLikedGems, useSavedGroups, useSavedList } from "@/lib/useSaved";
+import { useSavedAdsList } from "@/lib/useSavedAds";
 import { EmptyState } from "@/components/ui";
 import { FolderMenu } from "./FolderMenu";
 import { FolderTiles } from "./FolderTiles";
+import { SavedAdCard } from "./SavedAdCard";
 import { LikedRow, SavedCard } from "./SavedCard";
 
 const page: React.CSSProperties = { maxWidth: 1100, margin: "0 auto", padding: "24px 22px 80px" };
@@ -26,14 +28,15 @@ const selectStyle: React.CSSProperties = {
   padding: "5px 8px",
 };
 
-/** The open collection: a folder id, the built-in Liked sentinel, or none. */
-type ActiveView = number | "liked" | null;
+/** The open collection: a folder id, a built-in sentinel (Liked, Ads), or none. */
+type ActiveView = number | "liked" | "ads" | null;
 
 function folderFromLocation(): ActiveView {
   if (typeof window === "undefined") return null;
   const raw = new URLSearchParams(window.location.search).get("folder");
   if (!raw) return null;
   if (raw === "liked") return "liked";
+  if (raw === "ads") return "ads";
   const id = Number(raw);
   return Number.isFinite(id) && id !== 0 ? id : null;
 }
@@ -114,6 +117,7 @@ export function SavedGems() {
   const folders = sortGroups(useSavedGroups());
   const [tag, setTag] = useState("");
   const liked = useLikedGems();
+  const savedAds = useSavedAdsList();
   const [active, setActive] = useState<ActiveView>(folderFromLocation);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [remapSeq, setRemapSeq] = useState(0);
@@ -161,6 +165,7 @@ export function SavedGems() {
   // Unknown/foreign ?folder id (or pre-hydration): the top level renders.
   const openFolder = typeof active === "number" ? folders.find((f) => f.id === active) : undefined;
   const likedOpen = active === "liked";
+  const adsOpen = active === "ads";
 
   const visible = openFolder ? memberOfFolder(saved, openFolder.id) : saved;
   const filtered = tag ? visible.filter((g) => g.tags.includes(tag)) : visible;
@@ -180,9 +185,9 @@ export function SavedGems() {
     if (active === folder.id) setActive(null);
   };
 
-  // The full empty state only when there is truly nothing to show — likes and
-  // folders keep the page alive even with zero saves.
-  if (saved.length === 0 && liked.length === 0 && folders.length === 0) {
+  // The full empty state only when there is truly nothing to show — likes,
+  // folders and saved ads keep the page alive even with zero saves.
+  if (saved.length === 0 && liked.length === 0 && folders.length === 0 && savedAds.length === 0) {
     return (
       <main style={page}>
         <h1 className="t-2xl w-heavy" style={{ margin: 0 }}>My gems</h1>
@@ -207,6 +212,38 @@ export function SavedGems() {
       </select>
     </label>
   );
+
+  // Saved ads carry no tags, so the tag filter has nothing to act on here.
+  if (adsOpen) {
+    return (
+      <main style={page}>
+        <button
+          type="button"
+          onClick={() => setActive(null)}
+          className="eyebrow"
+          style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "transparent", border: "none", color: "var(--muted)", padding: 0, cursor: "pointer", marginBottom: 10 }}
+        >
+          <IconArrowLeft size={14} aria-hidden />
+          All gems
+        </button>
+        <header style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 18 }}>
+          <h1 className="t-2xl w-heavy" style={{ margin: 0 }}>Ads</h1>
+          <span className="nums t-sm" style={{ color: "var(--muted)" }}>{savedAds.length}</span>
+        </header>
+        {savedAds.length === 0 ? (
+          <p className="t-sm" style={{ color: "var(--muted)", marginTop: 8 }}>
+            No saved ads yet. Save one with the heart on a gem&apos;s ads.
+          </p>
+        ) : (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(230px, 1fr))", gap: 12 }}>
+            {savedAds.map((a) => (
+              <SavedAdCard key={a.external_ad_id} ad={a} />
+            ))}
+          </div>
+        )}
+      </main>
+    );
+  }
 
   if (likedOpen) {
     // Saved members honor the tag filter; liked-but-unsaved rows carry no
@@ -296,9 +333,11 @@ export function SavedGems() {
         folders={folders}
         counts={counts}
         likedCount={liked.length}
+        adsCount={savedAds.length}
         keyFor={(id) => stableKeys.get(id) ?? id}
         onOpen={setActive}
         onOpenLiked={() => setActive("liked")}
+        onOpenAds={() => setActive("ads")}
         onCreate={addFolder}
       />
 

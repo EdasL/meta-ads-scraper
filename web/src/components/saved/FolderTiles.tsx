@@ -1,6 +1,6 @@
 "use client";
 
-import { IconFolder, IconFolderPlus, IconHeart } from "@tabler/icons-react";
+import { IconAd, IconFolder, IconFolderPlus, IconHeart } from "@tabler/icons-react";
 import type { SavedGroup } from "@/lib/saved";
 
 const tile: React.CSSProperties = {
@@ -16,24 +16,28 @@ const tile: React.CSSProperties = {
   textAlign: "left",
 };
 
-/** The "Folders" tile row on /saved: the built-in Liked collection pinned
- * first, then one tile per folder (name + gem count), then a New folder tile.
- * Tiles navigate into the folder view. */
+/** The "Folders" tile row on /saved: the built-in Liked and Ads collections
+ * pinned first, then one tile per folder (name + gem count), then a New folder
+ * tile. Tiles navigate into the folder view. */
 export function FolderTiles({
   folders,
   counts,
   likedCount,
+  adsCount,
   keyFor,
   onOpen,
   onOpenLiked,
+  onOpenAds,
   onCreate,
 }: {
   folders: SavedGroup[];
   counts: Map<number, number>;
   likedCount: number;
+  adsCount: number;
   keyFor: (id: number) => number;
   onOpen: (id: number) => void;
   onOpenLiked: () => void;
+  onOpenAds: () => void;
   onCreate: () => void;
 }) {
   return (
@@ -52,6 +56,13 @@ export function FolderTiles({
           Liked
         </span>
         <span className="nums t-xs" style={{ color: "var(--muted)", flexShrink: 0 }}>{likedCount}</span>
+      </button>
+      <button type="button" onClick={onOpenAds} className="ft-press" style={tile}>
+        <IconAd size={16} aria-hidden style={{ flexShrink: 0 }} />
+        <span className="t-sm w-strong" style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          Ads
+        </span>
+        <span className="nums t-xs" style={{ color: "var(--muted)", flexShrink: 0 }}>{adsCount}</span>
       </button>
       {folders.map((f) => (
         <button
