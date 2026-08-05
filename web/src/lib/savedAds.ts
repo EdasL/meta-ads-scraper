@@ -2,8 +2,8 @@
 
 /**
  * Saved ads store — the ad-level sibling of saved.ts, flat by design (no
- * folders, no ratings). Optimistic writes: the list updates immediately and
- * reverts if the API call fails.
+ * folders, no ratings). Optimistic writes: the list updates immediately, and a
+ * failed write refetches the authoritative list from the server.
  */
 import { getSavedAds, removeSavedAd, upsertSavedAd } from "@/lib/api";
 import type { ApiSavedAd, ApiSavedAdIn } from "@/types/contracts";
@@ -12,7 +12,16 @@ type Listener = () => void;
 
 let userEmail: string | null = null;
 let rows: ApiSavedAd[] = [];
-let hydrated = false;
+/** The user whose list is hydrated OR currently being fetched — the synchronous
+ *  dedupe key, so overlapping hydrate() calls collapse into one request
+ *  (saved.ts's `hydratedKey`). Null means "not hydrated, no fetch in flight". */
+let hydratedKey: string | null = null;
+/** True while a getSavedAds() is awaiting, so onSyncError can queue a follow-up
+ *  instead of racing a second request against it. */
+let fetching = false;
+/** A write failed while a fetch was in flight: that fetch may have been issued
+ *  before the failed write landed, so run exactly one more after it. */
+let resyncQueued = false;
 const listeners = new Set<Listener>();
 
 const EMPTY: ApiSavedAd[] = [];
@@ -23,7 +32,7 @@ function emit() {
 
 export function subscribeSavedAds(l: Listener): () => void {
   listeners.add(l);
-  if (!hydrated) void hydrate();
+  void hydrate(); // hydrate() dedupes on hydratedKey, so this is cheap per subscriber
   return () => {
     listeners.delete(l);
   };
@@ -38,14 +47,33 @@ export function getSavedAdsServerSnapshot(): ApiSavedAd[] {
 }
 
 async function hydrate() {
+  const key = userEmail ?? "";
+  // Synchronous dedupe, before any await: a fetch for this same user already
+  // owns the key, so concurrent callers collapse into it rather than racing
+  // two GETs whose last-resolving response would win (saved.ts:238-241).
+  if (hydratedKey === key) return;
+  hydratedKey = key;
   if (!userEmail) return; // wait until the session user is known
-  hydrated = true;
-  try {
-    rows = await getSavedAds(userEmail);
-    emit();
-  } catch {
-    hydrated = false; // retry on the next subscribe
-  }
+  const email = userEmail; // captured while narrowed, before any await
+
+  do {
+    resyncQueued = false;
+    fetching = true;
+    try {
+      const fetched = await getSavedAds(email);
+      if (userEmail !== email) return; // user switched mid-flight — drop the stale response
+      rows = fetched;
+      emit();
+    } catch (e) {
+      console.error("savedAds: hydrate failed", e);
+      // Only clear the key we still own: on a mid-flight user switch the new
+      // hydrate has already claimed it and must not be cancelled.
+      if (userEmail === email) hydratedKey = null; // allow a retry on the next subscribe
+      return;
+    } finally {
+      fetching = false;
+    }
+  } while (resyncQueued);
 }
 
 /**
@@ -57,7 +85,14 @@ async function hydrate() {
  */
 function onSyncError(e: unknown) {
   console.error("savedAds: backend sync failed", e);
-  hydrated = false; // force the refetch below past the subscribe-time guard
+  if (fetching) {
+    // A GET is already out, but it may have been issued before this write
+    // failed, so its response can predate the server's real state. Queue one
+    // more pass instead of starting an overlapping request.
+    resyncQueued = true;
+    return;
+  }
+  hydratedKey = null; // force the refetch past hydrate()'s dedupe guard
   void hydrate();
 }
 
@@ -66,7 +101,7 @@ export function setSavedAdsUser(email: string | null) {
   if (email === userEmail) return;
   userEmail = email;
   rows = [];
-  hydrated = false;
+  hydratedKey = null;
   emit();
   if (email) void hydrate();
 }
