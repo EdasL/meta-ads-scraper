@@ -16,12 +16,16 @@ let rows: ApiSavedAd[] = [];
  *  dedupe key, so overlapping hydrate() calls collapse into one request
  *  (saved.ts's `hydratedKey`). Null means "not hydrated, no fetch in flight". */
 let hydratedKey: string | null = null;
-/** True while a getSavedAds() is awaiting, so onSyncError can queue a follow-up
- *  instead of racing a second request against it. */
-let fetching = false;
-/** A write failed while a fetch was in flight: that fetch may have been issued
- *  before the failed write landed, so run exactly one more after it. */
-let resyncQueued = false;
+/** The user whose getSavedAds() is currently awaiting, or null when none is.
+ *  Scoped to an owner rather than a bare boolean because a user switch leaves
+ *  two hydrates briefly live at once: a bare flag lets the older one's `finally`
+ *  clear the newer one's marker, after which a failed write sees "no fetch in
+ *  flight" and starts a third overlapping request. */
+let fetchingFor: string | null = null;
+/** The user a failed write asked to resync while their fetch was in flight:
+ *  that fetch may have been issued before the write landed, so run exactly one
+ *  more pass after it. Keyed by owner for the same reason as `fetchingFor`. */
+let resyncQueuedFor: string | null = null;
 const listeners = new Set<Listener>();
 
 const EMPTY: ApiSavedAd[] = [];
@@ -57,8 +61,8 @@ async function hydrate() {
   const email = userEmail; // captured while narrowed, before any await
 
   do {
-    resyncQueued = false;
-    fetching = true;
+    if (resyncQueuedFor === email) resyncQueuedFor = null; // consume only our own request
+    fetchingFor = email;
     try {
       const fetched = await getSavedAds(email);
       if (userEmail !== email) return; // user switched mid-flight — drop the stale response
@@ -71,9 +75,10 @@ async function hydrate() {
       if (userEmail === email) hydratedKey = null; // allow a retry on the next subscribe
       return;
     } finally {
-      fetching = false;
+      // Same ownership rule: a newer hydrate may already have claimed the slot.
+      if (fetchingFor === email) fetchingFor = null;
     }
-  } while (resyncQueued);
+  } while (resyncQueuedFor === email);
 }
 
 /**
@@ -85,11 +90,12 @@ async function hydrate() {
  */
 function onSyncError(e: unknown) {
   console.error("savedAds: backend sync failed", e);
-  if (fetching) {
-    // A GET is already out, but it may have been issued before this write
-    // failed, so its response can predate the server's real state. Queue one
-    // more pass instead of starting an overlapping request.
-    resyncQueued = true;
+  const email = userEmail;
+  if (email && fetchingFor === email) {
+    // A GET for THIS user is already out, but it may have been issued before
+    // this write failed, so its response can predate the server's real state.
+    // Queue one more pass instead of starting an overlapping request.
+    resyncQueuedFor = email;
     return;
   }
   hydratedKey = null; // force the refetch past hydrate()'s dedupe guard
