@@ -132,7 +132,9 @@ snapshot in the save body (`SavedAdIn`), exactly like `SavedGemIn`.
 - Tile label: `Ads`
 - Empty state: `No saved ads yet. Save one with the heart on a gem's ads.`
 - Heart aria-labels: `Save ad` / `Remove from saved` (existing string reused)
-- Error toast on failed save (matches gems): `Couldn't save.`
+- Failed save: no toast. There is no toast system, and saved.ts has none for
+  gems either. The optimistic heart reverts by rehydrating from the server, so
+  the UI settles back to the true saved state without a message.
 
 ## Out of scope (v1, deliberate)
 
