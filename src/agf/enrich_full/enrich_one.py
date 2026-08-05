@@ -91,7 +91,11 @@ def _refresh_ads_listing(engine, advertiser_id, *, extractor,
     fail the enrich job (it could not before this phase existed). The wait_for
     budget keeps the phase inside enrich_one's 300s wall clock; EnrichDeadline
     is a BaseException, so the broad `except Exception` cannot swallow the
-    process-wide deadline."""
+    process-wide deadline.
+
+    The AGF_ENRICH_ADS_TIMEOUT budget bounds only the listing fetch (the sole
+    await); the synchronous DB writes that follow it inside
+    refresh_one_advertiser are bounded only by the process-wide 300s SIGALRM."""
     pages = pages if pages is not None else int(os.environ.get("AGF_ENRICH_ADS_PAGES", "12"))
     timeout = timeout if timeout is not None else float(os.environ.get("AGF_ENRICH_ADS_TIMEOUT", "120"))
     with begin(engine) as conn:
@@ -101,10 +105,16 @@ def _refresh_ads_listing(engine, advertiser_id, *, extractor,
     if not page_id:
         return None
     try:
-        return asyncio.run(asyncio.wait_for(
+        res = asyncio.run(asyncio.wait_for(
             refresh_one_advertiser(engine, extractor, advertiser_id, page_id,
                                    hist_pages=pages, flip_vanished=True),
             timeout))
+        if res:
+            print(f"[enrich_one] ads listing refreshed: "
+                  f"stored={res.get('ads_stored')} "
+                  f"truncated={res.get('truncated')} "
+                  f"flipped={res.get('flipped')}", file=sys.stderr)
+        return res
     except Exception as e:
         print(f"[enrich_one] ads listing refresh skipped: {type(e).__name__}: {e}",
               file=sys.stderr)
@@ -112,10 +122,17 @@ def _refresh_ads_listing(engine, advertiser_id, *, extractor,
 
 
 def _default_enrich(engine, advertiser_id, *, extractor, http_client,
-                    top_n=5, media_cap=120):
+                    top_n=5, media_cap=120, ads_refresh=True):
     """Production enrichment for one advertiser — same call shape as
-    make_enrich_handler (asyncio.run around the async enrich_gem)."""
-    _refresh_ads_listing(engine, advertiser_id, extractor=extractor)
+    make_enrich_handler (asyncio.run around the async enrich_gem).
+
+    ads_refresh gates the listing-scrape phase to the on-demand "Refresh data"
+    path (--status-table enrich_jobs). The continuous pipeline lane
+    (pipeline_daemon, --status-table pipeline_jobs) passes False: it runs on
+    every due advertiser, so the extra Meta listing pull would double its proxy
+    spend and push its p95 toward the 300s SIGALRM for no user-visible gain."""
+    if ads_refresh:
+        _refresh_ads_listing(engine, advertiser_id, extractor=extractor)
     # fbcdn signed URLs expire — prefetch fresh, OUTSIDE the enrich write txn.
     with begin(engine) as conn:
         creative_urls = prefetch_creative_urls(extractor, conn, [advertiser_id])
@@ -212,6 +229,10 @@ def main(argv=None):
     signal.signal(signal.SIGALRM, _on_alarm)
     signal.alarm(args.timeout)
 
+    # The fresh-listing scrape belongs to the on-demand "Refresh data" click
+    # only; the continuous pipeline lane (--status-table pipeline_jobs) skips it.
+    ads_refresh = args.status_table == "enrich_jobs"
+
     import httpx
     from agf.extract.facade import Extractor
     extractor = Extractor()
@@ -223,7 +244,8 @@ def main(argv=None):
             job_id=args.job_id,
             enrich_call=lambda eng, aid: _default_enrich(
                 eng, aid, extractor=extractor, http_client=http_client,
-                top_n=args.top_n, media_cap=args.media_cap),
+                top_n=args.top_n, media_cap=args.media_cap,
+                ads_refresh=ads_refresh),
             score_call=_default_score,
             status_table=args.status_table,
             mark_crawled_on_success=args.mark_crawled,

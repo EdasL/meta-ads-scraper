@@ -112,3 +112,45 @@ def test_default_enrich_runs_listing_phase_first(monkeypatch, _migrated_engine):
 
     enrich_one._default_enrich(_migrated_engine, 1, extractor=None, http_client=None)
     assert calls == ["listing", "prefetch", "enrich"]
+
+
+def test_default_enrich_skips_listing_when_ads_refresh_false(monkeypatch, _migrated_engine):
+    """The continuous pipeline lane must never pay for the listing scrape."""
+    def boom(*a, **k):
+        raise AssertionError("_refresh_ads_listing must not be called")
+    monkeypatch.setattr(enrich_one, "_refresh_ads_listing", boom)
+
+    calls = []
+    monkeypatch.setattr(enrich_one, "prefetch_creative_urls",
+                        lambda *a, **k: (calls.append("prefetch"), {})[1])
+    monkeypatch.setattr(enrich_one, "_build_deps", lambda *a, **k: None)
+
+    async def fake_enrich_gem(conn, aid, **kw):
+        calls.append("enrich")
+    monkeypatch.setattr(enrich_one, "enrich_gem", fake_enrich_gem)
+
+    enrich_one._default_enrich(_migrated_engine, 1, extractor=None,
+                               http_client=None, ads_refresh=False)
+    assert calls == ["prefetch", "enrich"]
+
+
+def _main_ads_refresh_flag(monkeypatch, status_table):
+    """Run main() with run_job/_default_enrich stubbed; return the ads_refresh
+    kwarg main() wired into the enrich_call lambda."""
+    seen = {}
+    monkeypatch.setattr(enrich_one, "get_engine", lambda *a, **k: object())
+    monkeypatch.setattr(enrich_one, "_default_enrich",
+                        lambda eng, aid, **kw: seen.update(kw))
+
+    def fake_run_job(engine, *, advertiser_id, job_id, enrich_call, **kw):
+        enrich_call(engine, advertiser_id)
+    monkeypatch.setattr(enrich_one, "run_job", fake_run_job)
+
+    enrich_one.main(["--advertiser-id", "1", "--job-id", "2",
+                     "--status-table", status_table])
+    return seen["ads_refresh"]
+
+
+def test_main_enables_ads_refresh_only_for_enrich_jobs(monkeypatch):
+    assert _main_ads_refresh_flag(monkeypatch, "enrich_jobs") is True
+    assert _main_ads_refresh_flag(monkeypatch, "pipeline_jobs") is False
