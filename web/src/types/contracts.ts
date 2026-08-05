@@ -6,6 +6,13 @@
  */
 
 /**
+ * Saved ads are stored and read in their raw wire shape (no UI adapter), so the
+ * `Api*` types are re-exported here for components that import from this module.
+ * They are defined in `./api` with the other wire shapes.
+ */
+export type { ApiSavedAd, ApiSavedAdIn } from "./api";
+
+/**
  * Plain-language explainer for a gem — three short fields, LLM-generated on
  * the Go backend (grounded in the scraped ad copy + app-store description).
  * Null until the explainer runner has produced it.
@@ -93,6 +100,9 @@ export interface Creative {
   external_ad_id?: string;
   cta_text?: string;
   link_url?: string;
+  /** S3 object key for the creative's media — kept alongside the resolved
+   *  `snapshot_image_url` so a save can persist the key, not a proxy URL. */
+  s3_key?: string;
   /** ISO date the ad started running (ads.start_date). */
   ad_started_on?: string;
   /** ISO date the ad stopped (ads.end_date) — meaningful only when not active. */

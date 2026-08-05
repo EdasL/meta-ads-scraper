@@ -15,6 +15,8 @@ import type {
   ApiLikedGem,
   ApiPreferenceCardRow,
   ApiReviewQueueRow,
+  ApiSavedAd,
+  ApiSavedAdIn,
   ApiSavedGem,
   ApiSavedGemIn,
   ApiSavedGroup,
@@ -190,6 +192,28 @@ export async function upsertSavedGem(advertiserId: number, body: ApiSavedGemIn):
 
 export async function removeSavedGem(advertiserId: number, userEmail: string): Promise<void> {
   await live(`/saved-gems/${advertiserId}/remove`, {
+    method: "POST",
+    body: JSON.stringify({ user_email: userEmail }),
+  });
+}
+
+// --- Saved ads (ad-level watchlist) ---
+// Same shape as the saved-gem calls: backend-persisted, keyed by user email,
+// but keyed on the Meta ad id rather than an advertiser id.
+
+export async function getSavedAds(userEmail: string): Promise<ApiSavedAd[]> {
+  return live<ApiSavedAd[]>(`/saved-ads?user_email=${encodeURIComponent(userEmail)}`);
+}
+
+export async function upsertSavedAd(externalAdId: string, body: ApiSavedAdIn): Promise<void> {
+  await live(`/saved-ads/${encodeURIComponent(externalAdId)}`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function removeSavedAd(externalAdId: string, userEmail: string): Promise<void> {
+  await live(`/saved-ads/${encodeURIComponent(externalAdId)}/remove`, {
     method: "POST",
     body: JSON.stringify({ user_email: userEmail }),
   });

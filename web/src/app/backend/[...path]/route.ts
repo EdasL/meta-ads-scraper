@@ -29,6 +29,7 @@ const ALLOWED_RESOURCES = new Set([
   "preference-queue",
   "enrich", // /enrich/:id (GET status, POST trigger)
   "saved-gems", // /saved-gems (+ /:id, /:id/remove)
+  "saved-ads", // /saved-ads (+ /:id, /:id/remove)
   "saved-groups", // /saved-groups (+ /:id/update, /:id/remove, /:id/gems)
   "liked-gems", // /liked-gems (built-in Liked collection)
   "ratings", // /ratings (+ /:id)

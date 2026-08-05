@@ -215,6 +215,7 @@ function adaptCreative(c: ApiCreativeInfo, i: number, mediaUrl: MediaUrl): Creat
     // the API returns an S3 key; the media proxy serves the bytes. The Dossier
     // falls back to a glyph if the image 404s (e.g. proxy not deployed yet).
     snapshot_image_url: c.s3_key ? mediaUrl(c.s3_key) : undefined,
+    s3_key: c.s3_key ?? undefined,
     external_ad_id: c.external_ad_id ?? undefined,
     cta_text: c.cta_text ?? undefined,
     link_url: c.link_url ?? undefined,

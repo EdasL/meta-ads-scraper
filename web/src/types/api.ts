@@ -305,6 +305,31 @@ export interface ApiSavedGemIn {
   confidence: number | null;
 }
 
+/** `SavedAdRow` (backend models.go) — one saved ad as served by
+ * GET /saved-ads (a `frontend.saved_ads` row). Flat by design: saved ads have
+ * no folders and no ratings, unlike saved gems. */
+export interface ApiSavedAd {
+  user_email: string;
+  external_ad_id: string;
+  advertiser_id?: number | null;
+  page_name?: string | null;
+  app_name?: string | null;
+  title?: string | null;
+  body_text?: string | null;
+  media_type?: string | null;
+  media_s3_key?: string | null;
+  link_url?: string | null;
+  cta_text?: string | null;
+  ad_started_on?: string | null;
+  ad_active?: boolean | null;
+  saved_at: string;
+}
+
+/** `SavedAdIn` (backend models.go) — the upsert body for
+ * POST /saved-ads/:external_ad_id. The ad id rides the path, `saved_at` is
+ * server-set. */
+export type ApiSavedAdIn = Omit<ApiSavedAd, "external_ad_id" | "saved_at">;
+
 /** `PreferenceQueueRow` (backend preference_queue.go) — one ranked card from
  * GET /preference-queue. Extends the standard shortlist row with the model's
  * predicted like probability and a plain-English reason. */
