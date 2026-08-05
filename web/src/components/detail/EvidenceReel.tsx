@@ -1,10 +1,12 @@
 "use client";
 
 import { useState } from "react";
+import { IconHeart, IconHeartFilled } from "@tabler/icons-react";
 import { SketchLineChart, type ChartPoint, type ChartTooltipItem } from "@/components/sketch";
 import { trendFromScaling } from "@/lib/why";
 import { adRunLine, creativeMetaLine, monthDayLabel, monthYearLabel } from "@/lib/format";
 import { adLibraryAdUrl, adLibraryPageUrl, bareDomain, externalHref } from "@/lib/links";
+import { saveAd, unsaveAd, useIsAdSaved } from "@/lib/useSavedAds";
 import type { Creative, GemDossier } from "@/types/contracts";
 
 /**
@@ -69,8 +71,9 @@ function sentenceCase(s: string): string {
   return t ? t[0].toUpperCase() + t.slice(1).toLowerCase() : t;
 }
 
-function AdCard({ c }: { c: Creative }) {
+function AdCard({ c, gem }: { c: Creative; gem: GemDossier }) {
   const [broken, setBroken] = useState(false);
+  const saved = useIsAdSaved(c.external_ad_id);
   const hasMedia = !!c.snapshot_image_url && !broken;
   const alt = c.title ?? c.body_text ?? "ad creative";
   const run = adRunLine(c);
@@ -80,6 +83,28 @@ function AdCard({ c }: { c: Creative }) {
     publisher_platforms: c.publisher_platforms,
   });
   const ctaDomain = c.link_url ? bareDomain(c.link_url).split("/")[0] : "";
+  const onHeart = () => {
+    if (!c.external_ad_id) return;
+    if (saved) {
+      unsaveAd(c.external_ad_id);
+      return;
+    }
+    saveAd(c.external_ad_id, {
+      advertiser_id: gem.advertiser_id,
+      page_name: gem.page_name,
+      app_name: gem.app_name,
+      title: c.title ?? null,
+      body_text: c.body_text ?? null,
+      media_type: c.type,
+      media_s3_key: c.s3_key ?? null,
+      link_url: c.link_url ?? null,
+      cta_text: c.cta_text ?? null,
+      // The API binds this as `datetime=2006-01-02`, so it must stay a bare
+      // YYYY-MM-DD string — anything longer is rejected and the save reverts.
+      ad_started_on: c.ad_started_on ? c.ad_started_on.slice(0, 10) : null,
+      ad_active: c.ad_active ?? null,
+    });
+  };
   return (
     <div
       style={{
@@ -94,15 +119,34 @@ function AdCard({ c }: { c: Creative }) {
           <AdBadges c={c} />
         </span>
         {c.external_ad_id && (
-          <a
-            href={adLibraryAdUrl(c.external_ad_id)}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="font-mono"
-            style={{ fontSize: "0.62rem", color: "var(--muted)", textDecoration: "underline" }}
-          >
-            Ad Library ↗
-          </a>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+            <a
+              href={adLibraryAdUrl(c.external_ad_id)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-mono"
+              style={{ fontSize: "0.62rem", color: "var(--muted)", textDecoration: "underline" }}
+            >
+              Ad Library ↗
+            </a>
+            <button
+              type="button"
+              onClick={onHeart}
+              aria-label={saved ? "Remove from saved" : "Save ad"}
+              aria-pressed={saved}
+              title={saved ? "Remove from saved" : "Save ad"}
+              style={{
+                background: "none",
+                border: "none",
+                padding: 2,
+                cursor: "pointer",
+                display: "inline-flex",
+                color: saved ? "var(--ink)" : "var(--muted)",
+              }}
+            >
+              {saved ? <IconHeartFilled size={16} aria-hidden /> : <IconHeart size={16} stroke={1.75} aria-hidden />}
+            </button>
+          </span>
         )}
       </div>
       {run && (
@@ -303,7 +347,7 @@ export function AdsSection({ gem }: { gem: GemDossier }) {
       <SectionTitle>{title}</SectionTitle>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(190px, 1fr))", gap: 12 }}>
         {visible.map((c) => (
-          <AdCard key={c.id} c={c} />
+          <AdCard key={c.id} c={c} gem={gem} />
         ))}
       </div>
       {activeAds.length > TOP_ADS && pageId && (
