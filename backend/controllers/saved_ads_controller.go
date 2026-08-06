@@ -14,6 +14,7 @@ import (
 
 	"github.com/edaslakavicius/emerging-app-finder/backend/db"
 	"github.com/edaslakavicius/emerging-app-finder/backend/helpers"
+	"github.com/edaslakavicius/emerging-app-finder/backend/middlewares"
 	"github.com/edaslakavicius/emerging-app-finder/backend/models"
 	"github.com/edaslakavicius/emerging-app-finder/backend/repositories"
 	"github.com/edaslakavicius/emerging-app-finder/backend/storage"
@@ -124,12 +125,20 @@ func (c *SavedAdsController) List(ctx *gin.Context) {
 // named after the ad, and unreadable objects are skipped so a single missing
 // creative can't fail the whole archive. The body is streamed, so a failure
 // partway through can only truncate it — hence the pre-flight empty check.
+//
+// Identity comes from KeyAuth, never from a param: this endpoint streams the
+// bytes of a user's whole collection, so honouring a caller-supplied
+// ?user_email would let any valid key download anyone else's saves. The web
+// client still sends that param and it is deliberately ignored — the /backend
+// proxy authenticates with the internal token plus the session's X-User-Email,
+// which is what KeyAuth resolves here.
 func (c *SavedAdsController) Download(ctx *gin.Context) {
-	email, ok := ctx.GetQuery("user_email")
-	if !ok || email == "" {
-		helpers.Detail(ctx, http.StatusUnprocessableEntity, "user_email is required.")
+	u, authed := middlewares.UserFrom(ctx.Request.Context())
+	if !authed || u.Email == "" {
+		helpers.Detail(ctx, http.StatusUnauthorized, "not signed in.")
 		return
 	}
+	email := u.Email
 	rctx, cancel := reqCtx(ctx)
 	defer cancel()
 	rows, err := repositories.ListSavedAdMedia(rctx, db.DB(), email)
