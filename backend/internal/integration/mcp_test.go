@@ -713,7 +713,7 @@ func TestMCPServer(t *testing.T) {
 			Arguments: map[string]any{
 				"competitors": []string{"Quizlooker"},
 				"intent":      "pull one advertiser's ads",
-				"settings":    map[string]any{"listing_pages": 5},
+				"settings":    map[string]any{"listing_pages": 5, "skip_pages": 4},
 			},
 		})
 		require.NoError(t, err)
@@ -741,6 +741,10 @@ func TestMCPServer(t *testing.T) {
 			out.RoundID).Row().Scan(&terms, &competitors, &settings))
 		require.Contains(t, competitors, "Quizlooker")
 		require.Contains(t, settings, "listing_pages")
+		// skip_pages rides through verbatim; the worker's clamp_hunt_settings is
+		// the only thing that decides whether the value is legal.
+		// jsonb::text renders a space after the colon, so the literal carries one.
+		require.Contains(t, settings, `"skip_pages": 4`)
 		// The omitted side must store an empty array, never a JSON null. Go
 		// marshals a nil slice to `null`, and a jsonb null is not a SQL NULL, so
 		// the NOT NULL constraint does not catch it — it reaches the worker, where
@@ -800,12 +804,18 @@ func TestMCPServer(t *testing.T) {
 			db.DB().Exec(`DELETE FROM frontend.hunts WHERE id = ?`, out.HuntID)
 		}()
 
-		var terms, competitors string
+		var terms, competitors, settings string
 		require.NoError(t, db.DB().Raw(
-			`SELECT terms::text, competitor_apps::text FROM frontend.hunt_rounds WHERE id = ?`,
-			out.RoundID).Row().Scan(&terms, &competitors))
+			`SELECT terms::text, competitor_apps::text, settings::text FROM frontend.hunt_rounds WHERE id = ?`,
+			out.RoundID).Row().Scan(&terms, &competitors, &settings))
 		require.Contains(t, terms, "sleep tracker")
 		require.Equal(t, "[]", competitors, "an unset competitor list must store [] and not null")
+		// No knob was named, so none may be stored. skip_pages is the case worth
+		// stating: its default IS 0, so omitempty dropping it is correct — a
+		// stored 0 and an absent key both mean "read from page 1". The other
+		// knobs would be corrupted by a stored zero (clamp_hunt_settings raises
+		// it to the bound's minimum), which is why this asserts the whole object.
+		require.Equal(t, "{}", settings, "unset knobs must store nothing")
 	})
 
 	// A hunt round is the only MCP tool that spends real money — residential

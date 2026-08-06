@@ -94,13 +94,16 @@ func (h *handlers) keywordControl(ctx context.Context, _ *mcp.CallToolRequest, i
 
 // huntSettingsIn mirrors the per-round knobs the Python executor reads. Bounds
 // are enforced by clamp_hunt_settings on the worker side (page_cap 1-100,
-// patience 1-10, listing_pages 1-30, min_pages 1-30); Go passes values through
-// so there is exactly one place that decides what is legal.
+// patience 1-10, listing_pages 1-30, min_pages 1-30, skip_pages 0-30); Go
+// passes values through so there is exactly one place that decides what is
+// legal. skip_pages is the one knob whose floor is 0, and 0 is also its
+// default, so omitempty dropping it changes nothing the worker sees.
 type huntSettingsIn struct {
 	PageCap      int `json:"page_cap,omitempty" jsonschema:"max pages per term, 1-100 (default 40)"`
 	Patience     int `json:"patience,omitempty" jsonschema:"consecutive pages with nothing new before giving up on a term, 1-10 (default 6)"`
 	ListingPages int `json:"listing_pages,omitempty" jsonschema:"pages pulled per competitor page listing, 1-30 (default 10)"`
 	MinPages     int `json:"min_pages,omitempty" jsonschema:"pages to read before the patience exit may fire, 1-30 (default 10)"`
+	SkipPages    int `json:"skip_pages,omitempty" jsonschema:"early pages to fetch and discard unread, 0-30 (default 0); shallow pages are mostly advertisers already in the corpus. Must be below page_cap, or the term is not searched"`
 }
 
 type runHuntIn struct {
