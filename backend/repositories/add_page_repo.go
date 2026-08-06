@@ -11,13 +11,19 @@ import (
 // addPageJobSelect is the shared read shape for an add_page job. phase and
 // triage_note come out of the job's payload jsonb (no schema change needed);
 // icon_url comes from the gem matview, which only has a row once the job has
-// finished enriching — until then it is NULL and the UI falls back to the name.
+// finished enriching.
+//
+// page_name falls back to the matview's app_name because the Meta listing
+// scrape does not write public.advertisers.page_name — a pasted page therefore
+// keeps a NULL page_name and the result card would read "This advertiser is in
+// your feed" for an advertiser we can perfectly well name (verified on prod
+// 2026-08-06: page_name NULL, app_name "Zutobi: Permit & Driving Prep").
 const addPageJobSelect = `
 	SELECT j.id, j.advertiser_id, j.status,
 	       j.payload->>'phase'       AS phase,
 	       j.payload->>'triage_note' AS triage_note,
 	       j.error_text,
-	       adv.page_name,
+	       COALESCE(NULLIF(btrim(adv.page_name), ''), esa.app_name) AS page_name,
 	       esa.icon_url,
 	       (SELECT count(*) FROM public.ads a WHERE a.advertiser_id = j.advertiser_id) AS ad_count
 	  FROM public.pipeline_jobs j
