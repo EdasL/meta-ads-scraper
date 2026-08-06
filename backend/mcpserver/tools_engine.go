@@ -49,3 +49,40 @@ func (h *handlers) scrapingHealth(ctx context.Context, _ *mcp.CallToolRequest, i
 		"idea_diversity": diversity,
 	}, nil
 }
+
+// ---- keyword_control (admin only) ----
+
+// defaultKeywordCooldownDays matches the flywheel's own resting cooldown so a
+// manual rest behaves like an automatic one unless the caller overrides it.
+const defaultKeywordCooldownDays = 7
+
+type keywordControlIn struct {
+	Action       string   `json:"action" jsonschema:"activate, rest, retire, or seed"`
+	Keywords     []string `json:"keywords" jsonschema:"the keywords to act on"`
+	CooldownDays int      `json:"cooldown_days,omitempty" jsonschema:"rest cooldown in days (default 7); ignored by other actions"`
+}
+
+func (h *handlers) keywordControl(ctx context.Context, _ *mcp.CallToolRequest, in keywordControlIn) (*mcp.CallToolResult, any, error) {
+	if h.u.Role != "admin" {
+		return nil, nil, errors.New("This tool requires an admin account.")
+	}
+	switch in.Action {
+	case "activate", "rest", "retire", "seed":
+	default:
+		return nil, nil, errors.New("action must be activate, rest, retire, or seed.")
+	}
+	if len(in.Keywords) == 0 {
+		return nil, nil, errors.New("keywords must not be empty.")
+	}
+	cooldown := in.CooldownDays
+	if cooldown <= 0 {
+		cooldown = defaultKeywordCooldownDays
+	}
+	changed, unknown, err := repositories.ControlKeywords(ctx, db.DB(), in.Action, in.Keywords, cooldown)
+	if err != nil {
+		return nil, nil, errors.New("something went wrong updating those keywords.")
+	}
+	out := map[string]any{"changed": changed, "unknown": unknown}
+	out["note"] = "Takes effect on the next flywheel tick."
+	return nil, out, nil
+}

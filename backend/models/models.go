@@ -715,3 +715,11 @@ type KeywordYieldRow struct {
 	LastSweptAt  *time.Time `json:"last_swept_at" gorm:"column:last_swept_at"`
 	NextEligible *time.Time `json:"next_eligible_at" gorm:"column:next_eligible_at"`
 }
+
+// KeywordControlResult is one keyword's lifecycle transition, reported back so
+// the caller can see what actually moved rather than trusting the request.
+type KeywordControlResult struct {
+	Keyword string `json:"keyword"`
+	Before  string `json:"before"`
+	After   string `json:"after"`
+}

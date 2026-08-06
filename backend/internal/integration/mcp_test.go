@@ -250,6 +250,162 @@ func TestMCPServer(t *testing.T) {
 		}
 	})
 
+	t.Run("keyword_control seeds and retires keywords", func(t *testing.T) {
+		kw := fmt.Sprintf("mcp-ctl-kw-%d", time.Now().UnixNano())
+		defer db.DB().Exec(`DELETE FROM discovery.dynamic_keywords WHERE keyword = ?`, kw)
+
+		sess, err := connect(adminKey)
+		require.NoError(t, err)
+		defer sess.Close()
+
+		// seed creates the row as a trial keyword sourced 'mcp'.
+		res, err := sess.CallTool(ctx, &mcp.CallToolParams{
+			Name:      "keyword_control",
+			Arguments: map[string]any{"action": "seed", "keywords": []string{kw}},
+		})
+		require.NoError(t, err)
+		require.False(t, res.IsError, "content: %s", firstText(res))
+
+		var status, source string
+		require.NoError(t, db.DB().Raw(
+			`SELECT status, source FROM discovery.dynamic_keywords WHERE keyword = ?`, kw,
+		).Row().Scan(&status, &source))
+		require.Equal(t, "trial", status)
+		require.Equal(t, "mcp", source)
+
+		// retire flips it and reports the before/after pair.
+		res, err = sess.CallTool(ctx, &mcp.CallToolParams{
+			Name:      "keyword_control",
+			Arguments: map[string]any{"action": "retire", "keywords": []string{kw}},
+		})
+		require.NoError(t, err)
+		require.False(t, res.IsError, "content: %s", firstText(res))
+
+		var out struct {
+			Changed []struct {
+				Keyword string `json:"keyword"`
+				Before  string `json:"before"`
+				After   string `json:"after"`
+			} `json:"changed"`
+			Unknown []string `json:"unknown"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(firstText(res)), &out))
+		require.Len(t, out.Changed, 1)
+		require.Equal(t, "trial", out.Changed[0].Before)
+		require.Equal(t, "retired", out.Changed[0].After)
+		require.Empty(t, out.Unknown)
+
+		require.NoError(t, db.DB().Raw(
+			`SELECT status FROM discovery.dynamic_keywords WHERE keyword = ?`, kw,
+		).Row().Scan(&status))
+		require.Equal(t, "retired", status, "the DB row actually moved")
+	})
+
+	t.Run("keyword_control rests a keyword and leaves a re-seed alone", func(t *testing.T) {
+		kw := fmt.Sprintf("mcp-rest-kw-%d", time.Now().UnixNano())
+		defer db.DB().Exec(`DELETE FROM discovery.dynamic_keywords WHERE keyword = ?`, kw)
+		require.NoError(t, db.DB().Exec(
+			`INSERT INTO discovery.dynamic_keywords (keyword, source, status, kind)
+			 VALUES (?, 'mcp-test', 'active', 'app')`, kw).Error)
+
+		sess, err := connect(adminKey)
+		require.NoError(t, err)
+		defer sess.Close()
+
+		res, err := sess.CallTool(ctx, &mcp.CallToolParams{
+			Name:      "keyword_control",
+			Arguments: map[string]any{"action": "rest", "keywords": []string{kw}, "cooldown_days": 3},
+		})
+		require.NoError(t, err)
+		require.False(t, res.IsError, "content: %s", firstText(res))
+
+		// The cooldown lands as a real interval: a parameterized make_interval is
+		// the kind of call that fails on argument type, so assert the stored date.
+		var status string
+		var restCount int
+		var nextEligible time.Time
+		require.NoError(t, db.DB().Raw(
+			`SELECT status, rest_count, next_eligible_at
+			   FROM discovery.dynamic_keywords WHERE keyword = ?`, kw,
+		).Row().Scan(&status, &restCount, &nextEligible))
+		require.Equal(t, "resting", status)
+		require.Equal(t, 1, restCount, "rest increments the cooldown counter")
+		require.WithinDuration(t, time.Now().Add(72*time.Hour), nextEligible, 12*time.Hour,
+			"cooldown_days 3 sets next_eligible_at three days out")
+
+		// Re-seeding an existing keyword must not overwrite its status.
+		res, err = sess.CallTool(ctx, &mcp.CallToolParams{
+			Name:      "keyword_control",
+			Arguments: map[string]any{"action": "seed", "keywords": []string{kw}},
+		})
+		require.NoError(t, err)
+		require.False(t, res.IsError, "content: %s", firstText(res))
+
+		var out struct {
+			Changed []struct {
+				Before string `json:"before"`
+				After  string `json:"after"`
+			} `json:"changed"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(firstText(res)), &out))
+		require.Len(t, out.Changed, 1)
+		require.Equal(t, "resting", out.Changed[0].Before)
+		require.Equal(t, "resting", out.Changed[0].After, "a re-seed reports no movement")
+
+		require.NoError(t, db.DB().Raw(
+			`SELECT status FROM discovery.dynamic_keywords WHERE keyword = ?`, kw,
+		).Row().Scan(&status))
+		require.Equal(t, "resting", status, "the row was left alone")
+	})
+
+	t.Run("keyword_control reports unknown keywords without failing", func(t *testing.T) {
+		missing := fmt.Sprintf("mcp-absent-%d", time.Now().UnixNano())
+		sess, err := connect(adminKey)
+		require.NoError(t, err)
+		defer sess.Close()
+		res, err := sess.CallTool(ctx, &mcp.CallToolParams{
+			Name:      "keyword_control",
+			Arguments: map[string]any{"action": "activate", "keywords": []string{missing}},
+		})
+		require.NoError(t, err)
+		require.False(t, res.IsError, "an unknown keyword is reported, not an error")
+
+		var out struct {
+			Changed []any    `json:"changed"`
+			Unknown []string `json:"unknown"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(firstText(res)), &out))
+		require.Empty(t, out.Changed)
+		require.Equal(t, []string{missing}, out.Unknown)
+	})
+
+	t.Run("keyword_control rejects an unknown action", func(t *testing.T) {
+		sess, err := connect(adminKey)
+		require.NoError(t, err)
+		defer sess.Close()
+		res, err := sess.CallTool(ctx, &mcp.CallToolParams{
+			Name:      "keyword_control",
+			Arguments: map[string]any{"action": "delete", "keywords": []string{"x"}},
+		})
+		if err == nil {
+			require.True(t, res.IsError, "unknown action must be rejected")
+		}
+	})
+
+	t.Run("member cannot see or call keyword_control", func(t *testing.T) {
+		sess, err := connect(memberKey)
+		require.NoError(t, err)
+		defer sess.Close()
+		require.False(t, toolNames(sess)["keyword_control"], "write tool must not be listed")
+		res, err := sess.CallTool(ctx, &mcp.CallToolParams{
+			Name:      "keyword_control",
+			Arguments: map[string]any{"action": "retire", "keywords": []string{"x"}},
+		})
+		if err == nil {
+			require.True(t, res.IsError, "member keyword_control must not succeed")
+		}
+	})
+
 	t.Run("no bearer is rejected before handshake", func(t *testing.T) {
 		_, err := connect("")
 		require.Error(t, err, "anonymous connect must fail at the HTTP 401")
