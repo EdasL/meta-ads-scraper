@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { IconHeartFilled } from "@tabler/icons-react";
 import { unsaveAd } from "@/lib/useSavedAds";
+import { rememberOrigin } from "@/lib/returnTo";
 import type { ApiSavedAd } from "@/types/contracts";
 
 /** Same rule as `mediaUrl` in lib/api.ts: media stays same-origin (`/backend/*`)
@@ -45,7 +46,7 @@ export function SavedAdCard({ ad }: { ad: ApiSavedAd }) {
     >
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "8px 10px" }}>
         {ad.advertiser_id ? (
-          <Link href={`/gems/${ad.advertiser_id}`} className="t-sm w-strong" style={nameStyle}>
+          <Link href={`/gems/${ad.advertiser_id}`} onClick={rememberOrigin} className="t-sm w-strong" style={nameStyle}>
             {label}
           </Link>
         ) : (

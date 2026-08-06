@@ -5,7 +5,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { saveReturnTo, loadReturnTo, clearReturnTo, type StorageLike } from "./returnTo.ts";
+import { saveReturnTo, loadReturnTo, clearReturnTo, originLabel, type StorageLike } from "./returnTo.ts";
 
 function fakeStore(): StorageLike & { map: Map<string, string> } {
   const map = new Map<string, string>();
@@ -34,27 +34,42 @@ test("clear removes the entry", () => {
   assert.equal(loadReturnTo(store), null);
 });
 
-test("load rejects URLs outside the Discover feed", () => {
+test("load keeps every product surface a gem can be opened from", () => {
   const store = fakeStore();
-  store.setItem("fd.discover.return", JSON.stringify({ url: "https://evil.example/", scrollY: 0 }));
-  assert.equal(loadReturnTo(store), null);
-  store.setItem("fd.discover.return", JSON.stringify({ url: "/saved", scrollY: 0 }));
-  assert.equal(loadReturnTo(store), null);
+  for (const url of ["/discover?page=2", "/saved", "/saved?folder=7", "/hunt", "/review"]) {
+    saveReturnTo({ url, scrollY: 40 }, store);
+    assert.deepEqual(loadReturnTo(store), { url, scrollY: 40 }, `url=${url}`);
+  }
+});
+
+test("load rejects URLs outside the product surfaces", () => {
+  const store = fakeStore();
+  for (const url of ["https://evil.example/", "//evil.example", "/settings", "/gems/12", "/discoverything"]) {
+    store.setItem("fd.gem.return", JSON.stringify({ url, scrollY: 0 }));
+    assert.equal(loadReturnTo(store), null, `url=${url}`);
+  }
+});
+
+test("originLabel names the surface, falling back to Discover", () => {
+  assert.equal(originLabel("/discover?page=3"), "Discover");
+  assert.equal(originLabel("/saved"), "Saved");
+  assert.equal(originLabel("/hunt"), "Hunt");
+  assert.equal(originLabel("/nonsense"), "Discover");
 });
 
 test("load survives garbage payloads", () => {
   const store = fakeStore();
   for (const raw of ["not json", "42", "null", JSON.stringify({ scrollY: 9 })]) {
-    store.setItem("fd.discover.return", raw);
+    store.setItem("fd.gem.return", raw);
     assert.equal(loadReturnTo(store), null, `raw=${raw}`);
   }
 });
 
 test("load clamps a bad scrollY to 0 but keeps the url", () => {
   const store = fakeStore();
-  store.setItem("fd.discover.return", JSON.stringify({ url: "/discover?page=2", scrollY: "high" }));
+  store.setItem("fd.gem.return", JSON.stringify({ url: "/discover?page=2", scrollY: "high" }));
   assert.deepEqual(loadReturnTo(store), { url: "/discover?page=2", scrollY: 0 });
-  store.setItem("fd.discover.return", JSON.stringify({ url: "/discover", scrollY: -5 }));
+  store.setItem("fd.gem.return", JSON.stringify({ url: "/discover", scrollY: -5 }));
   assert.deepEqual(loadReturnTo(store), { url: "/discover", scrollY: 0 });
 });
 

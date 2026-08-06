@@ -8,7 +8,7 @@ import { Fallback } from "@/components/Fallback";
 import { ActivationChecklist, EmptyState, Pagination } from "@/components/ui";
 import { PAGE_SIZE, PAGE_SIZE_OPTIONS, clampPage, clampPageSize } from "@/lib/pagination";
 import { SORT_DEFAULT_DIR, shortlistParams } from "@/lib/query";
-import { clearReturnTo, loadReturnTo, saveReturnTo } from "@/lib/returnTo";
+import { clearReturnTo, loadReturnTo, rememberOrigin } from "@/lib/returnTo";
 import type { CategoryCount, ShortlistQuery, ShortlistRow } from "@/types/contracts";
 import { GemTable } from "./GemTable";
 import { DEFAULT_FILTERS, FilterRail, type Filters } from "./FilterRail";
@@ -221,24 +221,23 @@ export function DiscoverFeed() {
   const narrowed =
     !!filters.category || !!filters.q || filters.minScore > 0 || filters.hasFunnel || filters.minAdAge > 0;
 
-  // Where the user left off, saved when a row opens a dossier. The gem page's
-  // back link points at the remembered URL (page + filters survive), and the
-  // scroll offset is replayed below — but only once the SAME query's fresh
-  // rows have rendered, otherwise there is nothing that tall to scroll to.
-  const rememberPosition = useCallback(() => {
-    const url = searchParams.size > 0 ? `${pathname}?${searchParams}` : pathname;
-    saveReturnTo({ url, scrollY: window.scrollY }, window.sessionStorage);
-  }, [pathname, searchParams]);
-
+  // Where the user left off, recorded by rememberOrigin when a row opens a
+  // dossier. The gem page's back link points at the remembered URL (page +
+  // filters survive), and the scroll offset is replayed below — but only once
+  // the SAME query's fresh rows have rendered, otherwise there is nothing that
+  // tall to scroll to.
   const restoredScroll = useRef(false);
   useEffect(() => {
     if (restoredScroll.current || !fresh) return;
     restoredScroll.current = true;
     const stored = loadReturnTo(window.sessionStorage);
     if (!stored) return;
-    clearReturnTo(window.sessionStorage);
     const url = searchParams.size > 0 ? `${pathname}?${searchParams}` : pathname;
-    if (stored.url === url) window.scrollTo(0, stored.scrollY);
+    // Only consume our own entry — a remembered Saved or Hunt position still
+    // belongs to that surface's back link.
+    if (stored.url !== url) return;
+    clearReturnTo(window.sessionStorage);
+    window.scrollTo(0, stored.scrollY);
   }, [fresh, pathname, searchParams]);
 
   return (
@@ -301,7 +300,7 @@ export function DiscoverFeed() {
                   sort={filters.sort}
                   dir={filters.dir}
                   onSort={(sort, dir) => setFilters({ ...filters, sort, dir })}
-                  onOpen={rememberPosition}
+                  onOpen={rememberOrigin}
                 />
               </div>
               <Pagination

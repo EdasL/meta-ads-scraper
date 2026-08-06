@@ -5,6 +5,7 @@ import { IconX } from "@tabler/icons-react";
 import type { LikedGem, SavedGem } from "@/lib/saved";
 import type { ShortlistRow } from "@/types/contracts";
 import { unsave } from "@/lib/useSaved";
+import { rememberOrigin } from "@/lib/returnTo";
 import { AppIcon, Trend } from "@/components/ui";
 import { FolderPicker } from "./FolderPicker";
 
@@ -25,6 +26,7 @@ export function SavedCard({ gem }: { gem: SavedGem }) {
         <AppIcon src={gem.iconUrl} name={name} size={44} />
         <Link
           href={`/gems/${gem.advertiserId}`}
+          onClick={rememberOrigin}
           className="t-sm w-strong"
           style={{
             flex: 1,
@@ -64,7 +66,7 @@ export function SavedCard({ gem }: { gem: SavedGem }) {
       {gem.note ? (
         <p className="t-sm" style={{ color: "var(--ink-soft)", margin: 0, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{gem.note}</p>
       ) : (
-        <Link href={`/gems/${gem.advertiserId}`} className="t-sm" style={{ color: "var(--muted)" }}>No note yet — add one.</Link>
+        <Link href={`/gems/${gem.advertiserId}`} onClick={rememberOrigin} className="t-sm" style={{ color: "var(--muted)" }}>No note yet — add one.</Link>
       )}
 
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginTop: "auto", paddingTop: 8, borderTop: "1px solid var(--line)" }}>
@@ -114,6 +116,7 @@ export function LikedRow({ item, gem }: { item: LikedGem; gem?: SavedGem }) {
         <AppIcon src={iconUrl} name={name} size={44} />
         <Link
           href={`/gems/${item.advertiserId}`}
+          onClick={rememberOrigin}
           className="t-sm w-strong"
           style={{
             flex: 1,
@@ -148,7 +151,7 @@ export function LikedRow({ item, gem }: { item: LikedGem; gem?: SavedGem }) {
           {gem.note ? (
             <p className="t-sm" style={{ color: "var(--ink-soft)", margin: 0, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{gem.note}</p>
           ) : (
-            <Link href={`/gems/${item.advertiserId}`} className="t-sm" style={{ color: "var(--muted)" }}>No note yet — add one.</Link>
+            <Link href={`/gems/${item.advertiserId}`} onClick={rememberOrigin} className="t-sm" style={{ color: "var(--muted)" }}>No note yet — add one.</Link>
           )}
         </>
       )}

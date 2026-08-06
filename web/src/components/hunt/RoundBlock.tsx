@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { AppIcon, ScoreBadge } from "@/components/ui";
 import { formatSettings, latestEvents, splitByRelevance, rollupByPage, type RolledResult } from "@/lib/hunt";
+import { rememberOrigin } from "@/lib/returnTo";
 import type { HuntResult, HuntRound } from "@/lib/api";
 import { FolderPicker } from "@/components/saved/FolderPicker";
 import type { ShortlistRow } from "@/types/contracts";
@@ -126,7 +127,7 @@ function ResultCard({ group: g, userEmail }: { group: RolledResult; userEmail: s
         <AppIcon src={r.icon_url ?? undefined} name={name} size={40} />
         <div style={{ minWidth: 0, flex: "1 1 auto" }}>
           {scored ? (
-            <Link className="t-sm w-strong" href={`/gems/${r.kept_advertiser_id}`} style={{ color: "var(--ink)", textDecoration: "underline", display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title="Open the gem page">
+            <Link className="t-sm w-strong" href={`/gems/${r.kept_advertiser_id}`} onClick={rememberOrigin} style={{ color: "var(--ink)", textDecoration: "underline", display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title="Open the gem page">
               {name}
             </Link>
           ) : (

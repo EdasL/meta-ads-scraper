@@ -5,7 +5,7 @@ import Link from "next/link";
 import { IconArrowLeft } from "@tabler/icons-react";
 import { getGem } from "@/lib/api";
 import { markVisitedGem } from "@/lib/onboarding";
-import { loadReturnTo } from "@/lib/returnTo";
+import { DEFAULT_ORIGIN, loadReturnTo, originLabel } from "@/lib/returnTo";
 import { Fallback } from "@/components/Fallback";
 import { ButtonLink } from "@/components/ui";
 import type { GemDossier } from "@/types/contracts";
@@ -38,14 +38,17 @@ export function GemDetail({ advertiserId }: { advertiserId: number }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [reload, setReload] = useState(0);
-  // The exact Discover URL (page + filters) the user came from, if any.
-  // sessionStorage is client-only, so the server snapshot is the plain
-  // /discover and the stored URL takes over right after hydration.
+  // The exact URL of the surface the user came from — Discover (page +
+  // filters), Saved or Hunt. sessionStorage is client-only, so the server
+  // snapshot is the plain /discover and the stored URL takes over right after
+  // hydration. Keep this a string: useSyncExternalStore re-runs on every
+  // render and a fresh object each time would loop.
   const backHref = useSyncExternalStore(
     subscribeNever,
-    () => loadReturnTo(window.sessionStorage)?.url ?? "/discover",
-    () => "/discover",
+    () => loadReturnTo(window.sessionStorage)?.url ?? DEFAULT_ORIGIN,
+    () => DEFAULT_ORIGIN,
   );
+  const backLabel = `Back to ${originLabel(backHref)}`;
 
   useEffect(() => {
     markVisitedGem(); // activation: "Open a gem"
@@ -81,7 +84,7 @@ export function GemDetail({ advertiserId }: { advertiserId: number }) {
     return (
       <main style={{ maxWidth: 480, margin: "56px auto", textAlign: "center", display: "flex", flexDirection: "column", alignItems: "center", gap: 16, padding: "0 22px" }}>
         <p className="t-lg w-strong">No gem with id #{advertiserId}.</p>
-        <ButtonLink href="/discover">Back to Discover</ButtonLink>
+        <ButtonLink href={backHref}>{backLabel}</ButtonLink>
       </main>
     );
   }
@@ -91,7 +94,7 @@ export function GemDetail({ advertiserId }: { advertiserId: number }) {
       {/* scroll={false}: DiscoverFeed restores the saved offset itself; Next's
           default scroll-to-top races it and sometimes lands second. */}
       <Link href={backHref} scroll={false} className="font-mono" style={backLink}>
-        <IconArrowLeft size={14} stroke={2} /> Back to Discover
+        <IconArrowLeft size={14} stroke={2} /> {backLabel}
       </Link>
 
       <div style={{ marginTop: 14 }}>
