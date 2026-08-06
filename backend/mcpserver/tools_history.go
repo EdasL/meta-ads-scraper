@@ -6,8 +6,6 @@ package mcpserver
 import (
 	"context"
 	"errors"
-	"os"
-	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -91,13 +89,6 @@ func (h *handlers) usersOverview(ctx context.Context, _ *mcp.CallToolRequest, in
 
 // ---- ad_creatives ----
 
-// mediaBase is the origin the download URLs are built against. AGF_PUBLIC_API_URL
-// is the deployed API's public origin; the empty fallback yields a root-relative
-// URL, which is still correct for a client that knows the host.
-func mediaBase() string {
-	return strings.TrimSuffix(os.Getenv("AGF_PUBLIC_API_URL"), "/")
-}
-
 type adCreativesIn struct {
 	AdvertiserID int `json:"advertiser_id" jsonschema:"the advertiser whose creatives to list"`
 	Limit        int `json:"limit,omitempty" jsonschema:"max rows to return (default 50, max 200)"`
@@ -112,10 +103,9 @@ func (h *handlers) adCreatives(ctx context.Context, _ *mcp.CallToolRequest, in a
 	if err != nil {
 		return nil, nil, errors.New("something went wrong reading those creatives.")
 	}
-	base := mediaBase()
 	for i := range rows {
 		if rows[i].S3Key != nil {
-			rows[i].URL = base + "/api/media/" + *rows[i].S3Key
+			rows[i].URL = h.base + "/api/media/" + *rows[i].S3Key
 		}
 	}
 	if len(rows) == 0 {

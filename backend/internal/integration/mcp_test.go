@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -106,6 +108,58 @@ func TestMCPServer(t *testing.T) {
 			names[tl.Name] = true
 		}
 		return names
+	}
+
+	// seedCreative inserts one ad plus a stored creative for advID and returns
+	// the external ad id that identifies it in tool output. Cleanup lives here so
+	// the FK-safe order is written once: t.Cleanup is LIFO, so registering the ad
+	// delete first makes it run last, after the creatives that reference it.
+	seedCreative := func(t *testing.T, s3Key string) string {
+		ext := fmt.Sprintf("MCPCREATIVE-%d", time.Now().UnixNano())
+		var adID int
+		require.NoError(t, db.DB().Raw(
+			`INSERT INTO public.ads (external_ad_id, advertiser_id, is_active)
+			 VALUES (?, ?, true) RETURNING id`, ext, advID).Row().Scan(&adID))
+		require.NoError(t, db.DB().Exec(
+			`INSERT INTO public.creatives (ad_id, type, s3_key, content_type, file_size, title)
+			 VALUES (?, 'image', ?, 'image/jpeg', 1234, 'Test creative')`,
+			adID, s3Key).Error)
+		t.Cleanup(func() { db.DB().Exec(`DELETE FROM public.ads WHERE id = ?`, adID) })
+		t.Cleanup(func() { db.DB().Exec(`DELETE FROM public.creatives WHERE ad_id = ?`, adID) })
+		return ext
+	}
+
+	// creativeURL calls ad_creatives as the member and returns the download URL
+	// of the creative belonging to the given external ad id.
+	creativeURL := func(t *testing.T, ext string) string {
+		sess, err := connect(memberKey)
+		require.NoError(t, err)
+		defer sess.Close()
+		res, err := sess.CallTool(ctx, &mcp.CallToolParams{
+			Name:      "ad_creatives",
+			Arguments: map[string]any{"advertiser_id": advID},
+		})
+		require.NoError(t, err)
+		require.False(t, res.IsError, "content: %s", firstText(res))
+
+		var out struct {
+			Creatives []struct {
+				ExternalAdID string `json:"external_ad_id"`
+				Type         string `json:"type"`
+				ContentType  string `json:"content_type"`
+				URL          string `json:"url"`
+			} `json:"creatives"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(firstText(res)), &out))
+		for _, c := range out.Creatives {
+			if c.ExternalAdID == ext {
+				require.Equal(t, "image", c.Type)
+				require.Equal(t, "image/jpeg", c.ContentType)
+				return c.URL
+			}
+		}
+		require.FailNow(t, "the seeded creative is returned", "ext %s missing", ext)
+		return ""
 	}
 
 	t.Run("member tools/list excludes scraping_health", func(t *testing.T) {
@@ -595,51 +649,28 @@ func TestMCPServer(t *testing.T) {
 		require.True(t, found, "the seeded member appears in the overview")
 	})
 
-	t.Run("ad_creatives returns media urls for an advertiser", func(t *testing.T) {
-		ext := fmt.Sprintf("MCPCREATIVE-%d", time.Now().UnixNano())
-		var adID int
-		require.NoError(t, db.DB().Raw(
-			`INSERT INTO public.ads (external_ad_id, advertiser_id, is_active)
-			 VALUES (?, ?, true) RETURNING id`, ext, advID).Row().Scan(&adID))
-		require.NoError(t, db.DB().Exec(
-			`INSERT INTO public.creatives (ad_id, type, s3_key, content_type, file_size, title)
-			 VALUES (?, 'image', 'creatives/mcp-test.jpg', 'image/jpeg', 1234, 'Test creative')`,
-			adID).Error)
-		// defer is LIFO: declaring the ad delete first makes it run last, which
-		// is the FK-safe order (creatives reference ads).
-		defer db.DB().Exec(`DELETE FROM public.ads WHERE id = ?`, adID)
-		defer db.DB().Exec(`DELETE FROM public.creatives WHERE ad_id = ?`, adID)
+	t.Run("ad_creatives returns absolute media urls for an advertiser", func(t *testing.T) {
+		got := creativeURL(t, seedCreative(t, "creatives/mcp-test.jpg"))
 
-		sess, err := connect(memberKey)
+		// The URL crosses a process boundary: an MCP client on another machine
+		// curls it. A root-relative path it cannot resolve is a broken download,
+		// so the origin has to be there with nothing configured.
+		u, err := url.Parse(got)
 		require.NoError(t, err)
-		defer sess.Close()
-		res, err := sess.CallTool(ctx, &mcp.CallToolParams{
-			Name:      "ad_creatives",
-			Arguments: map[string]any{"advertiser_id": advID},
-		})
-		require.NoError(t, err)
-		require.False(t, res.IsError, "content: %s", firstText(res))
+		require.NotEmpty(t, u.Scheme, "download url must be absolute: %s", got)
+		require.NotEmpty(t, u.Host, "download url must carry a host: %s", got)
+		require.True(t, strings.HasSuffix(got, "/api/media/creatives/mcp-test.jpg"),
+			"url is the media route plus the s3 key: %s", got)
+	})
 
-		var out struct {
-			Creatives []struct {
-				ExternalAdID string `json:"external_ad_id"`
-				Type         string `json:"type"`
-				ContentType  string `json:"content_type"`
-				URL          string `json:"url"`
-			} `json:"creatives"`
-		}
-		require.NoError(t, json.Unmarshal([]byte(firstText(res)), &out))
-		var seen bool
-		for _, c := range out.Creatives {
-			if c.ExternalAdID == ext {
-				seen = true
-				require.Equal(t, "image", c.Type)
-				require.Equal(t, "image/jpeg", c.ContentType)
-				require.Contains(t, c.URL, "/api/media/creatives/mcp-test.jpg",
-					"url is the media route plus the s3 key")
-			}
-		}
-		require.True(t, seen, "the seeded creative is returned")
+	t.Run("ad_creatives prefers the configured public api url", func(t *testing.T) {
+		// A deployment behind a proxy that rewrites Host can state its own
+		// address; the override wins over the request-derived origin, and its
+		// trailing slash is trimmed rather than doubled into the path.
+		t.Setenv("AGF_PUBLIC_API_URL", "https://api.example.test/")
+
+		got := creativeURL(t, seedCreative(t, "creatives/mcp-override.jpg"))
+		require.Equal(t, "https://api.example.test/api/media/creatives/mcp-override.jpg", got)
 	})
 
 	t.Run("member cannot see the admin history tools", func(t *testing.T) {

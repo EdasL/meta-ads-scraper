@@ -13,11 +13,17 @@ package mcpserver
 
 import (
 	"net/http"
+	"os"
+	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/edaslakavicius/emerging-app-finder/backend/middlewares"
 )
+
+// publicAPIURLEnv optionally pins the origin that download URLs are built
+// against. It is an override, not a requirement — see publicOrigin.
+const publicAPIURLEnv = "AGF_PUBLIC_API_URL"
 
 // Handler returns the /mcp HTTP handler. It builds a fresh MCP server per
 // request from the authenticated user; KeyAuth has already rejected anonymous
@@ -29,17 +35,43 @@ func Handler() http.Handler {
 		if !ok {
 			return nil
 		}
-		return buildServer(u)
+		return buildServer(u, publicOrigin(req))
 	}, nil)
+}
+
+// publicOrigin is the absolute origin an MCP client should use to reach this
+// API. Tool results travel to a client in another process on another machine,
+// so a download URL has to carry scheme and host; a root-relative path is a
+// broken download there.
+//
+// The origin is read off the request, which means it is right with nothing
+// configured and cannot drift from how the deployment is actually addressed.
+// AGF_PUBLIC_API_URL overrides it for the case the request cannot describe: a
+// proxy that rewrites Host, or an origin that differs from the one dialed.
+// X-Forwarded-Proto carries the original scheme through the GKE ingress, which
+// terminates TLS and forwards plaintext; it may list several hops, and the
+// first is the client-facing one.
+func publicOrigin(req *http.Request) string {
+	if v := strings.TrimSuffix(os.Getenv(publicAPIURLEnv), "/"); v != "" {
+		return v
+	}
+	scheme := "http"
+	if fwd := req.Header.Get("X-Forwarded-Proto"); fwd != "" {
+		scheme, _, _ = strings.Cut(fwd, ",")
+		scheme = strings.TrimSpace(scheme)
+	} else if req.TLS != nil {
+		scheme = "https"
+	}
+	return scheme + "://" + req.Host
 }
 
 // buildServer registers the tools this user is allowed to see. The member tools
 // are always present; scraping_health is registered only for admins, which is
 // what keeps it out of a member's tools/list (there is no per-tool "hidden"
 // flag in the SDK — omission is the boundary).
-func buildServer(u middlewares.AuthedUser) *mcp.Server {
+func buildServer(u middlewares.AuthedUser, base string) *mcp.Server {
 	s := mcp.NewServer(&mcp.Implementation{Name: "fielddesk", Version: "1.0.0"}, nil)
-	h := &handlers{u: u}
+	h := &handlers{u: u, base: base}
 
 	mcp.AddTool(s, &mcp.Tool{Name: "my_taste_profile",
 		Description: "Your rating counts, top liked cohorts, and the signals that drive your likes."},
@@ -85,8 +117,10 @@ func buildServer(u middlewares.AuthedUser) *mcp.Server {
 
 // handlers carries the authenticated user for the lifetime of one request's
 // server. Every tool reads identity from h.u, never from tool input.
+// base is that request's public origin, used to build absolute media URLs.
 type handlers struct {
-	u middlewares.AuthedUser
+	u    middlewares.AuthedUser
+	base string
 }
 
 // clampLimit normalizes a member-supplied page size: non-positive or absurdly
