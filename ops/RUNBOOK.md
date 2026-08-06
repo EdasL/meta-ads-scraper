@@ -262,9 +262,23 @@ then `sudo docker compose -f /opt/agf/docker-compose.yml {ps,logs,restart}`.
 `bash ops/prod/02_secrets.sh && bash ops/prod/00_provision_sql.sh && bash
 ops/prod/02_build_image.sh && bash ops/prod/01_provision_vm.sh`.
 
-**Redeploy new code.** `bash ops/prod/02_build_image.sh`, then on the VM:
-`sudo docker compose -f /opt/agf/docker-compose.yml pull worker cron && sudo docker
-compose -f /opt/agf/docker-compose.yml up -d worker cron`.
+**Redeploy new code.** `bash ops/prod/02_build_image.sh && bash ops/prod/04_deploy_worker.sh`
+(add service names to scope it: `… 04_deploy_worker.sh hunt`).
+
+The deploy script exists because the two manual lines that used to live here were
+wrong in two ways. They named only `worker cron`, so every service added since —
+`enrich`, `pipeline`, `keeper`, `funnel-confirm`, `hunt` — was silently left on old
+code; and they never pruned, so each pull leaked ~3 GB until the VM hit 100% of its
+79 GB disk on 2026-08-06 (26 images, 70 GB reclaimable) and a deploy died mid-extract
+with `no space left on device`. The script pulls, force-recreates, prunes, and prints
+disk before/after. It also uses `--force-recreate`, which the old lines omitted:
+compose skips a container whose *config* is unchanged, and pulling a new `:latest`
+does not change the config.
+
+**Verify the change took effect, not that the deploy succeeded.** A container can
+start cleanly on a stale image and look identical in `ps`. Check something only the
+new code produces — for the 2026-08-06 `skip_pages` deploy that was the `skipped`
+field appearing in per-term hunt telemetry.
 
 **Proxy out of traffic.** A `407 TRAFFIC_EXHAUSTED` from DataImpulse (worker logs
 "sweep circuit-breaker: 5 consecutive search errors") means the residential proxy
