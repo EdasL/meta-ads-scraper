@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { IconHeart, IconHeartFilled } from "@tabler/icons-react";
+import { IconDownload, IconHeart, IconHeartFilled } from "@tabler/icons-react";
+import { adDownloadName, adMediaUrl as mediaUrl } from "@/lib/adMedia";
 import { SketchLineChart, type ChartPoint, type ChartTooltipItem } from "@/components/sketch";
 import { trendFromScaling } from "@/lib/why";
 import { adRunLine, creativeMetaLine, monthDayLabel, monthYearLabel } from "@/lib/format";
@@ -132,6 +133,26 @@ function AdCard({ c, gem }: { c: Creative; gem: GemDossier }) {
             >
               Ad Library ↗
             </a>
+            {c.s3_key && (
+              // Icon-scale to match the heart: this reel is a dense browsing
+              // grid, so the labelled button lives on /saved where you go to
+              // collect files. Same-origin proxy, so `download` saves the file.
+              <a
+                href={mediaUrl(c.s3_key)}
+                download={adDownloadName({
+                  pageName: gem.page_name,
+                  appName: gem.app_name,
+                  externalAdId: c.external_ad_id,
+                  mediaKey: c.s3_key,
+                  mediaType: c.type,
+                })}
+                aria-label={c.type === "video" ? "Download video" : "Download image"}
+                title={c.type === "video" ? "Download video" : "Download image"}
+                style={{ display: "inline-flex", padding: 2, color: "var(--muted)" }}
+              >
+                <IconDownload size={16} stroke={1.75} aria-hidden />
+              </a>
+            )}
             <button
               type="button"
               onClick={onHeart}

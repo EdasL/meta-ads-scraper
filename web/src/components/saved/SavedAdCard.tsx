@@ -5,26 +5,17 @@ import Link from "next/link";
 import { IconDownload, IconHeartFilled } from "@tabler/icons-react";
 import { unsaveAd } from "@/lib/useSavedAds";
 import { rememberOrigin } from "@/lib/returnTo";
+import { adDownloadName, adMediaUrl as mediaUrl } from "@/lib/adMedia";
 import type { ApiSavedAd } from "@/types/contracts";
 
-/** Creative keys are content-addressed (`creatives/<sha256>.jpg`), so the raw
- * file would land in Downloads under a 64-char hash. Name it after the ad
- * instead: "bepresent-1271851644912798.jpg". */
-function downloadName(ad: ApiSavedAd): string {
-  const ext = ad.media_s3_key?.split(".").pop()?.toLowerCase();
-  const safeExt = ext && /^[a-z0-9]{2,4}$/.test(ext) ? ext : ad.media_type === "video" ? "mp4" : "jpg";
-  const slug = (ad.page_name ?? ad.app_name ?? "ad")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 40);
-  return `${slug || "ad"}-${ad.external_ad_id}.${safeExt}`;
-}
-
-/** Same rule as `mediaUrl` in lib/api.ts: media stays same-origin (`/backend/*`)
- * so browser <img>/<video> tags carry the session cookie through the proxy.
- * (api.ts keeps its copy module-private; this mirrors it byte-for-byte.) */
-const mediaUrl = (key: string) => `/backend/media/${key}`;
+const downloadName = (ad: ApiSavedAd) =>
+  adDownloadName({
+    pageName: ad.page_name,
+    appName: ad.app_name,
+    externalAdId: ad.external_ad_id,
+    mediaKey: ad.media_s3_key,
+    mediaType: ad.media_type,
+  });
 
 // Natural aspect ratio — reels are 9:16; a fixed landscape crop hides most of the ad.
 const mediaStyle: React.CSSProperties = {
