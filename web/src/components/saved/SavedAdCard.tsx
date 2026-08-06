@@ -2,10 +2,24 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { IconHeartFilled } from "@tabler/icons-react";
+import { IconDownload, IconHeartFilled } from "@tabler/icons-react";
 import { unsaveAd } from "@/lib/useSavedAds";
 import { rememberOrigin } from "@/lib/returnTo";
 import type { ApiSavedAd } from "@/types/contracts";
+
+/** Creative keys are content-addressed (`creatives/<sha256>.jpg`), so the raw
+ * file would land in Downloads under a 64-char hash. Name it after the ad
+ * instead: "bepresent-1271851644912798.jpg". */
+function downloadName(ad: ApiSavedAd): string {
+  const ext = ad.media_s3_key?.split(".").pop()?.toLowerCase();
+  const safeExt = ext && /^[a-z0-9]{2,4}$/.test(ext) ? ext : ad.media_type === "video" ? "mp4" : "jpg";
+  const slug = (ad.page_name ?? ad.app_name ?? "ad")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40);
+  return `${slug || "ad"}-${ad.external_ad_id}.${safeExt}`;
+}
 
 /** Same rule as `mediaUrl` in lib/api.ts: media stays same-origin (`/backend/*`)
  * so browser <img>/<video> tags carry the session cookie through the proxy.
@@ -102,6 +116,31 @@ export function SavedAdCard({ ad }: { ad: ApiSavedAd }) {
       {!hasMedia && !ad.body_text && (
         <div style={{ fontSize: "var(--fs-xs)", color: "var(--muted)", padding: "8px 10px" }}>
           {ad.title ?? "Creative not available for this ad."}
+        </div>
+      )}
+      {hasMedia && src && (
+        // The media proxy is same-origin, so `download` saves the file straight
+        // to disk instead of opening it in a tab.
+        <div style={{ marginTop: "auto", padding: "8px 10px", borderTop: "1px solid var(--line)" }}>
+          <a
+            href={src}
+            download={downloadName(ad)}
+            className="font-mono"
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+              fontSize: "0.62rem",
+              padding: "5px 10px",
+              border: "1px solid var(--ink)",
+              color: "var(--ink)",
+              textDecoration: "none",
+              whiteSpace: "nowrap",
+            }}
+          >
+            <IconDownload size={13} aria-hidden />
+            {ad.media_type === "video" ? "Download video" : "Download image"}
+          </a>
         </div>
       )}
     </div>
