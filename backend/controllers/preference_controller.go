@@ -18,11 +18,14 @@ type PreferenceController struct{}
 
 func NewPreferenceController() *PreferenceController { return &PreferenceController{} }
 
-// Queue handles GET /api/preference-queue?user_email=...&limit=...&exclude=1,2,3
+// Queue handles GET /api/preference-queue?limit=...&exclude=1,2,3
+//
+// The queue is ranked by the caller's own preference model, so identity comes
+// from KeyAuth and never from ?user_email — the param is still sent by the web
+// client and is deliberately ignored.
 func (c *PreferenceController) Queue(ctx *gin.Context) {
-	email, ok := ctx.GetQuery("user_email")
-	if !ok || email == "" {
-		helpers.Detail(ctx, http.StatusUnprocessableEntity, "user_email is required.")
+	email, ok := callerEmail(ctx)
+	if !ok {
 		return
 	}
 	// The review deck fetches a small buffer and refills in the background as

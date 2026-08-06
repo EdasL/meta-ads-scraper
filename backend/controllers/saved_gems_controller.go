@@ -14,14 +14,17 @@ import (
 
 // SavedGemsController serves a user's watchlist (list + upsert + remove). Writes
 // are guarded by the optional bearer token, like the review decision.
+//
+// Identity on every route comes from KeyAuth via callerEmail — never the
+// ?user_email query param or the body's user_email field. Both are still sent
+// by the web client and both are deliberately ignored.
 type SavedGemsController struct{}
 
 func NewSavedGemsController() *SavedGemsController { return &SavedGemsController{} }
 
 func (c *SavedGemsController) List(ctx *gin.Context) {
-	email, ok := ctx.GetQuery("user_email")
-	if !ok || email == "" {
-		helpers.Detail(ctx, http.StatusUnprocessableEntity, "user_email is required.")
+	email, ok := callerEmail(ctx)
+	if !ok {
 		return
 	}
 	rctx, cancel := reqCtx(ctx)
@@ -35,6 +38,10 @@ func (c *SavedGemsController) List(ctx *gin.Context) {
 }
 
 func (c *SavedGemsController) Save(ctx *gin.Context) {
+	email, ok := callerEmail(ctx)
+	if !ok {
+		return
+	}
 	id, err := strconv.Atoi(ctx.Param("advertiser_id"))
 	if err != nil {
 		helpers.Detail(ctx, http.StatusUnprocessableEntity, "advertiser_id must be an integer.")
@@ -45,6 +52,8 @@ func (c *SavedGemsController) Save(ctx *gin.Context) {
 		helpers.Detail(ctx, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
+	// Whatever the body claimed, the row belongs to the caller.
+	body.UserEmail = email
 	rctx, cancel := reqCtx(ctx)
 	defer cancel()
 	if err := repositories.UpsertSavedGem(rctx, db.DB(), body, id); err != nil {
@@ -55,6 +64,10 @@ func (c *SavedGemsController) Save(ctx *gin.Context) {
 }
 
 func (c *SavedGemsController) Remove(ctx *gin.Context) {
+	email, ok := callerEmail(ctx)
+	if !ok {
+		return
+	}
 	id, err := strconv.Atoi(ctx.Param("advertiser_id"))
 	if err != nil {
 		helpers.Detail(ctx, http.StatusUnprocessableEntity, "advertiser_id must be an integer.")
@@ -67,7 +80,7 @@ func (c *SavedGemsController) Remove(ctx *gin.Context) {
 	}
 	rctx, cancel := reqCtx(ctx)
 	defer cancel()
-	if err := repositories.DeleteSavedGem(rctx, db.DB(), body.UserEmail, id); err != nil {
+	if err := repositories.DeleteSavedGem(rctx, db.DB(), email, id); err != nil {
 		helpers.Detail(ctx, http.StatusInternalServerError, "could not remove gem.")
 		return
 	}

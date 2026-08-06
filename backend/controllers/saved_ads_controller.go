@@ -105,10 +105,12 @@ func externalAdID(ctx *gin.Context) (string, bool) {
 	return id, true
 }
 
+// List handles GET /api/saved-ads — the caller's own saved ads. Identity comes
+// from KeyAuth, never ?user_email (see Download for the full reasoning); the
+// web client still sends the param and it is deliberately ignored.
 func (c *SavedAdsController) List(ctx *gin.Context) {
-	email, ok := ctx.GetQuery("user_email")
-	if !ok || email == "" {
-		helpers.Detail(ctx, http.StatusUnprocessableEntity, "user_email is required.")
+	email, ok := callerEmail(ctx)
+	if !ok {
 		return
 	}
 	rctx, cancel := reqCtx(ctx)
@@ -171,7 +173,14 @@ func (c *SavedAdsController) Download(ctx *gin.Context) {
 	}
 }
 
+// Save handles POST /api/saved-ads/:external_ad_id. The row belongs to the
+// CALLER: body.user_email is parsed for wire compatibility and discarded, since
+// the web proxy forwards the browser's body verbatim under the internal token.
 func (c *SavedAdsController) Save(ctx *gin.Context) {
+	email, ok := callerEmail(ctx)
+	if !ok {
+		return
+	}
 	id, ok := externalAdID(ctx)
 	if !ok {
 		return
@@ -181,6 +190,8 @@ func (c *SavedAdsController) Save(ctx *gin.Context) {
 		helpers.Detail(ctx, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
+	// Whatever the body claimed, the row belongs to the caller.
+	body.UserEmail = email
 	rctx, cancel := reqCtx(ctx)
 	defer cancel()
 	if err := repositories.UpsertSavedAd(rctx, db.DB(), body, id); err != nil {
@@ -191,6 +202,10 @@ func (c *SavedAdsController) Save(ctx *gin.Context) {
 }
 
 func (c *SavedAdsController) Remove(ctx *gin.Context) {
+	email, ok := callerEmail(ctx)
+	if !ok {
+		return
+	}
 	id, ok := externalAdID(ctx)
 	if !ok {
 		return
@@ -202,7 +217,7 @@ func (c *SavedAdsController) Remove(ctx *gin.Context) {
 	}
 	rctx, cancel := reqCtx(ctx)
 	defer cancel()
-	if err := repositories.DeleteSavedAd(rctx, db.DB(), body.UserEmail, id); err != nil {
+	if err := repositories.DeleteSavedAd(rctx, db.DB(), email, id); err != nil {
 		helpers.Detail(ctx, http.StatusInternalServerError, "could not remove saved ad.")
 		return
 	}

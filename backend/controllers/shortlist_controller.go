@@ -78,10 +78,16 @@ func (c *ShortlistController) List(ctx *gin.Context) {
 		return
 	}
 	// The "for you" sort ranks by the caller's own preference_scores, so it
-	// needs to know who's asking.
-	if p.UserEmail = ctx.Query("user_email"); p.Sort == "foryou" && p.UserEmail == "" {
-		helpers.Detail(ctx, http.StatusUnprocessableEntity, "user_email is required for the 'for you' sort.")
-		return
+	// needs to know who's asking — and that comes from KeyAuth, never the
+	// ?user_email param, which would let any caller rank the feed by somebody
+	// else's preference model. Every other sort ignores UserEmail, so it stays
+	// empty for them and their (identical) SQL is untouched.
+	if p.Sort == "foryou" {
+		email, authed := callerEmail(ctx)
+		if !authed {
+			return
+		}
+		p.UserEmail = email
 	}
 	var err error
 	if p.Limit, err = helpers.QueryInt(ctx, "limit", 50); err != nil || p.Limit < 0 {

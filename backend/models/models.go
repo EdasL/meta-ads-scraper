@@ -510,8 +510,12 @@ type LikedGemRow struct {
 
 // SavedGemIn is the upsert body. On a re-save (conflict) only the mutable fields
 // are updated; the snapshot columns keep their original save-time values.
+//
+// UserEmail is INERT: the handler overwrites it with the KeyAuth identity before
+// the repository sees it. It stays on the struct (and unvalidated) so clients
+// that still send it keep working and clients that stop sending it don't 422.
 type SavedGemIn struct {
-	UserEmail       string     `json:"user_email" binding:"required"`
+	UserEmail       string     `json:"user_email"`
 	PageName        *string    `json:"page_name"`
 	AppName         *string    `json:"app_name"`
 	IconURL         *string    `json:"icon_url"`
@@ -528,16 +532,21 @@ type SavedGemIn struct {
 	Confidence      *int       `json:"confidence" binding:"omitempty,min=1,max=5"`
 }
 
-// SavedGemRemoveIn carries the owner for an unsave (mirrors the reviewer pattern).
+// SavedGemRemoveIn is the unsave body. It carries nothing the handler uses: the
+// owner is the KeyAuth identity, and UserEmail is accepted-and-ignored so an
+// older client's payload still parses.
 type SavedGemRemoveIn struct {
-	UserEmail string `json:"user_email" binding:"required"`
+	UserEmail string `json:"user_email"`
 }
 
 // SavedAdIn is the upsert body for POST /api/saved-ads/:external_ad_id. The
 // client sends a render snapshot (saved_gems precedent); on a re-save the
 // original snapshot and saved_at win — there are no mutable annotations.
+//
+// UserEmail is INERT, exactly as on SavedGemIn: the handler overwrites it with
+// the KeyAuth identity before the repository sees it.
 type SavedAdIn struct {
-	UserEmail    string  `json:"user_email" binding:"required"`
+	UserEmail    string  `json:"user_email"`
 	AdvertiserID *int64  `json:"advertiser_id"`
 	PageName     *string `json:"page_name"`
 	AppName      *string `json:"app_name"`
@@ -551,9 +560,10 @@ type SavedAdIn struct {
 	AdActive     *bool   `json:"ad_active"`
 }
 
-// SavedAdRemoveIn carries the owner for an unsave (mirrors SavedGemRemoveIn).
+// SavedAdRemoveIn is the unsave body (mirrors SavedGemRemoveIn). The owner is
+// the KeyAuth identity; UserEmail is accepted-and-ignored.
 type SavedAdRemoveIn struct {
-	UserEmail string `json:"user_email" binding:"required"`
+	UserEmail string `json:"user_email"`
 }
 
 // SavedAdRow is one saved ad as served by GET /api/saved-ads.
@@ -586,8 +596,10 @@ type SavedAdMedia struct {
 
 // RatingIn is the upsert body for POST /api/ratings/:advertiser_id.
 // rating "none" signals a delete (removes the row entirely).
+//
+// UserEmail is INERT: the rating is always written for the KeyAuth identity.
 type RatingIn struct {
-	UserEmail string `json:"user_email" binding:"required"`
+	UserEmail string `json:"user_email"`
 	Rating    string `json:"rating" binding:"required,oneof=like neutral dislike none"`
 	Comment   string `json:"comment"`
 }
