@@ -772,9 +772,31 @@ git commit -m "feat(api): POST /api/gems/add enqueues an add_page job from a pas
 - Modify: `src/agf/db/pipeline_jobs.py` (add `set_job_phase`, `set_job_note`)
 - Test: `tests/discovery/test_add_page_one.py`
 
+**Ordering correction (found at plan time, verified in the code).**
+`keeper_history._linked_app_id` resolves an advertiser's app via
+`discovery.candidates WHERE kept_advertiser_id = :adv AND status = 'kept'`, and
+`refresh_one_advertiser` reads it *before* storing ads. In the normal sweep the
+candidate is triaged first, so the link exists by then. A pasted link starts from
+a page id with no candidate at all, so scraping first would store every ad with
+`app_id = NULL` and the matview's app LATERAL (`WHERE … AND a.app_id IS NOT NULL`)
+would find nothing — the gem would render with no app name, icon, installs or
+rating.
+
+The fix costs one SQL statement, not a second Meta call: scrape, derive
+candidates from the stored `public.ads.link_url` values, triage, then backfill
+`ads.app_id` from the now-kept candidate. Step 4 below implements that order.
+
+Two more facts pinned against the real code, correcting earlier assumptions:
+- `run_triage` returns `{"examined", "kept", "dropped": {reason: count}, …}` —
+  there is no `vetoed` or `veto_reason` key. The note is built from `dropped`.
+- `GET /api/gems/:advertiser_id` already exists, so gin rejects `/gems/add` as a
+  conflicting literal beside a wildcard. Task 3 registers `/gem-adds` and
+  `/gem-adds/:job_id` instead; Task 6 uses those paths.
+
 **Interfaces:**
-- Consumes: `keeper_history.refresh_one_advertiser`, `classify_url`,
-  `triage.run_triage`, `enrich_one.run_job` / `_default_enrich` / `_default_score`,
+- Consumes: `keeper_history.refresh_one_advertiser`, `classify.classify_url`,
+  `db.candidates.upsert_sweep_candidate`, `triage.run_triage`,
+  `enrich_one.run_job` / `_default_enrich` / `_default_score`,
   `pipeline_jobs.set_job_status`, `workers.scheduler.mark_crawled`.
 - Produces:
   ```python
