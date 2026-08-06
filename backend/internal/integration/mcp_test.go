@@ -595,6 +595,53 @@ func TestMCPServer(t *testing.T) {
 		require.True(t, found, "the seeded member appears in the overview")
 	})
 
+	t.Run("ad_creatives returns media urls for an advertiser", func(t *testing.T) {
+		ext := fmt.Sprintf("MCPCREATIVE-%d", time.Now().UnixNano())
+		var adID int
+		require.NoError(t, db.DB().Raw(
+			`INSERT INTO public.ads (external_ad_id, advertiser_id, is_active)
+			 VALUES (?, ?, true) RETURNING id`, ext, advID).Row().Scan(&adID))
+		require.NoError(t, db.DB().Exec(
+			`INSERT INTO public.creatives (ad_id, type, s3_key, content_type, file_size, title)
+			 VALUES (?, 'image', 'creatives/mcp-test.jpg', 'image/jpeg', 1234, 'Test creative')`,
+			adID).Error)
+		// defer is LIFO: declaring the ad delete first makes it run last, which
+		// is the FK-safe order (creatives reference ads).
+		defer db.DB().Exec(`DELETE FROM public.ads WHERE id = ?`, adID)
+		defer db.DB().Exec(`DELETE FROM public.creatives WHERE ad_id = ?`, adID)
+
+		sess, err := connect(memberKey)
+		require.NoError(t, err)
+		defer sess.Close()
+		res, err := sess.CallTool(ctx, &mcp.CallToolParams{
+			Name:      "ad_creatives",
+			Arguments: map[string]any{"advertiser_id": advID},
+		})
+		require.NoError(t, err)
+		require.False(t, res.IsError, "content: %s", firstText(res))
+
+		var out struct {
+			Creatives []struct {
+				ExternalAdID string `json:"external_ad_id"`
+				Type         string `json:"type"`
+				ContentType  string `json:"content_type"`
+				URL          string `json:"url"`
+			} `json:"creatives"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(firstText(res)), &out))
+		var seen bool
+		for _, c := range out.Creatives {
+			if c.ExternalAdID == ext {
+				seen = true
+				require.Equal(t, "image", c.Type)
+				require.Equal(t, "image/jpeg", c.ContentType)
+				require.Contains(t, c.URL, "/api/media/creatives/mcp-test.jpg",
+					"url is the media route plus the s3 key")
+			}
+		}
+		require.True(t, seen, "the seeded creative is returned")
+	})
+
 	t.Run("member cannot see the admin history tools", func(t *testing.T) {
 		sess, err := connect(memberKey)
 		require.NoError(t, err)

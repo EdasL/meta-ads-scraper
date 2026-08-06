@@ -59,6 +59,9 @@ func buildServer(u middlewares.AuthedUser) *mcp.Server {
 	mcp.AddTool(s, &mcp.Tool{Name: "gem_detail",
 		Description: "One gem: scores, axes, ads summary, funnel, store links."},
 		h.gemDetail)
+	mcp.AddTool(s, &mcp.Tool{Name: "ad_creatives",
+		Description: "An advertiser's ad creatives with download URLs, ad copy, and link targets."},
+		h.adCreatives)
 
 	if u.Role == "admin" {
 		mcp.AddTool(s, &mcp.Tool{Name: "scraping_health",

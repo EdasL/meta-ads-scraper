@@ -752,3 +752,22 @@ type UserOverviewRow struct {
 	CreatedAt   time.Time  `json:"created_at" gorm:"column:created_at"`
 	OnboardedAt *time.Time `json:"onboarded_at" gorm:"column:onboarded_at"`
 }
+
+// AdCreativeRow is one creative with the URL that serves its bytes. MCP results
+// are JSON, so the tool hands back a URL and the client downloads the file
+// itself rather than the bytes riding in the tool result.
+// S3Key is scanned but not serialized; URL is the reverse — assembled by the
+// handler, so it carries gorm:"-" to keep gorm from hunting for a column.
+type AdCreativeRow struct {
+	AdID         int     `json:"ad_id" gorm:"column:ad_id"`
+	ExternalAdID string  `json:"external_ad_id" gorm:"column:external_ad_id"`
+	Type         *string `json:"type" gorm:"column:type"`
+	ContentType  *string `json:"content_type" gorm:"column:content_type"`
+	FileSize     *int64  `json:"file_size" gorm:"column:file_size"`
+	Title        *string `json:"title" gorm:"column:title"`
+	BodyText     *string `json:"body_text" gorm:"column:body_text"`
+	S3Key        *string `json:"-" gorm:"column:s3_key"`
+	URL          string  `json:"url" gorm:"-"`
+	LinkURL      *string `json:"link_url" gorm:"column:link_url"`
+	IsActive     *bool   `json:"is_active" gorm:"column:is_active"`
+}
