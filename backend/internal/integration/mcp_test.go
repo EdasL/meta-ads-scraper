@@ -502,6 +502,9 @@ func TestMCPServer(t *testing.T) {
 		roundID, err := repositories.InsertHuntRound(ctx, db.DB(), huntID, nil,
 			json.RawMessage(`["sleep tracker"]`), nil, nil, nil)
 		require.NoError(t, err)
+		// InsertHuntRound also enqueues a pipeline job, and pipeline_jobs has no
+		// FK to the round, so the hunt delete above does not reach it.
+		defer db.DB().Exec(`DELETE FROM public.pipeline_jobs WHERE kind = 'hunt' AND advertiser_id = ?`, roundID)
 
 		require.NoError(t, db.DB().Exec(
 			`INSERT INTO frontend.hunt_results
@@ -554,8 +557,10 @@ func TestMCPServer(t *testing.T) {
 		require.NoError(t, repositories.UpsertUser(ctx, db.DB(), hEmail, "x", "HuntAll", "admin"))
 		huntID, err := repositories.CreateHunt(ctx, db.DB(), hEmail, "mcp all rounds")
 		require.NoError(t, err)
-		// hunts -> hunt_rounds -> hunt_results are both ON DELETE CASCADE, so
-		// this one delete removes every row seeded below.
+		// hunts -> hunt_rounds -> hunt_results are both ON DELETE CASCADE, so this
+		// one delete removes every hunt row seeded below. The pipeline jobs that
+		// InsertHuntRound enqueues are NOT covered — they key off the round id
+		// without an FK — so they are removed separately once the ids are known.
 		defer db.DB().Exec(`DELETE FROM frontend.hunts WHERE id = ?`, huntID)
 
 		// Two rounds under one hunt. termA appears in BOTH, so an aggregate that
@@ -566,6 +571,9 @@ func TestMCPServer(t *testing.T) {
 		round2, err := repositories.InsertHuntRound(ctx, db.DB(), huntID, nil,
 			json.RawMessage(`["a"]`), nil, nil, nil)
 		require.NoError(t, err)
+		defer db.DB().Exec(
+			`DELETE FROM public.pipeline_jobs WHERE kind = 'hunt' AND advertiser_id IN (?, ?)`,
+			round1, round2)
 
 		require.NoError(t, db.DB().Exec(
 			`INSERT INTO frontend.hunt_results
@@ -680,6 +688,103 @@ func TestMCPServer(t *testing.T) {
 		names := toolNames(sess)
 		require.False(t, names["hunt_term_yield"])
 		require.False(t, names["users_overview"])
+	})
+
+	// /mcp is rate-limited per bearer token (PerKeyRateLimit(60)) and the
+	// subtests above have spent most of adminKey's burst. The hunt rounds open
+	// their own sessions, so they get their own key and their own budget.
+	_, huntAdminKey := seedKeyedUser(t, ctx, "admin")
+
+	t.Run("run_hunt enqueues a competitor pull with custom settings", func(t *testing.T) {
+		sess, err := connect(huntAdminKey)
+		require.NoError(t, err)
+		defer sess.Close()
+		res, err := sess.CallTool(ctx, &mcp.CallToolParams{
+			Name: "run_hunt",
+			Arguments: map[string]any{
+				"competitors": []string{"Quizlooker"},
+				"intent":      "pull one advertiser's ads",
+				"settings":    map[string]any{"listing_pages": 5},
+			},
+		})
+		require.NoError(t, err)
+		require.False(t, res.IsError, "content: %s", firstText(res))
+
+		var out struct {
+			HuntID  int `json:"hunt_id"`
+			RoundID int `json:"round_id"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(firstText(res)), &out))
+		require.Greater(t, out.RoundID, 0)
+		// The hunt cascades to its rounds and results, but pipeline_jobs has no FK
+		// to a round (its advertiser_id carries the round id by convention), so the
+		// queued job outlives the round unless it is removed explicitly. Both
+		// deletes live in one closure so their order is fixed rather than LIFO.
+		defer func() {
+			db.DB().Exec(`DELETE FROM public.pipeline_jobs WHERE kind = 'hunt' AND advertiser_id = ?`, out.RoundID)
+			db.DB().Exec(`DELETE FROM frontend.hunts WHERE id = ?`, out.HuntID)
+		}()
+
+		// The round carries the competitor and the settings verbatim.
+		var competitors, settings string
+		require.NoError(t, db.DB().Raw(
+			`SELECT competitor_apps::text, settings::text FROM frontend.hunt_rounds WHERE id = ?`,
+			out.RoundID).Row().Scan(&competitors, &settings))
+		require.Contains(t, competitors, "Quizlooker")
+		require.Contains(t, settings, "listing_pages")
+		// Only the knob the caller set may reach the worker. An unset knob must
+		// be absent, not a zero — clamp_hunt_settings would raise a zero to the
+		// bound's minimum and silently cripple the round.
+		require.NotContains(t, settings, "page_cap")
+		require.NotContains(t, settings, "patience")
+		require.NotContains(t, settings, "min_pages")
+
+		// Exactly one queued hunt job for this round.
+		var jobs int64
+		require.NoError(t, db.DB().Raw(
+			`SELECT count(*) FROM public.pipeline_jobs WHERE kind = 'hunt' AND advertiser_id = ?`,
+			out.RoundID).Row().Scan(&jobs))
+		require.EqualValues(t, 1, jobs)
+
+		// hunt_status reads it back as queued.
+		res, err = sess.CallTool(ctx, &mcp.CallToolParams{
+			Name:      "hunt_status",
+			Arguments: map[string]any{"round_id": out.RoundID},
+		})
+		require.NoError(t, err)
+		require.False(t, res.IsError, "content: %s", firstText(res))
+		var st struct {
+			Status string `json:"status"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(firstText(res)), &st))
+		require.Equal(t, "queued", st.Status)
+	})
+
+	t.Run("run_hunt rejects a call with no terms and no competitors", func(t *testing.T) {
+		sess, err := connect(huntAdminKey)
+		require.NoError(t, err)
+		defer sess.Close()
+		res, err := sess.CallTool(ctx, &mcp.CallToolParams{
+			Name:      "run_hunt",
+			Arguments: map[string]any{"intent": "nothing to search"},
+		})
+		if err == nil {
+			require.True(t, res.IsError, "an empty hunt must be rejected")
+		}
+	})
+
+	t.Run("member cannot see or call run_hunt", func(t *testing.T) {
+		sess, err := connect(memberKey)
+		require.NoError(t, err)
+		defer sess.Close()
+		require.False(t, toolNames(sess)["run_hunt"])
+		res, err := sess.CallTool(ctx, &mcp.CallToolParams{
+			Name:      "run_hunt",
+			Arguments: map[string]any{"competitors": []string{"x"}},
+		})
+		if err == nil {
+			require.True(t, res.IsError, "member run_hunt must not succeed")
+		}
 	})
 
 	t.Run("no bearer is rejected before handshake", func(t *testing.T) {

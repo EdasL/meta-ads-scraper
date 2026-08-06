@@ -111,6 +111,12 @@ func buildServer(u middlewares.AuthedUser, base string) *mcp.Server {
 		mcp.AddTool(s, &mcp.Tool{Name: "users_overview",
 			Description: "Accounts with rating counts, saved-gem counts, provider, and onboarding date."},
 			h.usersOverview)
+		mcp.AddTool(s, &mcp.Tool{Name: "run_hunt",
+			Description: "Queue an on-demand Ad Library run. Terms are US keyword searches; competitors are resolved to their ad page and pulled globally. Optional per-round depth settings."},
+			h.runHunt)
+		mcp.AddTool(s, &mcp.Tool{Name: "hunt_status",
+			Description: "One hunt round: status, live progress, and results with triage and relevance."},
+			h.huntStatus)
 	}
 	return s
 }
