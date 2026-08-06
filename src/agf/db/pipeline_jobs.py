@@ -86,6 +86,32 @@ def set_job_status(conn, job_id: int, status: str, error: str | None = None) -> 
         {"status": status, "error": error, "id": job_id})
 
 
+def set_job_payload_key(conn, job_id: int, key: str, value: str) -> None:
+    """Write one string key into a job's payload jsonb. Used by add_page to
+    publish its progress ('phase') and the triage verdict ('triage_note') for
+    the API's status poll — the payload column already exists, so neither needs
+    a schema change. jsonb_set over a COALESCE'd payload so a row whose payload
+    is somehow NULL still takes the write. The key is bound as a jsonb PATH
+    (never string-formatted into the SQL)."""
+    conn.execute(text(
+        "UPDATE public.pipeline_jobs "
+        "SET payload = jsonb_set(COALESCE(payload, '{}'::jsonb), "
+        "                        CAST(ARRAY[:key] AS text[]), "
+        "                        to_jsonb(CAST(:value AS text)), true) "
+        "WHERE id = :id"),
+        {"key": key, "value": value, "id": job_id})
+
+
+def set_job_phase(conn, job_id: int, phase: str) -> None:
+    """Publish a short progress label for the status poll to narrate."""
+    set_job_payload_key(conn, job_id, "phase", phase)
+
+
+def set_job_note(conn, job_id: int, note: str) -> None:
+    """Publish a user-facing note (e.g. a triage verdict) on the job."""
+    set_job_payload_key(conn, job_id, "triage_note", note)
+
+
 def purge_terminal(conn, older_than_days: int) -> int:
     """Delete terminal ('done' OR 'error') rows finished more than `older_than_days`
     days ago (bloat control for the aggressive-autovacuum churn table). Both terminal
