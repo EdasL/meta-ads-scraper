@@ -40,7 +40,10 @@ func mcpClientFor(token string) *http.Client {
 
 // seedKeyedUser creates a user with the given role and mints one API key,
 // returning the plaintext key. Emails are per-run-unique so the shared test DB
-// never collides across runs or with sibling tests.
+// never collides across runs or with sibling tests. The user is removed when
+// the test ends; api_keys is ON DELETE CASCADE, so the key goes with it. That
+// cleanup matters more than it looks: adminSession calls this once per admin
+// subtest, so without it every run would strand a dozen users in a shared DB.
 func seedKeyedUser(t *testing.T, ctx context.Context, role string) (email, key string) {
 	t.Helper()
 	email = fmt.Sprintf("mcp-%s-%d@test.local", role, time.Now().UnixNano())
@@ -51,6 +54,7 @@ func seedKeyedUser(t *testing.T, ctx context.Context, role string) (email, key s
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { db.DB().Exec(`DELETE FROM frontend.users WHERE email = ?`, email) })
 	return email, key
 }
 
@@ -60,8 +64,11 @@ func seedKeyedUser(t *testing.T, ctx context.Context, role string) (email, key s
 func TestMCPServer(t *testing.T) {
 	ctx := context.Background()
 
+	// memberKey stays shared: the member subtests open 8 sessions between them,
+	// comfortably inside one key's 60-request budget, and two of them depend on
+	// this exact identity (memberEmail owns the rating seeded below). Admin
+	// sessions come from adminSession, one fresh key each.
 	memberEmail, memberKey := seedKeyedUser(t, ctx, "member")
-	_, adminKey := seedKeyedUser(t, ctx, "admin")
 
 	// A like by THIS member on a seeded matview advertiser (advID → Acme App).
 	// A foreign member's rating on the same advertiser must never leak into the
@@ -73,6 +80,12 @@ func TestMCPServer(t *testing.T) {
 		(?, ?, 'like', 'mine', now()),
 		(?, ?, 'like', 'theirs', now())`,
 		memberEmail, advID, otherEmail, advID).Error)
+	// app_ratings has no FK to users, so these rows outlive the accounts unless
+	// they are removed explicitly. Ratings first, then the borrowed account.
+	defer func() {
+		db.DB().Exec(`DELETE FROM frontend.app_ratings WHERE user_email IN (?, ?)`, memberEmail, otherEmail)
+		db.DB().Exec(`DELETE FROM frontend.users WHERE email = ?`, otherEmail)
+	}()
 
 	// scraping_health reads discovery.candidates (max first_seen_at). Seed one
 	// candidate + a sweep run under a unique prefix so the engine-health read has
@@ -98,6 +111,28 @@ func TestMCPServer(t *testing.T) {
 			HTTPClient: mcpClientFor(token),
 		}
 		return cli.Connect(ctx, tr, nil)
+	}
+
+	// adminSession mints a fresh admin key and opens a session on it, closing the
+	// session when the subtest ends.
+	//
+	// Each admin subtest gets its own key because /mcp is rate limited per bearer
+	// token (PerKeyRateLimit(60), a token bucket with a burst of 60). The suite
+	// finishes in well under a second, so the bucket never refills during a run
+	// and a shared key is one fixed budget spent by every subtest that touches
+	// it — not a per-minute rate. That makes the limit a hidden coupling between
+	// unrelated tests: adding a subtest anywhere pushes some *other* subtest over
+	// the edge, and the failure it produces is "Too Many Requests" on the MCP
+	// handshake, which looks nothing like its cause. A key per subtest keeps each
+	// one inside its own budget. The production limit is deliberately left alone;
+	// it is real protection on a public endpoint.
+	adminSession := func(t *testing.T) *mcp.ClientSession {
+		t.Helper()
+		_, key := seedKeyedUser(t, ctx, "admin")
+		sess, err := connect(key)
+		require.NoError(t, err)
+		t.Cleanup(func() { sess.Close() })
+		return sess
 	}
 
 	toolNames := func(sess *mcp.ClientSession) map[string]bool {
@@ -173,9 +208,7 @@ func TestMCPServer(t *testing.T) {
 	})
 
 	t.Run("admin tools/list includes scraping_health", func(t *testing.T) {
-		sess, err := connect(adminKey)
-		require.NoError(t, err)
-		defer sess.Close()
+		sess := adminSession(t)
 		names := toolNames(sess)
 		require.True(t, names["scraping_health"], "admin sees the engine-health tool")
 		require.True(t, names["my_ratings"], "admin also has the member tools")
@@ -216,9 +249,7 @@ func TestMCPServer(t *testing.T) {
 	})
 
 	t.Run("admin scraping_health succeeds", func(t *testing.T) {
-		sess, err := connect(adminKey)
-		require.NoError(t, err)
-		defer sess.Close()
+		sess := adminSession(t)
 		res, err := sess.CallTool(ctx, &mcp.CallToolParams{Name: "scraping_health"})
 		require.NoError(t, err)
 		require.False(t, res.IsError, "content: %s", firstText(res))
@@ -247,9 +278,7 @@ func TestMCPServer(t *testing.T) {
 		defer db.DB().Exec(`DELETE FROM discovery.candidates WHERE page_id LIKE ?`, pfx+"%")
 		defer db.DB().Exec(`DELETE FROM discovery.dynamic_keywords WHERE keyword = ?`, kw)
 
-		sess, err := connect(adminKey)
-		require.NoError(t, err)
-		defer sess.Close()
+		sess := adminSession(t)
 		res, err := sess.CallTool(ctx, &mcp.CallToolParams{
 			Name:      "keyword_yield",
 			Arguments: map[string]any{"source": "mcp-test"},
@@ -305,9 +334,7 @@ func TestMCPServer(t *testing.T) {
 			kw, src, kw, src).Error)
 		defer db.DB().Exec(`DELETE FROM discovery.dynamic_keywords WHERE keyword = ?`, kw)
 
-		sess, err := connect(adminKey)
-		require.NoError(t, err)
-		defer sess.Close()
+		sess := adminSession(t)
 		res, err := sess.CallTool(ctx, &mcp.CallToolParams{
 			Name:      "keyword_yield",
 			Arguments: map[string]any{"source": src},
@@ -340,9 +367,7 @@ func TestMCPServer(t *testing.T) {
 		kw := fmt.Sprintf("mcp-ctl-kw-%d", time.Now().UnixNano())
 		defer db.DB().Exec(`DELETE FROM discovery.dynamic_keywords WHERE keyword = ?`, kw)
 
-		sess, err := connect(adminKey)
-		require.NoError(t, err)
-		defer sess.Close()
+		sess := adminSession(t)
 
 		// seed creates the row as a trial keyword sourced 'mcp'.
 		res, err := sess.CallTool(ctx, &mcp.CallToolParams{
@@ -394,9 +419,7 @@ func TestMCPServer(t *testing.T) {
 			`INSERT INTO discovery.dynamic_keywords (keyword, source, status, kind)
 			 VALUES (?, 'mcp-test', 'active', 'app')`, kw).Error)
 
-		sess, err := connect(adminKey)
-		require.NoError(t, err)
-		defer sess.Close()
+		sess := adminSession(t)
 
 		res, err := sess.CallTool(ctx, &mcp.CallToolParams{
 			Name:      "keyword_control",
@@ -446,9 +469,7 @@ func TestMCPServer(t *testing.T) {
 
 	t.Run("keyword_control reports unknown keywords without failing", func(t *testing.T) {
 		missing := fmt.Sprintf("mcp-absent-%d", time.Now().UnixNano())
-		sess, err := connect(adminKey)
-		require.NoError(t, err)
-		defer sess.Close()
+		sess := adminSession(t)
 		res, err := sess.CallTool(ctx, &mcp.CallToolParams{
 			Name:      "keyword_control",
 			Arguments: map[string]any{"action": "activate", "keywords": []string{missing}},
@@ -466,9 +487,7 @@ func TestMCPServer(t *testing.T) {
 	})
 
 	t.Run("keyword_control rejects an unknown action", func(t *testing.T) {
-		sess, err := connect(adminKey)
-		require.NoError(t, err)
-		defer sess.Close()
+		sess := adminSession(t)
 		res, err := sess.CallTool(ctx, &mcp.CallToolParams{
 			Name:      "keyword_control",
 			Arguments: map[string]any{"action": "delete", "keywords": []string{"x"}},
@@ -495,6 +514,7 @@ func TestMCPServer(t *testing.T) {
 	t.Run("hunt_term_yield tallies triage per source term", func(t *testing.T) {
 		hEmail := fmt.Sprintf("mcp-hunt-%d@test.local", time.Now().UnixNano())
 		require.NoError(t, repositories.UpsertUser(ctx, db.DB(), hEmail, "x", "Hunt", "admin"))
+		defer db.DB().Exec(`DELETE FROM frontend.users WHERE email = ?`, hEmail)
 		huntID, err := repositories.CreateHunt(ctx, db.DB(), hEmail, "mcp term yield")
 		require.NoError(t, err)
 		defer db.DB().Exec(`DELETE FROM frontend.hunts WHERE id = ?`, huntID)
@@ -513,9 +533,7 @@ func TestMCPServer(t *testing.T) {
 			        (?, 'p2', 'Two', 'ios', 's2', 'sleep tracker', true, 'vetoed', 'off_target')`,
 			roundID, roundID).Error)
 
-		sess, err := connect(adminKey)
-		require.NoError(t, err)
-		defer sess.Close()
+		sess := adminSession(t)
 		res, err := sess.CallTool(ctx, &mcp.CallToolParams{
 			Name:      "hunt_term_yield",
 			Arguments: map[string]any{"round_id": roundID},
@@ -555,6 +573,7 @@ func TestMCPServer(t *testing.T) {
 
 		hEmail := fmt.Sprintf("mcp-hunt-all-%d@test.local", n)
 		require.NoError(t, repositories.UpsertUser(ctx, db.DB(), hEmail, "x", "HuntAll", "admin"))
+		defer db.DB().Exec(`DELETE FROM frontend.users WHERE email = ?`, hEmail)
 		huntID, err := repositories.CreateHunt(ctx, db.DB(), hEmail, "mcp all rounds")
 		require.NoError(t, err)
 		// hunts -> hunt_rounds -> hunt_results are both ON DELETE CASCADE, so this
@@ -585,9 +604,7 @@ func TestMCPServer(t *testing.T) {
 			round2, fmt.Sprintf("ar2-%d", n), fmt.Sprintf("as2-%d", n), termA,
 			round2, fmt.Sprintf("ar3-%d", n), fmt.Sprintf("as3-%d", n), termB).Error)
 
-		sess, err := connect(adminKey)
-		require.NoError(t, err)
-		defer sess.Close()
+		sess := adminSession(t)
 		// No round_id key at all: this is the "which terms have ever worked" read.
 		res, err := sess.CallTool(ctx, &mcp.CallToolParams{
 			Name:      "hunt_term_yield",
@@ -628,9 +645,7 @@ func TestMCPServer(t *testing.T) {
 	})
 
 	t.Run("users_overview includes the seeded member with its rating count", func(t *testing.T) {
-		sess, err := connect(adminKey)
-		require.NoError(t, err)
-		defer sess.Close()
+		sess := adminSession(t)
 		res, err := sess.CallTool(ctx, &mcp.CallToolParams{
 			Name:      "users_overview",
 			Arguments: map[string]any{"limit": 200},
@@ -690,15 +705,8 @@ func TestMCPServer(t *testing.T) {
 		require.False(t, names["users_overview"])
 	})
 
-	// /mcp is rate-limited per bearer token (PerKeyRateLimit(60)) and the
-	// subtests above have spent most of adminKey's burst. The hunt rounds open
-	// their own sessions, so they get their own key and their own budget.
-	_, huntAdminKey := seedKeyedUser(t, ctx, "admin")
-
 	t.Run("run_hunt enqueues a competitor pull with custom settings", func(t *testing.T) {
-		sess, err := connect(huntAdminKey)
-		require.NoError(t, err)
-		defer sess.Close()
+		sess := adminSession(t)
 		res, err := sess.CallTool(ctx, &mcp.CallToolParams{
 			Name: "run_hunt",
 			Arguments: map[string]any{
@@ -761,9 +769,7 @@ func TestMCPServer(t *testing.T) {
 	})
 
 	t.Run("run_hunt rejects a call with no terms and no competitors", func(t *testing.T) {
-		sess, err := connect(huntAdminKey)
-		require.NoError(t, err)
-		defer sess.Close()
+		sess := adminSession(t)
 		res, err := sess.CallTool(ctx, &mcp.CallToolParams{
 			Name:      "run_hunt",
 			Arguments: map[string]any{"intent": "nothing to search"},
