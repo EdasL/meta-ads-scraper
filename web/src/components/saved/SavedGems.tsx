@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { IconArrowLeft } from "@tabler/icons-react";
+import { IconArrowLeft, IconDownload } from "@tabler/icons-react";
+import { useSession } from "next-auth/react";
 import {
   applyGroupIdRemaps,
   countByFolder,
@@ -123,6 +124,8 @@ export function SavedGems() {
   const [tag, setTag] = useState("");
   const liked = useLikedGems();
   const savedAds = useSavedAdsList();
+  // The zip endpoint is keyed by email, like the rest of the saved-ads API.
+  const userEmail = useSession().data?.user?.email ?? null;
   const [active, setActive] = useState<ActiveView>(folderFromLocation);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [remapSeq, setRemapSeq] = useState(0);
@@ -171,6 +174,9 @@ export function SavedGems() {
   const openFolder = typeof active === "number" ? folders.find((f) => f.id === active) : undefined;
   const likedOpen = active === "liked";
   const adsOpen = active === "ads";
+  // Only ads with a stored creative land in the zip, so the button counts those
+  // rather than promising files the archive won't contain.
+  const downloadableAds = savedAds.filter((a) => !!a.media_s3_key).length;
 
   const visible = openFolder ? memberOfFolder(saved, openFolder.id) : saved;
   const filtered = tag ? visible.filter((g) => g.tags.includes(tag)) : visible;
@@ -234,6 +240,32 @@ export function SavedGems() {
         <header style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 18 }}>
           <h1 className="t-2xl w-heavy" style={{ margin: 0 }}>Ads</h1>
           <span className="nums t-sm" style={{ color: "var(--muted)" }}>{savedAds.length}</span>
+          {downloadableAds > 0 && userEmail && (
+            // One zip from the API rather than N browser downloads (which
+            // Chrome gates behind a "download multiple files?" prompt).
+            <a
+              href={`/backend/saved-ads/download?user_email=${encodeURIComponent(userEmail)}`}
+              download="saved-ads.zip"
+              className="font-mono"
+              style={{
+                marginLeft: "auto",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                fontSize: "0.62rem",
+                padding: "5px 10px",
+                border: "1px solid var(--ink)",
+                color: "var(--ink)",
+                textDecoration: "none",
+                whiteSpace: "nowrap",
+              }}
+            >
+              <IconDownload size={13} aria-hidden />
+              {downloadableAds === savedAds.length
+                ? `Download all (${downloadableAds})`
+                : `Download creatives (${downloadableAds})`}
+            </a>
+          )}
         </header>
         {savedAds.length === 0 ? (
           <p className="t-sm" style={{ color: "var(--muted)", marginTop: 8 }}>
