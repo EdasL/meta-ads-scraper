@@ -181,3 +181,49 @@ def test_corpus_error_spike_pauses_corpus_claims_not_keepers(engine, monkeypatch
             "SELECT status FROM public.pipeline_jobs "
             "WHERE kind='corpus_refresh' AND advertiser_id=:a"), {"a": A2}).scalar()
     assert corpus_status == "queued"                           # untouched, not lost
+
+
+# --- add_page routing (spec 2026-08-06 pasted-link add) ---------------------
+
+def test_add_page_is_claimed_before_keeper_and_corpus():
+    """A founder is watching a spinner for an add_page job; the background lanes
+    can wait a tick."""
+    from agf.discovery import keeper_daemon
+    assert keeper_daemon.KINDS[0] == "add_page"
+    assert set(keeper_daemon.KINDS) == {"add_page", "keeper_history", "corpus_refresh"}
+
+
+def test_the_lease_outlasts_the_longest_subprocess():
+    """A lease sized for a keeper pull would reap an add_page job mid-enrich."""
+    from agf.discovery import keeper_daemon
+    assert keeper_daemon.LEASE_SEC > keeper_daemon.ADD_PAGE_TIMEOUT_SEC + 120 - 1
+    assert keeper_daemon.LEASE_SEC > keeper_daemon.KEEPER_ONE_TIMEOUT_SEC
+
+
+def test_add_page_kind_runs_the_add_page_cli(monkeypatch):
+    from agf.discovery import keeper_daemon
+    seen = {}
+    monkeypatch.setattr(keeper_daemon.subprocess, "run",
+                        lambda cmd, **kw: seen.update(cmd=cmd, kw=kw))
+    keeper_daemon.run_keeper_subprocess(7, 11, kind="add_page")
+    assert "agf.discovery.add_page_one" in seen["cmd"]
+    assert seen["cmd"][seen["cmd"].index("--advertiser-id") + 1] == "7"
+    assert seen["cmd"][seen["cmd"].index("--job-id") + 1] == "11"
+    # add_page_one takes neither flag; passing them would abort the CLI on argparse.
+    assert "--kind" not in seen["cmd"]
+    assert "--flip-vanished" not in seen["cmd"]
+    assert seen["kw"]["timeout"] > keeper_daemon.ADD_PAGE_TIMEOUT_SEC
+
+
+def test_keeper_kinds_still_run_keeper_one(monkeypatch):
+    from agf.discovery import keeper_daemon
+    seen = {}
+    monkeypatch.setattr(keeper_daemon.subprocess, "run",
+                        lambda cmd, **kw: seen.update(cmd=cmd, kw=kw))
+    keeper_daemon.run_keeper_subprocess(7, 11, kind="keeper_history")
+    assert "agf.discovery.keeper_one" in seen["cmd"]
+    assert "--flip-vanished" not in seen["cmd"]
+
+    keeper_daemon.run_keeper_subprocess(7, 11, kind="corpus_refresh")
+    assert "agf.discovery.keeper_one" in seen["cmd"]
+    assert "--flip-vanished" in seen["cmd"]

@@ -216,8 +216,15 @@ def test_an_advertiser_with_a_blank_page_id_fails_cleanly(seeded):
     engine, aid, job = seeded
     with begin(engine) as conn:
         conn.execute(text("UPDATE public.advertisers SET page_id = '' WHERE id = :a"), {"a": aid})
-
-    rc = add_page_one.run(engine, aid, job, extractor=object())
+    try:
+        rc = add_page_one.run(engine, aid, job, extractor=object())
+    finally:
+        # page_id is UNIQUE, so a leaked '' row collides with the NEXT run of
+        # this test. Restore the sentinel here rather than teaching _clean about
+        # a value it cannot attribute to this module.
+        with begin(engine) as conn:
+            conn.execute(text("UPDATE public.advertisers SET page_id = :p WHERE id = :a"),
+                         {"p": PAGE_ID, "a": aid})
 
     assert rc == 1
     row = _job(engine, job)

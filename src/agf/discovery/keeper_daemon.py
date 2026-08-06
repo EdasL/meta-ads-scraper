@@ -34,19 +34,29 @@ from agf.workers.scheduler import mark_crawled
 
 log = logging.getLogger("agf.keeper")
 
-# Claim priority: keepers (first history for a new find) always beat corpus refresh
-# (re-scrape of a known advertiser).
-KINDS = ("keeper_history", "corpus_refresh")
+# Claim priority: a pasted-link add (kind='add_page', someone is watching a
+# spinner on /discover) beats a keeper's first history, which beats corpus
+# refresh (re-scrape of a known advertiser). add_page rides this daemon rather
+# than getting its own compose service — one fewer place for a prod compose file
+# to drift out of sync with dev (the missing-enrich-service incident, 2026-08-05).
+KINDS = ("add_page", "keeper_history", "corpus_refresh")
 
 # Wall-clock bound for one keeper_one subprocess. The CLI's own SIGALRM fires at
 # AGF_KEEPER_ONE_TIMEOUT_SEC; the subprocess timeout is the grace-padded hard kill.
 KEEPER_ONE_TIMEOUT_SEC = int(os.environ.get("AGF_KEEPER_ONE_TIMEOUT_SEC", "120"))
 
+# add_page does the whole scrape → triage → enrich → score chain in one process,
+# so it needs a far longer budget than a keeper pull. Must match add_page_one's
+# own SIGALRM default (AGF_ADD_PAGE_TIMEOUT_SEC).
+ADD_PAGE_TIMEOUT_SEC = int(os.environ.get("AGF_ADD_PAGE_TIMEOUT_SEC", "600"))
+
 POLL_SEC = float(os.environ.get("AGF_KEEPER_POLL_SEC", "5"))
 
-# Lease must outlast the subprocess hard-kill so the reaper only fires for a
-# genuinely dead/wedged claim, never for a job still legitimately running.
-LEASE_SEC = KEEPER_ONE_TIMEOUT_SEC + 120
+# Lease must outlast the LONGEST subprocess hard-kill so the reaper only fires
+# for a genuinely dead/wedged claim, never for a job still legitimately running.
+# Derived from the max across kinds — an add_page job outlives a keeper pull by
+# minutes, and a lease sized for the keeper would reap it mid-enrich.
+LEASE_SEC = max(KEEPER_ONE_TIMEOUT_SEC, ADD_PAGE_TIMEOUT_SEC) + 120
 
 # Concurrent claim lanes (each an independent poll loop over the same queue).
 LANES = int(os.environ.get("AGF_KEEPER_LANES", "3"))
@@ -54,11 +64,21 @@ LANES = int(os.environ.get("AGF_KEEPER_LANES", "3"))
 
 def run_keeper_subprocess(advertiser_id: int, job_id: int,
                           kind: str = "keeper_history") -> None:
-    """Default runner: the one-shot keeper CLI in a subprocess (crash isolation —
-    a wedged pull can't take a lane down). keeper_one records its own terminal status
+    """Default runner: the matching one-shot CLI in a subprocess (crash isolation —
+    a wedged pull can't take a lane down). Each CLI records its own terminal status
     on the pipeline_jobs row and marks the crawl_log on failure; on timeout we kill and
     let the safety net mark the row. corpus_refresh jobs flip vanished ads (the whole
-    point of a re-scrape); keeper first-pulls never do."""
+    point of a re-scrape); keeper first-pulls never do.
+
+    add_page runs a different CLI: it scrapes, triages AND enriches, so it needs
+    the longer budget and takes neither --kind nor --flip-vanished."""
+    if kind == "add_page":
+        cmd = [sys.executable, "-m", "agf.discovery.add_page_one",
+               "--advertiser-id", str(advertiser_id),
+               "--job-id", str(job_id),
+               "--timeout", str(ADD_PAGE_TIMEOUT_SEC)]
+        subprocess.run(cmd, timeout=ADD_PAGE_TIMEOUT_SEC + 120, check=False)
+        return
     cmd = [sys.executable, "-m", "agf.discovery.keeper_one",
            "--advertiser-id", str(advertiser_id),
            "--job-id", str(job_id),
