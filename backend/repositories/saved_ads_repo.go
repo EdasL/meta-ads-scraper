@@ -30,6 +30,26 @@ func ListSavedAds(ctx context.Context, g *gorm.DB, userEmail string) ([]models.S
 	return rows, err
 }
 
+// ListSavedAdMedia returns the user's saved ads that carry a stored creative,
+// newest save first — the payload for the bulk download. Ads whose creative was
+// never captured are skipped rather than becoming empty zip entries.
+func ListSavedAdMedia(ctx context.Context, g *gorm.DB, userEmail string) ([]models.SavedAdMedia, error) {
+	rows := make([]models.SavedAdMedia, 0)
+	err := db.WithReadTx(ctx, g, func(tx *gorm.DB) error {
+		return tx.Raw(
+			`SELECT external_ad_id, page_name, app_name, media_type, media_s3_key
+			 FROM frontend.saved_ads
+			 WHERE user_email = ? AND media_s3_key IS NOT NULL AND media_s3_key <> ''
+			 ORDER BY saved_at DESC, external_ad_id`,
+			userEmail,
+		).Scan(&rows).Error
+	})
+	if rows == nil {
+		rows = make([]models.SavedAdMedia, 0)
+	}
+	return rows, err
+}
+
 // UpsertSavedAd inserts a saved ad with its render snapshot. A re-save is a
 // no-op: the snapshot and saved_at keep their original values (there are no
 // mutable annotations on an ad, unlike saved gems).

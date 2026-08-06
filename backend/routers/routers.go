@@ -73,6 +73,9 @@ func Init(r *gin.Engine) {
 		api.POST("/saved-gems/:advertiser_id/remove", middlewares.RequireToken(), saved.Remove)
 		// Saved ads (the ad-level sibling of saved gems). Same auth shape.
 		api.GET("/saved-ads", savedAds.List)
+		// Every saved creative as one zip. Static path, so it can't collide with
+		// the :external_ad_id writes below (different method trees anyway).
+		api.GET("/saved-ads/download", savedAds.Download)
 		api.POST("/saved-ads/:external_ad_id", middlewares.RequireToken(), savedAds.Save)
 		api.POST("/saved-ads/:external_ad_id/remove", middlewares.RequireToken(), savedAds.Remove)
 		// Folders for /saved. Identity comes from KeyAuth (never a param);

@@ -574,6 +574,16 @@ type SavedAdRow struct {
 	SavedAt      time.Time `json:"saved_at"`
 }
 
+// SavedAdMedia is one downloadable creative behind GET /api/saved-ads/download.
+// Only ads that actually carry a stored creative appear here.
+type SavedAdMedia struct {
+	ExternalAdID string  `json:"external_ad_id"`
+	PageName     *string `json:"page_name"`
+	AppName      *string `json:"app_name"`
+	MediaType    *string `json:"media_type"`
+	MediaS3Key   string  `json:"media_s3_key"`
+}
+
 // RatingIn is the upsert body for POST /api/ratings/:advertiser_id.
 // rating "none" signals a delete (removes the row entirely).
 type RatingIn struct {
