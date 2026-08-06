@@ -11,6 +11,7 @@ import { SORT_DEFAULT_DIR, shortlistParams } from "@/lib/query";
 import { clearReturnTo, loadReturnTo, rememberOrigin } from "@/lib/returnTo";
 import type { CategoryCount, ShortlistQuery, ShortlistRow } from "@/types/contracts";
 import { GemTable } from "./GemTable";
+import { AddFromAdLibrary } from "./AddFromAdLibrary";
 import { DEFAULT_FILTERS, FilterRail, type Filters } from "./FilterRail";
 
 function SkeletonTable() {
@@ -243,18 +244,34 @@ export function DiscoverFeed() {
   return (
     <main style={{ maxWidth: 1200, margin: "0 auto", padding: "24px 22px 80px" }}>
       <header style={{ marginBottom: 20 }}>
-        <h1 className="t-2xl w-heavy" style={{ margin: 0 }}>
-          Gems
-        </h1>
-        <p className="t-sm" aria-live="polite" style={{ color: "var(--muted)", marginTop: 6 }}>
-          {error
-            ? "The feed didn't load."
-            : result === null
-              ? "Loading…"
-              : refreshing
-                ? "Updating…"
-                : `${total} ${total === 1 ? "gem" : "gems"} found.`}
-        </p>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "flex-start",
+            justifyContent: "space-between",
+            gap: "var(--sp-4)",
+            flexWrap: "wrap",
+          }}
+        >
+          <div style={{ minWidth: 0 }}>
+            <h1 className="t-2xl w-heavy" style={{ margin: 0 }}>
+              Gems
+            </h1>
+            <p className="t-sm" aria-live="polite" style={{ color: "var(--muted)", marginTop: 6 }}>
+              {error
+                ? "The feed didn't load."
+                : result === null
+                  ? "Loading…"
+                  : refreshing
+                    ? "Updating…"
+                    : `${total} ${total === 1 ? "gem" : "gems"} found.`}
+            </p>
+          </div>
+          {/* A finished add re-runs the feed query so the new gem can appear
+              without a manual reload — it is already in the matview by then
+              (the job's own enrich refreshes it). */}
+          <AddFromAdLibrary onAdded={() => setReload((n) => n + 1)} />
+        </div>
       </header>
 
       {!error && result !== null && rows.length > 0 && <ActivationChecklist />}

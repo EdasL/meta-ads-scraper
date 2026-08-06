@@ -152,6 +152,16 @@ def _link_ads_to_app(conn, advertiser_id: int) -> int:
     """), {"adv": advertiser_id}).rowcount
 
 
+# triage_decision's drop reasons, in the words a founder reads on the card. A
+# raw enum ('ratings_over_threshold') is not copy; the note is the only place
+# the veto is ever explained, so it says what was actually found.
+_DROP_REASONS = {
+    "no_us_listing": "its app has no US store listing",
+    "game": "its app is a game",
+    "ratings_over_threshold": "its app already has too many ratings to count as emerging",
+}
+
+
 def _triage_note(stats: dict) -> str | None:
     """A plain sentence for the UI when triage would have rejected this page.
     run_triage returns {'examined', 'kept', 'dropped': {reason: count}, ...} —
@@ -162,9 +172,11 @@ def _triage_note(stats: dict) -> str | None:
         return None
     dropped = stats.get("dropped") or {}
     if not dropped:
-        return "No app store listing was found for this advertiser."
-    reasons = ", ".join(sorted(dropped))
-    return f"Added despite the store-listing check: {reasons}."
+        return "Field Desk found no app store listing for this advertiser."
+    known = [_DROP_REASONS[r] for r in sorted(dropped) if r in _DROP_REASONS]
+    if not known:
+        return "Field Desk kept this advertiser even though the store check rejected it."
+    return f"Kept even though {known[0]}."
 
 
 def run(engine, advertiser_id: int, job_id: int, *,
@@ -184,7 +196,7 @@ def run(engine, advertiser_id: int, job_id: int, *,
 
     # 1. Pull the page's US ads (+ the 16-week series). For a page we have never
     #    seen this IS the initial pull; it also fills in page_name.
-    _phase(engine, job_id, "Pulling ads")
+    _phase(engine, job_id, "Pulling this advertiser's ads")
     try:
         asyncio.run(refresh(engine, extractor, advertiser_id, page_id,
                             flip_vanished=False))
@@ -193,7 +205,7 @@ def run(engine, advertiser_id: int, job_id: int, *,
         return _fail(engine, advertiser_id, job_id, repr(e))
 
     # 2. Derive app candidates from the ads we just stored.
-    _phase(engine, job_id, "Reading the ads")
+    _phase(engine, job_id, "Reading where the ads go")
     try:
         with begin(engine) as conn:
             page_name = conn.execute(text(
@@ -208,7 +220,7 @@ def run(engine, advertiser_id: int, job_id: int, *,
     # 3. Triage this advertiser's own candidates only, so a paste never queues
     #    behind the global status='new' backlog. Advisory here: a failure or a
     #    veto is recorded as a note, never a rejection.
-    _phase(engine, job_id, "Checking the store listing")
+    _phase(engine, job_id, "Checking the app store listing")
     note = None
     if candidate_ids:
         try:
@@ -235,7 +247,7 @@ def run(engine, advertiser_id: int, job_id: int, *,
 
     # 4. Mark the manual add (this is what carries it past the matview's veto
     #    filter) and link the ads we stored in step 1 to the app triage resolved.
-    _phase(engine, job_id, "Adding")
+    _phase(engine, job_id, "Adding to your feed")
     try:
         with begin(engine) as conn:
             conn.execute(text(
@@ -252,7 +264,7 @@ def run(engine, advertiser_id: int, job_id: int, *,
     # 5. The normal enrich path: enrich, score THIS advertiser, refresh the
     #    matview. run_job writes the terminal status on this same job row, so it
     #    is the last writer on the happy path.
-    _phase(engine, job_id, "Enriching")
+    _phase(engine, job_id, "Filling in the details")
     if enrich is not None:
         enrich(engine=engine, advertiser_id=advertiser_id, job_id=job_id)
         with begin(engine) as conn:

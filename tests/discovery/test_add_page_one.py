@@ -158,9 +158,13 @@ def test_a_veto_is_recorded_as_a_note_and_the_advertiser_is_still_added(seeded):
     _store_ad(engine, aid,
               f"https://play.google.com/store/apps/details?id={STORE_ID}", "ADDPAGE_AD_2")
 
+    # 'ratings_over_threshold' is a REAL triage_decision drop reason. The note
+    # must translate it: a raw enum is not copy, and this note is the only place
+    # the founder ever sees why the page was flagged.
     rc = add_page_one.run(
         engine, aid, job, refresh=_noop_refresh,
-        triage=lambda conn, **kw: {"examined": 1, "kept": 0, "dropped": {"no_app": 1}},
+        triage=lambda conn, **kw: {"examined": 1, "kept": 0,
+                                   "dropped": {"ratings_over_threshold": 1}},
         enrich=lambda **kw: None, extractor=object(),
         lookup_ios=lambda ids: {}, lookup_android=lambda ids: {})
 
@@ -168,7 +172,31 @@ def test_a_veto_is_recorded_as_a_note_and_the_advertiser_is_still_added(seeded):
     assert _manual_add(engine, aid) is True, "a veto must not stop the add"
     row = _job(engine, job)
     assert row["status"] == "done"
-    assert row["note"] and "no_app" in row["note"]
+    assert row["note"], "a flagged add must explain itself"
+    assert "ratings_over_threshold" not in row["note"], "no raw enum in user copy"
+    assert "too many ratings" in row["note"]
+
+
+def test_every_triage_drop_reason_has_plain_english_copy(seeded):
+    """The mapping and triage_decision must not drift apart: a reason added to
+    the triage rules with no copy here would surface as a bare fallback."""
+    from agf.discovery.triage import triage_decision
+
+    engine, aid, job = seeded
+    reasons = {"no_us_listing", "game", "ratings_over_threshold"}
+    assert set(add_page_one._DROP_REASONS) == reasons
+
+    for reason in sorted(reasons):
+        note = add_page_one._triage_note({"kept": 0, "dropped": {reason: 1}})
+        # The tell of a leaked identifier is the snake_case shape, not the words:
+        # "its app is a game" legitimately contains "game".
+        assert note, f"{reason} produced no note"
+        assert "_" not in note, f"{reason} leaked into the note as a raw code"
+        assert note != reason
+        assert note.endswith(".")
+
+    # The reasons above are exactly what triage_decision can return.
+    assert triage_decision(None) == ("dropped", "no_us_listing")
 
 
 def test_an_advertiser_with_no_store_links_still_completes_with_a_note(seeded):

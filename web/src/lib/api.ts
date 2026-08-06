@@ -287,6 +287,48 @@ export async function getEnrichStatus(advertiserId: number): Promise<EnrichStatu
   return live<EnrichStatus>(`/enrich/${advertiserId}`);
 }
 
+/** One add-from-Ad-Library job: what the worker has done with a pasted link. */
+export type AddGemStatus = {
+  job_id: number;
+  advertiser_id: number;
+  status: "queued" | "running" | "done" | "error";
+  phase: string | null;
+  page_name: string | null;
+  icon_url: string | null;
+  ad_count: number;
+  triage_note: string | null;
+  error_text: string | null;
+  already_known: boolean;
+};
+
+/**
+ * Queues a scrape of the advertiser behind a pasted Ad Library link.
+ *
+ * This does NOT use `live()`: a rejected link comes back 422 with the reason in
+ * the body, and that reason is the instruction the person needs ("open the
+ * advertiser, then copy the URL"). `live()` throws away the body, so the one
+ * message worth showing would be lost.
+ */
+export async function addGemFromLink(url: string): Promise<AddGemStatus> {
+  const res = await fetch(`${API_BASE}/add-gem`, {
+    method: "POST",
+    cache: "no-store",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    const detail = body && typeof body.detail === "string" ? body.detail : null;
+    throw new Error(detail ?? "That link could not be added.");
+  }
+  return (await res.json()) as AddGemStatus;
+}
+
+/** Polls one add-from-Ad-Library job. */
+export async function getAddGemStatus(jobId: number): Promise<AddGemStatus> {
+  return live<AddGemStatus>(`/add-gem/${jobId}`);
+}
+
 /** Fetch the preference-ranked queue for a user.
  * Scored at serve time from the user's latest ratings; `exclude` lists
  * advertiser_ids the deck already holds so refills never duplicate cards.

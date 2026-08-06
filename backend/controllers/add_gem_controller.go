@@ -60,7 +60,7 @@ func (c *AddGemController) Add(ctx *gin.Context) {
 	if pageID == "" && adID != "" {
 		pageID, err = repositories.PageIDForAdID(rctx, db.DB(), adID)
 		if err != nil {
-			helpers.Detail(ctx, http.StatusInternalServerError, "Could not look up that ad.")
+			helpers.Detail(ctx, http.StatusInternalServerError, "Field Desk could not look up that ad.")
 			return
 		}
 		if pageID == "" {
@@ -73,7 +73,7 @@ func (c *AddGemController) Add(ctx *gin.Context) {
 
 	advertiserID, alreadyKnown, err := repositories.UpsertAdvertiserByPageID(rctx, db.DB(), pageID)
 	if err != nil {
-		helpers.Detail(ctx, http.StatusInternalServerError, "Could not add that advertiser.")
+		helpers.Detail(ctx, http.StatusInternalServerError, "Field Desk could not add that advertiser.")
 		return
 	}
 
@@ -84,12 +84,12 @@ func (c *AddGemController) Add(ctx *gin.Context) {
 		return
 	}
 	if err := repositories.InsertAddPageJob(rctx, db.DB(), advertiserID); err != nil {
-		helpers.Detail(ctx, http.StatusInternalServerError, "Could not start the scrape.")
+		helpers.Detail(ctx, http.StatusInternalServerError, "Field Desk could not start the scrape.")
 		return
 	}
 	row, err := repositories.ActiveAddPageJob(rctx, db.DB(), advertiserID)
 	if err != nil || row == nil {
-		helpers.Detail(ctx, http.StatusInternalServerError, "Could not start the scrape.")
+		helpers.Detail(ctx, http.StatusInternalServerError, "Field Desk could not start the scrape.")
 		return
 	}
 	ctx.JSON(http.StatusAccepted, toAddGemOut(row, alreadyKnown))
@@ -106,11 +106,11 @@ func (c *AddGemController) Status(ctx *gin.Context) {
 	defer cancel()
 	row, err := repositories.AddPageJobByID(rctx, db.DB(), jobID)
 	if err != nil {
-		helpers.Detail(ctx, http.StatusInternalServerError, "Could not read that job.")
+		helpers.Detail(ctx, http.StatusInternalServerError, "Field Desk could not read that job.")
 		return
 	}
 	if row == nil {
-		helpers.Detail(ctx, http.StatusNotFound, "No such job.")
+		helpers.Detail(ctx, http.StatusNotFound, "That job does not exist.")
 		return
 	}
 	ctx.JSON(http.StatusOK, toAddGemOut(row, false))
