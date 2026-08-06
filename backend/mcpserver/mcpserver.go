@@ -64,6 +64,9 @@ func buildServer(u middlewares.AuthedUser) *mcp.Server {
 		mcp.AddTool(s, &mcp.Tool{Name: "scraping_health",
 			Description: "Discovery engine health: pulse, discovery rate, idea diversity."},
 			h.scrapingHealth)
+		mcp.AddTool(s, &mcp.Tool{Name: "keyword_yield",
+			Description: "Sweep keywords ranked by how many candidates survived triage. Shows status, sweeps used, candidates, keepers, and dry streak."},
+			h.keywordYield)
 	}
 	return s
 }

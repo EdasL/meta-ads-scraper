@@ -695,3 +695,22 @@ type PreferenceCardRow struct {
 	PLike float64 `json:"p_like" gorm:"column:p_like"`
 	Why   string  `json:"why" gorm:"column:why"`
 }
+
+// KeywordYieldRow is one discovery.dynamic_keywords row joined to its
+// candidate outcomes: how many candidates the keyword surfaced and how many
+// of those survived triage. Keepers is the yield number that matters — a
+// keyword can flood candidates and keep none.
+type KeywordYieldRow struct {
+	Keyword      string     `json:"keyword"`
+	Source       string     `json:"source"`
+	Status       string     `json:"status"`
+	SweepsUsed   int        `json:"sweeps_used"`
+	Candidates   int        `json:"candidates"`
+	Keepers      int        `json:"keepers"`
+	DryStreak    int        `json:"dry_streak"`
+	RestCount    int        `json:"rest_count"`
+	LastSweptAt  *time.Time `json:"last_swept_at"`
+	// The field name does not derive the column name here, so state it: gorm
+	// would look for "next_eligible" and scan the value away as null.
+	NextEligible *time.Time `json:"next_eligible_at" gorm:"column:next_eligible_at"`
+}

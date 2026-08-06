@@ -175,6 +175,58 @@ func TestMCPServer(t *testing.T) {
 		require.Contains(t, out, "idea_diversity")
 	})
 
+	t.Run("keyword_yield reports keeper counts per keyword", func(t *testing.T) {
+		kw := fmt.Sprintf("mcp-yield-kw-%d", time.Now().UnixNano())
+		pfx := fmt.Sprintf("MCPYIELD-%d-", time.Now().UnixNano())
+		require.NoError(t, db.DB().Exec(
+			`INSERT INTO discovery.dynamic_keywords (keyword, source, status, sweeps_used, new_candidates_total)
+			 VALUES (?, 'mcp-test', 'active', 3, 2)`, kw).Error)
+		require.NoError(t, db.DB().Exec(
+			`INSERT INTO discovery.candidates (page_id, store, store_id, source_keyword, status)
+			 VALUES (?, 'ios', ?, ?, 'kept'), (?, 'ios', ?, ?, 'dropped')`,
+			pfx+"1", pfx+"1", kw, pfx+"2", pfx+"2", kw).Error)
+		defer db.DB().Exec(`DELETE FROM discovery.candidates WHERE page_id LIKE ?`, pfx+"%")
+		defer db.DB().Exec(`DELETE FROM discovery.dynamic_keywords WHERE keyword = ?`, kw)
+
+		sess, err := connect(adminKey)
+		require.NoError(t, err)
+		defer sess.Close()
+		res, err := sess.CallTool(ctx, &mcp.CallToolParams{
+			Name:      "keyword_yield",
+			Arguments: map[string]any{"source": "mcp-test"},
+		})
+		require.NoError(t, err)
+		require.False(t, res.IsError, "content: %s", firstText(res))
+
+		var out struct {
+			Keywords []struct {
+				Keyword    string `json:"keyword"`
+				Status     string `json:"status"`
+				SweepsUsed int    `json:"sweeps_used"`
+				Candidates int    `json:"candidates"`
+				Keepers    int    `json:"keepers"`
+			} `json:"keywords"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(firstText(res)), &out))
+		require.Len(t, out.Keywords, 1, "source filter isolates the seeded keyword")
+		require.Equal(t, kw, out.Keywords[0].Keyword)
+		require.Equal(t, "active", out.Keywords[0].Status)
+		require.Equal(t, 3, out.Keywords[0].SweepsUsed)
+		require.Equal(t, 2, out.Keywords[0].Candidates, "both candidates counted")
+		require.Equal(t, 1, out.Keywords[0].Keepers, "only the kept one")
+	})
+
+	t.Run("member cannot see or call keyword_yield", func(t *testing.T) {
+		sess, err := connect(memberKey)
+		require.NoError(t, err)
+		defer sess.Close()
+		require.False(t, toolNames(sess)["keyword_yield"], "admin tool must not be listed")
+		res, err := sess.CallTool(ctx, &mcp.CallToolParams{Name: "keyword_yield"})
+		if err == nil {
+			require.True(t, res.IsError, "member keyword_yield must not succeed")
+		}
+	})
+
 	t.Run("no bearer is rejected before handshake", func(t *testing.T) {
 		_, err := connect("")
 		require.Error(t, err, "anonymous connect must fail at the HTTP 401")
