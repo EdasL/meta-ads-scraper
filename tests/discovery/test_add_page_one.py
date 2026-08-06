@@ -3,9 +3,12 @@ own transactions (phase writes, terminal status, crawl_log marker), so these use
 the session committing engine (`_migrated_engine`) with an ADDPAGE-sentinel
 advertiser and DELETE-before/after cleanup, mirroring tests/discovery/test_keeper_one.py.
 
-Every collaborator (scrape, triage, enrich) is injected, so these assert
-PERSISTED STATE — what the DB looks like afterwards — not call counts.
+The scrape and the enrich are injected; the STORE LOOKUPS are stubbed at the same
+seam production uses, so these assert persisted state — what the DB looks like
+afterwards — rather than call counts.
 """
+from types import SimpleNamespace
+
 import pytest
 from sqlalchemy import text
 
@@ -15,6 +18,16 @@ from agf.discovery import add_page_one
 PAGE_ID = "ADDPAGE0001"
 OTHER_PAGE_ID = "ADDPAGE0002"
 STORE_ID = "com.addpage.probe"
+PLAY_URL = f"https://play.google.com/store/apps/details?id={STORE_ID}"
+
+
+def _meta(*, name="Probe App", rating_count=10, is_game=False):
+    """The AppMeta shape triage_decision + _app_dict read."""
+    return SimpleNamespace(
+        name=name, seller="Probe Ltd", genre="Education", release_date=None,
+        avg_rating=4.5, rating_count=rating_count, installs=1000,
+        icon_url="https://example.com/i.png", screenshots=None,
+        price_label="Free", description="A probe app.", is_game=is_game)
 
 
 def _clean(engine):
@@ -31,9 +44,10 @@ def _clean(engine):
             conn.execute(text(
                 "DELETE FROM adtech.advertiser_scores WHERE advertiser_id = ANY(:i)"), {"i": ids})
             conn.execute(text("DELETE FROM public.ads WHERE advertiser_id = ANY(:i)"), {"i": ids})
-            conn.execute(text(
-                "DELETE FROM discovery.candidates WHERE page_id IN (:p, :o)"),
-                {"p": PAGE_ID, "o": OTHER_PAGE_ID})
+        conn.execute(text(
+            "DELETE FROM discovery.candidates WHERE page_id IN (:p, :o)"),
+            {"p": PAGE_ID, "o": OTHER_PAGE_ID})
+        if ids:
             conn.execute(text("DELETE FROM public.advertisers WHERE id = ANY(:i)"), {"i": ids})
         conn.execute(text("DELETE FROM public.apps WHERE store_id = :s"), {"s": STORE_ID})
 
@@ -49,7 +63,7 @@ def db_engine(_migrated_engine):
 
 @pytest.fixture
 def seeded(db_engine):
-    """An advertiser + a running add_page job, the state the API leaves behind."""
+    """An advertiser + a running add_page job — the state the API leaves behind."""
     with begin(db_engine) as conn:
         aid = conn.execute(text(
             "INSERT INTO public.advertisers (page_id) VALUES (:p) RETURNING id"),
@@ -75,8 +89,15 @@ def _manual_add(engine, advertiser_id):
             {"a": advertiser_id}).scalar()
 
 
+def _linked_ads(engine, advertiser_id):
+    with engine.connect() as conn:
+        return conn.execute(text(
+            "SELECT count(*) FROM public.ads a JOIN public.apps ap ON ap.id = a.app_id "
+            "WHERE a.advertiser_id = :a AND ap.store_id = :s"),
+            {"a": advertiser_id, "s": STORE_ID}).scalar()
+
+
 def _store_ad(engine, advertiser_id, link_url, external_ad_id):
-    """One ad whose destination is a Play Store listing."""
     with begin(engine) as conn:
         conn.execute(text(
             "INSERT INTO public.ads (external_ad_id, advertiser_id, link_url, is_active) "
@@ -88,6 +109,11 @@ async def _noop_refresh(engine, extractor, advertiser_id, page_id, flip_vanished
     return {"ads_stored": 0, "truncated": False, "flipped": 0}
 
 
+def _android(meta):
+    """A google-play lookup stub keyed the way run_triage's callers key it."""
+    return lambda ids: {STORE_ID: meta} if STORE_ID in list(ids) else {}
+
+
 def test_finishes_done_and_marks_the_advertiser_as_a_manual_add(seeded):
     engine, aid, job = seeded
     seen = {}
@@ -96,11 +122,9 @@ def test_finishes_done_and_marks_the_advertiser_as_a_manual_add(seeded):
         seen["args"] = (advertiser_id, page_id, flip_vanished)
         return {"ads_stored": 3}
 
-    rc = add_page_one.run(engine, aid, job,
-                          refresh=fake_refresh,
-                          triage=lambda conn, **kw: {"examined": 1, "kept": 1, "dropped": {}},
-                          enrich=lambda **kw: None,
-                          extractor=object())
+    rc = add_page_one.run(engine, aid, job, refresh=fake_refresh,
+                          enrich=lambda **kw: None, extractor=object(),
+                          lookup_ios=lambda ids: {}, lookup_android=lambda ids: {})
 
     assert rc == 0
     assert seen["args"] == (aid, PAGE_ID, False), "the scrape must not flip vanished ads"
@@ -108,103 +132,86 @@ def test_finishes_done_and_marks_the_advertiser_as_a_manual_add(seeded):
     assert _job(engine, job)["status"] == "done"
 
 
-def test_a_kept_candidate_links_the_stored_ads_to_the_app(seeded):
-    """The ordering bug this module exists to avoid: ads are stored before triage
-    can resolve the app, so without the backfill they keep app_id NULL and the
-    gem renders with no app name, icon or ratings."""
+def test_a_resolved_listing_links_the_stored_ads_to_the_app(seeded):
+    """Ads are stored before any app exists to link them to, so the backfill is
+    what gives the gem its name, icon and ratings."""
     engine, aid, job = seeded
-    _store_ad(engine, aid,
-              f"https://play.google.com/store/apps/details?id={STORE_ID}", "ADDPAGE_AD_1")
-
-    # A triage stand-in that does what the real one does on a keep: create the
-    # app row and point the candidate at this advertiser.
-    def fake_triage(conn, *, lookup_ios, lookup_android, only_ids=(), limit=None):
-        only_ids = list(only_ids or ())
-        app_id = conn.execute(text(
-            "INSERT INTO public.apps (store, store_id, name) "
-            "VALUES ('android', :s, 'Probe App') "
-            "ON CONFLICT (store, store_id) DO UPDATE SET name = EXCLUDED.name "
-            "RETURNING id"), {"s": STORE_ID}).scalar_one()
-        conn.execute(text(
-            "UPDATE discovery.candidates SET status = 'kept', kept_advertiser_id = :a, "
-            "triaged_at = now() WHERE id = ANY(:i)"), {"a": aid, "i": only_ids})
-        assert app_id
-        return {"examined": len(only_ids), "kept": len(only_ids), "dropped": {}}
+    _store_ad(engine, aid, PLAY_URL, "ADDPAGE_AD_1")
 
     rc = add_page_one.run(engine, aid, job, refresh=_noop_refresh,
-                          triage=fake_triage, enrich=lambda **kw: None,
-                          extractor=object(), lookup_ios=lambda ids: {},
-                          lookup_android=lambda ids: {})
+                          enrich=lambda **kw: None, extractor=object(),
+                          lookup_ios=lambda ids: {}, lookup_android=_android(_meta()))
     assert rc == 0
 
     with engine.connect() as conn:
         cand = conn.execute(text(
-            "SELECT store, store_id, technique, source_keyword FROM discovery.candidates "
-            "WHERE page_id = :p"), {"p": PAGE_ID}).mappings().all()
-        linked = conn.execute(text(
-            "SELECT count(*) FROM public.ads a JOIN public.apps ap ON ap.id = a.app_id "
-            "WHERE a.advertiser_id = :a AND ap.store_id = :s"),
-            {"a": aid, "s": STORE_ID}).scalar()
+            "SELECT store, store_id, status, kept_advertiser_id, technique, source_keyword "
+            "FROM discovery.candidates WHERE page_id = :p"), {"p": PAGE_ID}).mappings().all()
 
     assert len(cand) == 1
     assert cand[0]["store"] == "android" and cand[0]["store_id"] == STORE_ID
+    assert cand[0]["status"] == "kept" and cand[0]["kept_advertiser_id"] == aid
     assert cand[0]["technique"] == "manual_add", "provenance must not read as sweep yield"
     assert cand[0]["source_keyword"] is None
-    assert linked == 1, "the stored ad must end up linked to the triaged app"
+    assert _linked_ads(engine, aid) == 1
+    assert _job(engine, job)["note"] is None, "a clean keep needs no note"
 
 
-def test_a_veto_is_recorded_as_a_note_and_the_advertiser_is_still_added(seeded):
+def test_a_page_the_sweep_already_dropped_is_still_promoted(seeded):
+    """THE prod bug (2026-08-06, 'Zutobi Drivers Ed'): discovery.candidates never
+    regresses status, and run_triage only reads status='new'. A page the sweep
+    already dropped therefore got zero triage, zero promotion, and every scraped
+    ad kept app_id NULL — a gem with no name, icon or ratings. Pasting a
+    previously-rejected page is the single most likely use of this feature, so it
+    must promote anyway and say why it was flagged."""
     engine, aid, job = seeded
-    _store_ad(engine, aid,
-              f"https://play.google.com/store/apps/details?id={STORE_ID}", "ADDPAGE_AD_2")
+    _store_ad(engine, aid, PLAY_URL, "ADDPAGE_AD_2")
+    with begin(engine) as conn:
+        conn.execute(text(
+            "INSERT INTO discovery.candidates "
+            "(page_id, store, store_id, status, drop_reason, triaged_at) "
+            "VALUES (:p, 'android', :s, 'dropped', 'ratings_over_threshold', now())"),
+            {"p": PAGE_ID, "s": STORE_ID})
 
-    # 'ratings_over_threshold' is a REAL triage_decision drop reason. The note
-    # must translate it: a raw enum is not copy, and this note is the only place
-    # the founder ever sees why the page was flagged.
     rc = add_page_one.run(
-        engine, aid, job, refresh=_noop_refresh,
-        triage=lambda conn, **kw: {"examined": 1, "kept": 0,
-                                   "dropped": {"ratings_over_threshold": 1}},
-        enrich=lambda **kw: None, extractor=object(),
-        lookup_ios=lambda ids: {}, lookup_android=lambda ids: {})
+        engine, aid, job, refresh=_noop_refresh, enrich=lambda **kw: None,
+        extractor=object(), lookup_ios=lambda ids: {},
+        lookup_android=_android(_meta(rating_count=5_000_000)))
 
     assert rc == 0
-    assert _manual_add(engine, aid) is True, "a veto must not stop the add"
-    row = _job(engine, job)
-    assert row["status"] == "done"
-    assert row["note"], "a flagged add must explain itself"
-    assert "ratings_over_threshold" not in row["note"], "no raw enum in user copy"
-    assert "too many ratings" in row["note"]
+    assert _manual_add(engine, aid) is True
+    assert _linked_ads(engine, aid) == 1, "the previously-dropped page must still link its app"
+    with engine.connect() as conn:
+        status, kept = conn.execute(text(
+            "SELECT status, kept_advertiser_id FROM discovery.candidates WHERE page_id = :p"),
+            {"p": PAGE_ID}).one()
+    assert (status, kept) == ("kept", aid)
+    note = _job(engine, job)["note"]
+    assert note and "too many ratings" in note, "the veto reason must still be shown"
 
 
-def test_every_triage_drop_reason_has_plain_english_copy(seeded):
-    """The mapping and triage_decision must not drift apart: a reason added to
-    the triage rules with no copy here would surface as a bare fallback."""
-    from agf.discovery.triage import triage_decision
-
+def test_a_game_is_added_with_its_reason_shown(seeded):
     engine, aid, job = seeded
-    reasons = {"no_us_listing", "game", "ratings_over_threshold"}
-    assert set(add_page_one._DROP_REASONS) == reasons
+    _store_ad(engine, aid, PLAY_URL, "ADDPAGE_AD_3")
 
-    for reason in sorted(reasons):
-        note = add_page_one._triage_note({"kept": 0, "dropped": {reason: 1}})
-        # The tell of a leaked identifier is the snake_case shape, not the words:
-        # "its app is a game" legitimately contains "game".
-        assert note, f"{reason} produced no note"
-        assert "_" not in note, f"{reason} leaked into the note as a raw code"
-        assert note != reason
-        assert note.endswith(".")
+    rc = add_page_one.run(engine, aid, job, refresh=_noop_refresh,
+                          enrich=lambda **kw: None, extractor=object(),
+                          lookup_ios=lambda ids: {},
+                          lookup_android=_android(_meta(is_game=True)))
 
-    # The reasons above are exactly what triage_decision can return.
-    assert triage_decision(None) == ("dropped", "no_us_listing")
+    assert rc == 0
+    assert _manual_add(engine, aid) is True
+    assert _linked_ads(engine, aid) == 1
+    assert "is a game" in (_job(engine, job)["note"] or "")
 
 
 def test_an_advertiser_with_no_store_links_still_completes_with_a_note(seeded):
     engine, aid, job = seeded
-    _store_ad(engine, aid, "https://sleepwave.app/start", "ADDPAGE_AD_3")
+    _store_ad(engine, aid, "https://sleepwave.app/start", "ADDPAGE_AD_4")
 
     rc = add_page_one.run(engine, aid, job, refresh=_noop_refresh,
-                          enrich=lambda **kw: None, extractor=object())
+                          enrich=lambda **kw: None, extractor=object(),
+                          lookup_ios=lambda ids: {}, lookup_android=lambda ids: {})
 
     assert rc == 0
     assert _manual_add(engine, aid) is True
@@ -215,6 +222,23 @@ def test_an_advertiser_with_no_store_links_still_completes_with_a_note(seeded):
         assert conn.execute(text(
             "SELECT count(*) FROM discovery.candidates WHERE page_id = :p"),
             {"p": PAGE_ID}).scalar() == 0
+
+
+def test_a_store_outage_does_not_block_the_add(seeded):
+    """A failing store lookup must not cost the founder the advertiser."""
+    engine, aid, job = seeded
+    _store_ad(engine, aid, PLAY_URL, "ADDPAGE_AD_5")
+
+    def boom(ids):
+        raise RuntimeError("play store down")
+
+    rc = add_page_one.run(engine, aid, job, refresh=_noop_refresh,
+                          enrich=lambda **kw: None, extractor=object(),
+                          lookup_ios=lambda ids: {}, lookup_android=boom)
+
+    assert rc == 0
+    assert _manual_add(engine, aid) is True
+    assert _job(engine, job)["status"] == "done"
 
 
 def test_a_scrape_failure_writes_a_terminal_error_and_a_crawl_marker(seeded):
@@ -247,9 +271,7 @@ def test_an_advertiser_with_a_blank_page_id_fails_cleanly(seeded):
     try:
         rc = add_page_one.run(engine, aid, job, extractor=object())
     finally:
-        # page_id is UNIQUE, so a leaked '' row collides with the NEXT run of
-        # this test. Restore the sentinel here rather than teaching _clean about
-        # a value it cannot attribute to this module.
+        # page_id is UNIQUE, so a leaked '' row collides with the NEXT run.
         with begin(engine) as conn:
             conn.execute(text("UPDATE public.advertisers SET page_id = :p WHERE id = :a"),
                          {"p": PAGE_ID, "a": aid})
@@ -261,13 +283,30 @@ def test_an_advertiser_with_a_blank_page_id_fails_cleanly(seeded):
 
 
 def test_a_job_pointing_at_no_advertiser_fails_cleanly(seeded):
-    """The daemon must never wedge on a job whose advertiser was deleted."""
     engine, _aid, job = seeded
-
     rc = add_page_one.run(engine, 999999999, job, extractor=object())
-
     assert rc == 1
     assert _job(engine, job)["status"] == "error"
+
+
+def test_every_triage_drop_reason_has_plain_english_copy():
+    """The mapping and triage_decision must not drift apart: a reason added to
+    the triage rules with no copy here would surface as no note at all."""
+    from agf.discovery.triage import triage_decision
+
+    reasons = {"no_us_listing", "game", "ratings_over_threshold"}
+    assert set(add_page_one._DROP_REASONS) == reasons
+
+    for reason in sorted(reasons):
+        note = add_page_one._note_for([reason])
+        # The tell of a leaked identifier is the snake_case shape, not the words:
+        # "its app is a game" legitimately contains "game".
+        assert note, f"{reason} produced no note"
+        assert "_" not in note, f"{reason} leaked into the note as a raw code"
+        assert note.endswith(".")
+
+    assert add_page_one._note_for([]) is None
+    assert triage_decision(None) == ("dropped", "no_us_listing")
 
 
 def test_manual_add_survives_a_hard_veto_in_the_matview(seeded):

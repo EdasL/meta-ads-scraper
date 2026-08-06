@@ -181,8 +181,14 @@ services:
   # Keeper-history consumer: drains kind='keeper_history' pipeline_jobs (the
   # worker tick enqueues due keepers each pass). 3 subprocess lanes absorb
   # ≥1,000 keepers/day so kept apps become scored DB rows within the hour
-  # (spec 2026-07-12-keeper-absorption). No Gemini/S3 — keeper pulls are pure
-  # Meta listing + DB writes.
+  # (spec 2026-07-12-keeper-absorption).
+  #
+  # It ALSO drains kind='add_page' (spec 2026-08-06), which runs a full enrich
+  # inline — so this service needs Gemini + S3 after all. The old "no Gemini/S3,
+  # keeper pulls are pure Meta listing + DB writes" comment was true until
+  # add_page landed here, and the first live prod run died with "Unable to
+  # locate credentials" at the enrich step. Any new kind added to
+  # keeper_daemon.KINDS must have its environment checked against this list.
   keeper:
     image: europe-west1-docker.pkg.dev/peon-489013/agf/worker:latest
     restart: unless-stopped
@@ -194,6 +200,13 @@ services:
       AGF_KEEPER_LANES: ${AGF_KEEPER_LANES:-3}
       AGF_KEEPER_ONE_TIMEOUT_SEC: ${AGF_KEEPER_ONE_TIMEOUT_SEC:-120}
       AGF_KEEPER_POLL_SEC: ${AGF_KEEPER_POLL_SEC:-5}
+      # add_page only: the inline enrich writes creatives to GCS and calls Gemini.
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      S3_ENDPOINT: ${S3_ENDPOINT}
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      S3_BUCKET: ${S3_BUCKET}
+      AGF_ADD_PAGE_TIMEOUT_SEC: ${AGF_ADD_PAGE_TIMEOUT_SEC:-600}
     depends_on:
       cloud-sql-proxy:
         condition: service_started

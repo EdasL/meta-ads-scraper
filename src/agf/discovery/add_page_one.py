@@ -43,11 +43,12 @@ import sys
 from sqlalchemy import text
 
 from agf.classify import classify_url
-from agf.db.candidates import upsert_sweep_candidate
+from agf.db import repo
+from agf.db.candidates import mark_triaged, upsert_sweep_candidate
 from agf.db.engine import begin, get_engine
 from agf.db.pipeline_jobs import set_job_note, set_job_phase, set_job_status
 from agf.discovery.keeper_history import refresh_one_advertiser
-from agf.discovery.triage import run_triage
+from agf.discovery.triage import _app_dict, triage_decision
 from agf.workers.scheduler import mark_crawled
 
 log = logging.getLogger("agf.add_page")
@@ -162,25 +163,73 @@ _DROP_REASONS = {
 }
 
 
-def _triage_note(stats: dict) -> str | None:
-    """A plain sentence for the UI when triage would have rejected this page.
-    run_triage returns {'examined', 'kept', 'dropped': {reason: count}, ...} —
-    there is no single veto field."""
-    if not stats:
-        return "Field Desk could not check the app store listing."
-    if stats.get("kept"):
-        return None
-    dropped = stats.get("dropped") or {}
-    if not dropped:
-        return "Field Desk found no app store listing for this advertiser."
-    known = [_DROP_REASONS[r] for r in sorted(dropped) if r in _DROP_REASONS]
+def _note_for(reasons: list[str]) -> str | None:
+    """The sentence shown on the card. None when nothing was flagged."""
+    known = [_DROP_REASONS[r] for r in reasons if r in _DROP_REASONS]
     if not known:
-        return "Field Desk kept this advertiser even though the store check rejected it."
+        return None
     return f"Kept even though {known[0]}."
 
 
+def promote_candidates(conn, advertiser_id: int, candidate_ids: list[int], *,
+                       lookup_ios, lookup_android) -> tuple[str | None, int]:
+    """Resolve each candidate's store listing and link it to this advertiser
+    REGARDLESS of the triage verdict. Returns (note, promoted).
+
+    This deliberately does NOT call run_triage. Two reasons, both found on the
+    first live prod run (2026-08-06, page 1680462865414117 'Zutobi Drivers Ed'):
+
+    1. `discovery.candidates` status never regresses, and run_triage only reads
+       status='new'. The pages a founder pastes are very often ones the sweep
+       already DROPPED, so triage examined zero candidates, promoted nothing,
+       and all 43 scraped ads stayed app_id NULL — a gem with no name, icon or
+       ratings. A paste is the sanctioned exception to never-regress.
+    2. run_triage only promotes 'kept' candidates. A pasted page that the vetoes
+       reject still has to end up with its app linked, or "add it anyway" adds a
+       nameless shell. The verdict becomes the note; it never blocks the link.
+
+    The advertiser row already exists (the API created it), so this only needs
+    the app upsert plus the candidate's kept_advertiser_id.
+    """
+    if not candidate_ids:
+        return "None of this advertiser's ads link to an app store listing.", 0
+
+    rows = conn.execute(text(
+        "SELECT id, store, store_id FROM discovery.candidates WHERE id = ANY(:i)"),
+        {"i": candidate_ids}).mappings().all()
+
+    resolved: dict[str, dict] = {}
+    for store, lookup in (("ios", lookup_ios), ("android", lookup_android)):
+        ids = [r["store_id"] for r in rows if r["store"] == store]
+        if not ids:
+            continue
+        try:
+            resolved[store] = lookup(ids) or {}
+        except Exception:  # noqa: BLE001 — a store outage must not block the add
+            log.exception("add_page %d: %s store lookup failed", advertiser_id, store)
+            resolved[store] = {}
+
+    reasons: list[str] = []
+    promoted = 0
+    for row in rows:
+        meta = resolved.get(row["store"], {}).get(str(row["store_id"]))
+        _verdict, reason = triage_decision(meta)
+        if reason:
+            reasons.append(reason)
+        if meta is None:
+            # No listing to link. Leave the candidate's own status alone.
+            continue
+        repo.upsert_app(conn, _app_dict(row["store"], row["store_id"], meta))
+        mark_triaged(conn, row["id"], status="kept", kept_advertiser_id=advertiser_id)
+        promoted += 1
+
+    if not promoted:
+        return "Field Desk found no app store listing for this advertiser.", 0
+    return _note_for(reasons), promoted
+
+
 def run(engine, advertiser_id: int, job_id: int, *,
-        refresh=refresh_one_advertiser, triage=run_triage, enrich=None,
+        refresh=refresh_one_advertiser, enrich=None,
         extractor=None, lookup_ios=None, lookup_android=None) -> int:
     """Execute one pasted-link add. Returns 0 on success, 1 on failure — the
     same contract as keeper_one.run. Every collaborator is injectable so the
@@ -217,33 +266,30 @@ def run(engine, advertiser_id: int, job_id: int, *,
         log.exception("add_page %d: could not read the ads", advertiser_id)
         return _fail(engine, advertiser_id, job_id, repr(e))
 
-    # 3. Triage this advertiser's own candidates only, so a paste never queues
-    #    behind the global status='new' backlog. Advisory here: a failure or a
-    #    veto is recorded as a note, never a rejection.
+    # 3. Resolve each candidate's store listing and link it to this advertiser,
+    #    whatever the vetoes say. See promote_candidates for why this cannot be
+    #    run_triage.
     _phase(engine, job_id, "Checking the app store listing")
     note = None
-    if candidate_ids:
-        try:
-            if lookup_ios is None or lookup_android is None:
-                from functools import partial
+    try:
+        if lookup_ios is None or lookup_android is None:
+            from functools import partial
 
-                import httpx
+            import httpx
 
-                from agf.enrich_full.appstore import (lookup_google_play,
-                                                      lookup_itunes_batch)
-                store_client = httpx.Client(timeout=20, follow_redirects=True)
-                lookup_ios = lookup_ios or partial(lookup_itunes_batch, store_client, pause=3.0)
-                lookup_android = lookup_android or lookup_google_play
-            with begin(engine) as conn:
-                stats = triage(conn, lookup_ios=lookup_ios,
-                               lookup_android=lookup_android,
-                               only_ids=candidate_ids) or {}
-            note = _triage_note(stats)
-        except Exception:  # noqa: BLE001 — advisory, never fatal
-            log.exception("add_page %d: triage failed (continuing)", advertiser_id)
-            note = "Field Desk could not check the app store listing."
-    else:
-        note = "None of this advertiser's ads link to an app store listing."
+            from agf.enrich_full.appstore import (lookup_google_play,
+                                                  lookup_itunes_batch)
+            store_client = httpx.Client(timeout=20, follow_redirects=True)
+            lookup_ios = lookup_ios or partial(lookup_itunes_batch, store_client, pause=3.0)
+            lookup_android = lookup_android or lookup_google_play
+        with begin(engine) as conn:
+            note, promoted = promote_candidates(
+                conn, advertiser_id, candidate_ids,
+                lookup_ios=lookup_ios, lookup_android=lookup_android)
+        log.info("add_page %d: promoted %d candidate(s)", advertiser_id, promoted)
+    except Exception:  # noqa: BLE001 — advisory, never fatal
+        log.exception("add_page %d: store lookup failed (continuing)", advertiser_id)
+        note = "Field Desk could not check the app store listing."
 
     # 4. Mark the manual add (this is what carries it past the matview's veto
     #    filter) and link the ads we stored in step 1 to the app triage resolved.
