@@ -15,6 +15,7 @@ Spec: `docs/superpowers/specs/2026-08-06-mcp-engine-control-design.md`
 - **Product copy voice:** plain, clear, professional. Tool descriptions and error strings are short and honest. No marketing words ("leverage", "seamless", "unlock", "empower", "supercharge", "delightful"), no exclamation marks.
 - **Error strings:** lowercase sentence, ending in a period, never leaking a driver error. Match the existing style: `"something went wrong reading your ratings."`
 - **Repositories use raw SQL through gorm**, wrapped in `db.WithReadTx` / `db.WithWriteTx`. No gorm model/AutoMigrate calls.
+- **Every field of a model scanned from raw SQL carries an explicit `gorm:"column:<name>"` tag**, matching the selected column exactly. This is the codebase convention (174 existing instances in `models.go`) and it is load-bearing, not cosmetic: without a tag, gorm derives the column from the Go field name, and a mismatch scans **silently as the zero value** rather than erroring. A field that no test asserts on will ship as a permanent `null`. Found live in Task 2: `NextEligible` selecting `next_eligible_at` derived to `next_eligible` and always returned null. Fields whose value is computed in Go rather than scanned (e.g. a URL assembled by the handler) take `gorm:"-"`.
 - **Admin gating is two-layer**, both required: (a) register the tool inside the `if u.Role == "admin"` block in `buildServer`, (b) re-check `if h.u.Role != "admin"` as the first statement of the handler and return `errors.New("This tool requires an admin account.")`.
 - **`clamp_hunt_settings` (Python, `src/agf/db/hunts.py`) stays the single bound authority** for hunt settings. Go passes settings through and does not re-clamp. Bounds for documentation only: `page_cap` 1–100, `patience` 1–10, `listing_pages` 1–30, `min_pages` 1–30.
 - **Integration tests require `AGF_IT_DB_URL`.** With it unset, `TestMain` calls `os.Exit(0)` and the suite reports success having run nothing. Every verification step below must confirm tests actually ran. Local DSN: `postgres://agf:agf@localhost:55433/agf_it?sslmode=disable`.
@@ -798,24 +799,28 @@ Append to `backend/models/models.go`:
 // nullable in the table (unjudged results fail open), so Relevant + OffTarget
 // need not sum to Found.
 type HuntTermYieldRow struct {
-	SourceTerm string `json:"source_term"`
-	Rounds     int    `json:"rounds"`
-	Found      int    `json:"found"`
-	Kept       int    `json:"kept"`
-	Relevant   int    `json:"relevant"`
-	OffTarget  int    `json:"off_target"`
+	SourceTerm string `json:"source_term" gorm:"column:source_term"`
+	Rounds     int    `json:"rounds" gorm:"column:rounds"`
+	Found      int    `json:"found" gorm:"column:found"`
+	Kept       int    `json:"kept" gorm:"column:kept"`
+	Relevant   int    `json:"relevant" gorm:"column:relevant"`
+	OffTarget  int    `json:"off_target" gorm:"column:off_target"`
 }
 
 // UserOverviewRow is one account with its activity counts.
+//
+// Provider's column is auth_provider, NOT the snake_case of the field name —
+// without the explicit tag gorm looks for "provider" and scans a silent empty
+// string. See the Global Constraints note on column tags.
 type UserOverviewRow struct {
-	Email       string     `json:"email"`
-	Name        *string    `json:"name"`
-	Role        string     `json:"role"`
-	Provider    string     `json:"auth_provider"`
-	Ratings     int        `json:"ratings"`
-	SavedGems   int        `json:"saved_gems"`
-	CreatedAt   time.Time  `json:"created_at"`
-	OnboardedAt *time.Time `json:"onboarded_at"`
+	Email       string     `json:"email" gorm:"column:email"`
+	Name        *string    `json:"name" gorm:"column:name"`
+	Role        string     `json:"role" gorm:"column:role"`
+	Provider    string     `json:"auth_provider" gorm:"column:auth_provider"`
+	Ratings     int        `json:"ratings" gorm:"column:ratings"`
+	SavedGems   int        `json:"saved_gems" gorm:"column:saved_gems"`
+	CreatedAt   time.Time  `json:"created_at" gorm:"column:created_at"`
+	OnboardedAt *time.Time `json:"onboarded_at" gorm:"column:onboarded_at"`
 }
 ```
 
@@ -1039,18 +1044,20 @@ Append to `backend/models/models.go`:
 // AdCreativeRow is one creative with the URL that serves its bytes. MCP results
 // are JSON, so the tool hands back a URL and the client downloads the file
 // itself rather than the bytes riding in the tool result.
+// S3Key is scanned but not serialized; URL is the reverse — assembled by the
+// handler, so it carries gorm:"-" to keep gorm from hunting for a column.
 type AdCreativeRow struct {
-	AdID         int     `json:"ad_id"`
-	ExternalAdID string  `json:"external_ad_id"`
-	Type         *string `json:"type"`
-	ContentType  *string `json:"content_type"`
-	FileSize     *int64  `json:"file_size"`
-	Title        *string `json:"title"`
-	BodyText     *string `json:"body_text"`
-	S3Key        *string `json:"-"`
-	URL          string  `json:"url"`
-	LinkURL      *string `json:"link_url"`
-	IsActive     *bool   `json:"is_active"`
+	AdID         int     `json:"ad_id" gorm:"column:ad_id"`
+	ExternalAdID string  `json:"external_ad_id" gorm:"column:external_ad_id"`
+	Type         *string `json:"type" gorm:"column:type"`
+	ContentType  *string `json:"content_type" gorm:"column:content_type"`
+	FileSize     *int64  `json:"file_size" gorm:"column:file_size"`
+	Title        *string `json:"title" gorm:"column:title"`
+	BodyText     *string `json:"body_text" gorm:"column:body_text"`
+	S3Key        *string `json:"-" gorm:"column:s3_key"`
+	URL          string  `json:"url" gorm:"-"`
+	LinkURL      *string `json:"link_url" gorm:"column:link_url"`
+	IsActive     *bool   `json:"is_active" gorm:"column:is_active"`
 }
 ```
 
