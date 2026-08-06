@@ -648,6 +648,36 @@ type EnrichJobOut struct {
 	FinishedAt *APITime `json:"finished_at"`
 }
 
+// AddPageJobRow is one public.pipeline_jobs row of kind 'add_page' joined to
+// its advertiser (DB read shape). Phase and TriageNote live in the job's
+// payload jsonb, which is why they are read as nullable text rather than
+// columns of their own.
+type AddPageJobRow struct {
+	ID           int64   `gorm:"column:id"`
+	AdvertiserID int64   `gorm:"column:advertiser_id"`
+	Status       string  `gorm:"column:status"`
+	Phase        *string `gorm:"column:phase"`
+	TriageNote   *string `gorm:"column:triage_note"`
+	ErrorText    *string `gorm:"column:error_text"`
+	PageName     *string `gorm:"column:page_name"`
+	IconURL      *string `gorm:"column:icon_url"`
+	AdCount      int     `gorm:"column:ad_count"`
+}
+
+// AddGemOut is the JSON the add-gem endpoints return.
+type AddGemOut struct {
+	JobID        int64   `json:"job_id"`
+	AdvertiserID int64   `json:"advertiser_id"`
+	Status       string  `json:"status"`
+	Phase        *string `json:"phase"`
+	PageName     *string `json:"page_name"`
+	IconURL      *string `json:"icon_url"`
+	AdCount      int     `json:"ad_count"`
+	TriageNote   *string `json:"triage_note"`
+	ErrorText    *string `json:"error_text"`
+	AlreadyKnown bool    `json:"already_known"`
+}
+
 // PreferenceCardRow is one app in the /review queue: a shortlist row plus the
 // user's predicted-like score and the short "why shown" string.
 type PreferenceCardRow struct {

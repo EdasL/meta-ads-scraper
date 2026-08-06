@@ -34,6 +34,7 @@ func Init(r *gin.Engine) {
 	media := controllers.NewMediaController()
 	users := controllers.NewUsersController()
 	hunt := controllers.NewHuntController(helpers.NewGeminiHelper())
+	addGem := controllers.NewAddGemController()
 
 	// Every /api route requires auth: a personal fd_ key OR the static internal
 	// token with a resolvable X-User-Email (KeyAuth(true)). This closes the
@@ -59,6 +60,12 @@ func Init(r *gin.Engine) {
 		// GET polls status (open, status reads are safe to expose).
 		api.POST("/enrich/:advertiser_id", middlewares.RequireToken(), enrich.Trigger)
 		api.GET("/enrich/:advertiser_id", enrich.Status)
+		// On-demand gem add from a pasted Ad Library link. Same auth shape as
+		// enrich: the POST is a write, the status poll is a read. The paths are
+		// /add-gem rather than /gems/add because gin rejects a literal segment
+		// beside the existing /gems/:advertiser_id wildcard.
+		api.POST("/add-gem", middlewares.RequireToken(), addGem.Add)
+		api.GET("/add-gem/:job_id", addGem.Status)
 		// Saved gems (a user's watchlist). Writes use POST (CORS allows GET/POST
 		// only) and are token-guarded like the review decision.
 		api.GET("/saved-gems", saved.List)
