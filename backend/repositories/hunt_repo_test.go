@@ -200,9 +200,15 @@ func TestInsertHuntRoundIntentAndRelevanceColumns(t *testing.T) {
 		       (?, 'R2', 'play', 'com.r2', 'sleep stories app', true, 'kept', 'off_target', 'general meditation, not sleep')`,
 		roundID, roundID).Error)
 
-	results, err := repositories.RoundResults(ctx, g, huntID, roundID, "", 100)
+	results, err := repositories.RoundResults(ctx, g, huntID, roundID, "", 100, 0)
 	require.NoError(t, err)
 	require.Len(t, results, 2)
+
+	// Offset pages within the stable hr.id ordering rather than re-reading row 1.
+	page2, err := repositories.RoundResults(ctx, g, huntID, roundID, "", 100, 1)
+	require.NoError(t, err)
+	require.Len(t, page2, 1)
+	require.Equal(t, results[1].PageID, page2[0].PageID)
 	byPage := map[string]int{}
 	for i, r := range results {
 		byPage[r.PageID] = i
@@ -572,12 +578,12 @@ func TestRoundResultsTriageFilterAndLimit(t *testing.T) {
 		roundID, roundID, roundID, roundID).Error)
 
 	// Empty triage → all results (5), no limit clipping at limit=100.
-	all, err := repositories.RoundResults(ctx, g, huntID, roundID, "", 100)
+	all, err := repositories.RoundResults(ctx, g, huntID, roundID, "", 100, 0)
 	require.NoError(t, err)
 	require.Len(t, all, 5)
 
 	// Triage filter to 'kept' → 3.
-	kept, err := repositories.RoundResults(ctx, g, huntID, roundID, "kept", 100)
+	kept, err := repositories.RoundResults(ctx, g, huntID, roundID, "kept", 100, 0)
 	require.NoError(t, err)
 	require.Len(t, kept, 3)
 	for _, r := range kept {
@@ -594,14 +600,14 @@ func TestRoundResultsTriageFilterAndLimit(t *testing.T) {
 	require.Equal(t, 1, scored)
 
 	// Limit caps the row count.
-	limited, err := repositories.RoundResults(ctx, g, huntID, roundID, "kept", 2)
+	limited, err := repositories.RoundResults(ctx, g, huntID, roundID, "kept", 2, 0)
 	require.NoError(t, err)
 	require.Len(t, limited, 2)
 
 	// A round under a different hunt is not reachable (JOIN enforces ownership).
 	otherHunt, err := repositories.CreateHunt(ctx, g, huntTestEmail, "other hunt")
 	require.NoError(t, err)
-	none, err := repositories.RoundResults(ctx, g, otherHunt, roundID, "", 100)
+	none, err := repositories.RoundResults(ctx, g, otherHunt, roundID, "", 100, 0)
 	require.NoError(t, err)
 	require.Empty(t, none)
 }

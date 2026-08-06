@@ -212,9 +212,10 @@ func RoundReport(ctx context.Context, g *gorm.DB, huntID, roundID int) (*models.
 }
 
 // RoundResults returns a single round's results (scoped to its hunt via the
-// hunt_rounds JOIN), optionally filtered to one triage state, capped at limit.
-// It mirrors ListHuntResults' GemScore join.
-func RoundResults(ctx context.Context, g *gorm.DB, huntID, roundID int, triage string, limit int) ([]models.HuntResultRow, error) {
+// hunt_rounds JOIN), optionally filtered to one triage state, capped at limit
+// and starting at offset. It mirrors ListHuntResults' GemScore join. Ordering is
+// by hr.id, which is stable across calls, so paging cannot skip or repeat a row.
+func RoundResults(ctx context.Context, g *gorm.DB, huntID, roundID int, triage string, limit, offset int) ([]models.HuntResultRow, error) {
 	var rows []models.HuntResultRow
 	err := db.WithReadTx(ctx, g, func(tx *gorm.DB) error {
 		return tx.Raw(
@@ -228,8 +229,8 @@ func RoundResults(ctx context.Context, g *gorm.DB, huntID, roundID int, triage s
 			 WHERE r.hunt_id = ? AND hr.round_id = ?
 			   AND (? = '' OR hr.triage = ?)
 			 ORDER BY hr.id
-			 LIMIT ?`,
-			huntID, roundID, triage, triage, limit,
+			 LIMIT ? OFFSET ?`,
+			huntID, roundID, triage, triage, limit, offset,
 		).Scan(&rows).Error
 	})
 	return rows, err

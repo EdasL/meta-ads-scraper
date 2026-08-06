@@ -451,6 +451,55 @@ func clampInt(v, lo, hi int) int {
 	return v
 }
 
+// MaxHuntTerms / MaxHuntCompetitors / MaxHuntTermLen bound one hunt round.
+// A round is real spend — residential proxy bandwidth, Meta rate-limit budget,
+// and a Gemini judge call — and the Python worker consumes every term it is
+// handed (HUNT_COMPETITOR_CAP bounds only the competitor side), so the term
+// bound has to hold at every entry point that can queue a round.
+const (
+	MaxHuntTerms       = 15
+	MaxHuntCompetitors = 10
+	MaxHuntTermLen     = 80
+)
+
+// NormalizeHuntTerms lowercases and trims each search term, drops empties and
+// over-long entries, and removes duplicates while preserving order. Terms are
+// normalized rather than kept verbatim because they are search keys: "Sleep
+// Tracker" and "sleep tracker" are one sweep, and paying for both is waste.
+//
+// It lives here rather than in a controller because both round entry points —
+// the REST hunt chat and the run_hunt MCP tool — have to apply the same rules,
+// and two copies would drift.
+func NormalizeHuntTerms(in []string) []string {
+	seen := make(map[string]struct{}, len(in))
+	out := make([]string, 0, len(in))
+	for _, t := range in {
+		norm := strings.ToLower(strings.TrimSpace(t))
+		if norm == "" || len([]rune(norm)) > MaxHuntTermLen {
+			continue
+		}
+		if _, dup := seen[norm]; dup {
+			continue
+		}
+		seen[norm] = struct{}{}
+		out = append(out, norm)
+	}
+	return out
+}
+
+// TrimHuntCompetitors trims each entry and drops empties, preserving order and
+// case: competitor app names are display strings resolved through typeahead,
+// not normalized search keys, so "Duolingo" must not become "duolingo".
+func TrimHuntCompetitors(in []string) []string {
+	out := make([]string, 0, len(in))
+	for _, s := range in {
+		if s = strings.TrimSpace(s); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
 // HuntToolExecutor is the read side the agent loop calls into for round
 // telemetry. Task 4 implements it against the repo layer, per-request and scoped
 // to the current hunt (foreign round ids come back as an error string the model

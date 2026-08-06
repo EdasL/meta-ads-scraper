@@ -51,7 +51,7 @@ func (t huntTools) GetRoundReport(roundID int) (string, error) {
 // GetRoundResults returns up to 50 result rows for one round as a compact-JSON
 // array string, optionally filtered by triage (kept|vetoed|pending; "" for all).
 func (t huntTools) GetRoundResults(roundID int, triage string) (string, error) {
-	rows, err := repositories.RoundResults(t.ctx, t.g, t.huntID, roundID, triage, 50)
+	rows, err := repositories.RoundResults(t.ctx, t.g, t.huntID, roundID, triage, 50, 0)
 	if err != nil {
 		return "", err
 	}
@@ -71,13 +71,13 @@ func (t huntTools) GetRoundResults(roundID int, triage string) (string, error) {
 // call without hanging the client.
 const huntProposalTimeout = 90 * time.Second
 
-// maxHuntTerms / maxHuntCompetitors / maxHuntTermLen bound a round the founder
-// approves before it hits the scraper. maxHuntTitleLen truncates the first user
-// message into a thread title.
+// maxHuntTerms / maxHuntCompetitors bound a round the founder approves before
+// it hits the scraper. They alias the helpers constants so this path and the
+// run_hunt MCP tool cannot drift apart on what a legal round is.
+// maxHuntTitleLen truncates the first user message into a thread title.
 const (
-	maxHuntTerms       = 15
-	maxHuntCompetitors = 10
-	maxHuntTermLen     = 80
+	maxHuntTerms       = helpers.MaxHuntTerms
+	maxHuntCompetitors = helpers.MaxHuntCompetitors
 	maxHuntTitleLen    = 80
 )
 
@@ -650,34 +650,11 @@ func huntTitle(message string) string {
 
 // normalizeHuntTerms trims + lowercases, drops empties and terms over the length
 // cap, and dedupes (preserving first-seen order).
-func normalizeHuntTerms(in []string) []string {
-	seen := make(map[string]struct{}, len(in))
-	out := make([]string, 0, len(in))
-	for _, t := range in {
-		norm := strings.ToLower(strings.TrimSpace(t))
-		if norm == "" || len([]rune(norm)) > maxHuntTermLen {
-			continue
-		}
-		if _, dup := seen[norm]; dup {
-			continue
-		}
-		seen[norm] = struct{}{}
-		out = append(out, norm)
-	}
-	return out
-}
+func normalizeHuntTerms(in []string) []string { return helpers.NormalizeHuntTerms(in) }
 
 // trimNonEmpty trims each entry and drops empties, preserving order and case
 // (competitor app names are display strings, not normalized search terms).
-func trimNonEmpty(in []string) []string {
-	out := make([]string, 0, len(in))
-	for _, s := range in {
-		if s = strings.TrimSpace(s); s != "" {
-			out = append(out, s)
-		}
-	}
-	return out
-}
+func trimNonEmpty(in []string) []string { return helpers.TrimHuntCompetitors(in) }
 
 // summarizeRounds flattens prior-round terms into the never-repeat list and
 // renders one compact line per round for the model context, e.g.

@@ -12,6 +12,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/edaslakavicius/emerging-app-finder/backend/db"
+	"github.com/edaslakavicius/emerging-app-finder/backend/helpers"
 	"github.com/edaslakavicius/emerging-app-finder/backend/repositories"
 )
 
@@ -114,23 +115,32 @@ func (h *handlers) runHunt(ctx context.Context, _ *mcp.CallToolRequest, in runHu
 	if h.u.Role != "admin" {
 		return nil, nil, errors.New("This tool requires an admin account.")
 	}
+	// Same normalization and bounds as the REST hunt path, from the one place
+	// that defines them. Terms are lowercased, trimmed and deduped (they are
+	// search keys, so "Sleep Tracker" and "sleep tracker" are one sweep);
+	// competitors keep their case. Both helpers return a non-nil empty slice, so
+	// this also settles the nil-slice trap: json.Marshal renders a nil slice as
+	// the literal `null` rather than `[]`, and since that is four bytes, not
+	// zero, the repository's empty-value default never fires and the column
+	// stores a JSON null. A jsonb null is not a SQL NULL, so NOT NULL does not
+	// object either — the round is written, looks well formed, and then kills the
+	// worker on `list(rnd.terms)`.
+	in.Terms = helpers.NormalizeHuntTerms(in.Terms)
+	in.Competitors = helpers.TrimHuntCompetitors(in.Competitors)
+
+	// Emptiness is checked after normalization so a list of blanks is rejected
+	// rather than reaching the worker as a sweep for "".
 	if len(in.Terms) == 0 && len(in.Competitors) == 0 {
 		return nil, nil, errors.New("provide at least one term or one competitor.")
 	}
-
-	// A hunt is legal with only one side supplied, and the side the caller left
-	// out arrives here as a nil slice. json.Marshal turns a nil slice into the
-	// literal `null`, not `[]` — and since that is four bytes, not zero, the
-	// repository's empty-value default never substitutes and the column stores a
-	// JSON null. A jsonb null is not a SQL NULL, so the NOT NULL constraint does
-	// not object either; the round is written, looks well formed, and then kills
-	// the Python worker on `list(rnd.terms)`. Normalize both sides to an empty
-	// slice so each one always serializes as an empty array.
-	if in.Terms == nil {
-		in.Terms = []string{}
+	// A round is real spend, and the worker consumes every term it is handed, so
+	// the caps are enforced rather than silently truncated: dropping terms the
+	// caller asked for would hide the cost decision from them.
+	if len(in.Terms) > helpers.MaxHuntTerms {
+		return nil, nil, fmt.Errorf("at most %d terms per round.", helpers.MaxHuntTerms)
 	}
-	if in.Competitors == nil {
-		in.Competitors = []string{}
+	if len(in.Competitors) > helpers.MaxHuntCompetitors {
+		return nil, nil, fmt.Errorf("at most %d competitors per round.", helpers.MaxHuntCompetitors)
 	}
 
 	terms, err := json.Marshal(in.Terms)
@@ -159,6 +169,20 @@ func (h *handlers) runHunt(ctx context.Context, _ *mcp.CallToolRequest, in runHu
 		if err != nil {
 			return nil, nil, errors.New("something went wrong starting the hunt.")
 		}
+	} else {
+		// A supplied hunt_id has to be one the caller owns. The REST path 404s on
+		// a miss; without this check a round would be injected into a thread
+		// belonging to someone else, where its owner would read it as their own
+		// work. HuntOwner returns "" when the hunt does not exist, so both the
+		// missing and the foreign case land on the same message and the tool does
+		// not tell a caller which other accounts have hunts.
+		owner, oerr := repositories.HuntOwner(ctx, db.DB(), huntID)
+		if oerr != nil {
+			return nil, nil, errors.New("something went wrong reading that hunt.")
+		}
+		if owner != h.u.Email {
+			return nil, nil, errors.New("that hunt was not found.")
+		}
 	}
 
 	var intent *string
@@ -181,6 +205,8 @@ func (h *handlers) runHunt(ctx context.Context, _ *mcp.CallToolRequest, in runHu
 
 type huntStatusIn struct {
 	RoundID int `json:"round_id" jsonschema:"the round to poll"`
+	Limit   int `json:"limit,omitempty" jsonschema:"max results to return (default 50, max 200)"`
+	Offset  int `json:"offset,omitempty" jsonschema:"results to skip for paging"`
 }
 
 func (h *handlers) huntStatus(ctx context.Context, _ *mcp.CallToolRequest, in huntStatusIn) (*mcp.CallToolResult, any, error) {
@@ -208,14 +234,30 @@ func (h *handlers) huntStatus(ctx context.Context, _ *mcp.CallToolRequest, in hu
 	if report == nil {
 		return nil, nil, errors.New("round not found.")
 	}
-	results, err := repositories.RoundResults(ctx, db.DB(), huntID, in.RoundID, "", clampLimit(0))
+	limit := clampLimit(in.Limit)
+	offset := in.Offset
+	if offset < 0 {
+		offset = 0
+	}
+	results, err := repositories.RoundResults(ctx, db.DB(), huntID, in.RoundID, "", limit, offset)
 	if err != nil {
 		return nil, nil, errors.New("something went wrong reading that round's results.")
 	}
-	return nil, map[string]any{
+	out := map[string]any{
 		"hunt_id": huntID,
 		"status":  report.Status,
 		"round":   report,
 		"results": results,
-	}, nil
+		"limit":   limit,
+		"offset":  offset,
+	}
+	// A round routinely returns more than one page. The triage counts on the
+	// report make a short page visible but not addressable, so say plainly when
+	// there is more and how to ask for it.
+	if len(results) == limit {
+		out["note"] = fmt.Sprintf(
+			"Showing results %d-%d. There may be more; call again with offset %d.",
+			offset+1, offset+len(results), offset+limit)
+	}
+	return nil, out, nil
 }

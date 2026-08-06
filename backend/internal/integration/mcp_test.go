@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/edaslakavicius/emerging-app-finder/backend/db"
+	"github.com/edaslakavicius/emerging-app-finder/backend/helpers"
 	"github.com/edaslakavicius/emerging-app-finder/backend/repositories"
 	"github.com/edaslakavicius/emerging-app-finder/backend/routers"
 )
@@ -805,6 +806,185 @@ func TestMCPServer(t *testing.T) {
 			out.RoundID).Row().Scan(&terms, &competitors))
 		require.Contains(t, terms, "sleep tracker")
 		require.Equal(t, "[]", competitors, "an unset competitor list must store [] and not null")
+	})
+
+	// A hunt round is the only MCP tool that spends real money — residential
+	// proxy bandwidth, Meta rate-limit budget, a Gemini judge call. The worker
+	// caps competitors but consumes every term it is handed, so the bound has to
+	// hold here. These mirror the REST path's rules exactly.
+	t.Run("run_hunt rejects more terms than the cap", func(t *testing.T) {
+		sess := adminSession(t)
+		many := make([]string, helpers.MaxHuntTerms+1)
+		for i := range many {
+			many[i] = fmt.Sprintf("term %d", i)
+		}
+		res, err := sess.CallTool(ctx, &mcp.CallToolParams{
+			Name:      "run_hunt",
+			Arguments: map[string]any{"terms": many},
+		})
+		if err == nil {
+			require.True(t, res.IsError, "an over-cap term list must be rejected")
+		}
+	})
+
+	t.Run("run_hunt rejects more competitors than the cap", func(t *testing.T) {
+		sess := adminSession(t)
+		many := make([]string, helpers.MaxHuntCompetitors+1)
+		for i := range many {
+			many[i] = fmt.Sprintf("Brand %d", i)
+		}
+		res, err := sess.CallTool(ctx, &mcp.CallToolParams{
+			Name:      "run_hunt",
+			Arguments: map[string]any{"competitors": many},
+		})
+		if err == nil {
+			require.True(t, res.IsError, "an over-cap competitor list must be rejected")
+		}
+	})
+
+	// Blank entries are dropped by normalization, which leaves nothing to hunt,
+	// so the call fails the same emptiness check as a call with no input at all.
+	// Without normalization these reach the worker and _sweep_term runs on "".
+	t.Run("run_hunt rejects terms that are only whitespace", func(t *testing.T) {
+		sess := adminSession(t)
+		res, err := sess.CallTool(ctx, &mcp.CallToolParams{
+			Name:      "run_hunt",
+			Arguments: map[string]any{"terms": []string{"", "   "}},
+		})
+		if err == nil {
+			require.True(t, res.IsError, "a whitespace-only term list must be rejected")
+		}
+	})
+
+	t.Run("run_hunt dedupes and lowercases terms", func(t *testing.T) {
+		sess := adminSession(t)
+		res, err := sess.CallTool(ctx, &mcp.CallToolParams{
+			Name: "run_hunt",
+			Arguments: map[string]any{
+				"terms": []string{"Sleep Tracker", "  sleep tracker  ", "SLEEP TRACKER", "white noise"},
+			},
+		})
+		require.NoError(t, err)
+		require.False(t, res.IsError, "content: %s", firstText(res))
+
+		var out struct {
+			HuntID  int `json:"hunt_id"`
+			RoundID int `json:"round_id"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(firstText(res)), &out))
+		defer func() {
+			db.DB().Exec(`DELETE FROM public.pipeline_jobs WHERE kind = 'hunt' AND advertiser_id = ?`, out.RoundID)
+			db.DB().Exec(`DELETE FROM frontend.hunts WHERE id = ?`, out.HuntID)
+		}()
+
+		var terms string
+		require.NoError(t, db.DB().Raw(
+			`SELECT terms::text FROM frontend.hunt_rounds WHERE id = ?`,
+			out.RoundID).Row().Scan(&terms))
+		require.JSONEq(t, `["sleep tracker","white noise"]`, terms)
+	})
+
+	t.Run("run_hunt rejects a hunt_id that does not exist", func(t *testing.T) {
+		sess := adminSession(t)
+		res, err := sess.CallTool(ctx, &mcp.CallToolParams{
+			Name: "run_hunt",
+			Arguments: map[string]any{
+				"terms":   []string{"sleep tracker"},
+				"hunt_id": 2147483000,
+			},
+		})
+		// Asserting the message, not just that it failed: the FK on hunt_rounds
+		// would reject the insert regardless, but with a leaked "something went
+		// wrong queueing that round." The ownership check is what turns an
+		// unknown id into a straight answer.
+		if err == nil {
+			require.True(t, res.IsError, "an unknown hunt_id must be rejected")
+			require.Contains(t, firstText(res), "not found")
+		}
+	})
+
+	t.Run("run_hunt rejects a hunt_id owned by someone else", func(t *testing.T) {
+		strangerEmail := fmt.Sprintf("mcp-stranger-%d@test.local", time.Now().UnixNano())
+		require.NoError(t, repositories.UpsertUser(ctx, db.DB(), strangerEmail, "x", "Stranger", "admin"))
+		otherHunt, err := repositories.CreateHunt(ctx, db.DB(), strangerEmail, "someone else's thread")
+		require.NoError(t, err)
+		defer func() {
+			db.DB().Exec(`DELETE FROM frontend.hunts WHERE id = ?`, otherHunt)
+			db.DB().Exec(`DELETE FROM frontend.users WHERE email = ?`, strangerEmail)
+		}()
+
+		sess := adminSession(t)
+		res, err := sess.CallTool(ctx, &mcp.CallToolParams{
+			Name: "run_hunt",
+			Arguments: map[string]any{
+				"terms":   []string{"sleep tracker"},
+				"hunt_id": otherHunt,
+			},
+		})
+		if err == nil {
+			require.True(t, res.IsError, "a hunt owned by another account must be rejected")
+		}
+		// Nothing may have been injected into the stranger's thread.
+		var rounds int64
+		require.NoError(t, db.DB().Raw(
+			`SELECT count(*) FROM frontend.hunt_rounds WHERE hunt_id = ?`, otherHunt).Row().Scan(&rounds))
+		require.EqualValues(t, 0, rounds)
+	})
+
+	t.Run("hunt_status pages through results", func(t *testing.T) {
+		sess := adminSession(t)
+		res, err := sess.CallTool(ctx, &mcp.CallToolParams{
+			Name:      "run_hunt",
+			Arguments: map[string]any{"terms": []string{"paging probe"}},
+		})
+		require.NoError(t, err)
+		require.False(t, res.IsError, "content: %s", firstText(res))
+		var out struct {
+			HuntID  int `json:"hunt_id"`
+			RoundID int `json:"round_id"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(firstText(res)), &out))
+		defer func() {
+			db.DB().Exec(`DELETE FROM public.pipeline_jobs WHERE kind = 'hunt' AND advertiser_id = ?`, out.RoundID)
+			db.DB().Exec(`DELETE FROM frontend.hunts WHERE id = ?`, out.HuntID)
+		}()
+
+		require.NoError(t, db.DB().Exec(
+			`INSERT INTO frontend.hunt_results
+			   (round_id, page_id, page_name, store, store_id, source_term, was_new, triage)
+			 VALUES (?, 'pg1', 'One',   'ios', 'sid1', 'paging probe', true, 'kept'),
+			        (?, 'pg2', 'Two',   'ios', 'sid2', 'paging probe', true, 'kept'),
+			        (?, 'pg3', 'Three', 'ios', 'sid3', 'paging probe', true, 'kept')`,
+			out.RoundID, out.RoundID, out.RoundID).Error)
+
+		page := func(limit, offset int) []string {
+			res, err := sess.CallTool(ctx, &mcp.CallToolParams{
+				Name: "hunt_status",
+				Arguments: map[string]any{
+					"round_id": out.RoundID, "limit": limit, "offset": offset,
+				},
+			})
+			require.NoError(t, err)
+			require.False(t, res.IsError, "content: %s", firstText(res))
+			var st struct {
+				Results []struct {
+					PageID string `json:"page_id"`
+				} `json:"results"`
+				Note string `json:"note"`
+			}
+			require.NoError(t, json.Unmarshal([]byte(firstText(res)), &st))
+			ids := make([]string, 0, len(st.Results))
+			for _, r := range st.Results {
+				ids = append(ids, r.PageID)
+			}
+			if limit > 0 && len(ids) == limit {
+				require.NotEmpty(t, st.Note, "a full page must say results are truncated")
+			}
+			return ids
+		}
+
+		require.Equal(t, []string{"pg1", "pg2"}, page(2, 0))
+		require.Equal(t, []string{"pg3"}, page(2, 2), "offset must advance the page")
 	})
 
 	t.Run("run_hunt rejects a call with no terms and no competitors", func(t *testing.T) {
