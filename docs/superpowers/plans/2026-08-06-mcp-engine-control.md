@@ -43,7 +43,7 @@ Pure refactor, no behavior change. `mcpserver.go` is 243 lines and this plan rou
 ```bash
 cd /Users/edaslakavicius/Projects/emerging-app-finder
 AGF_IT_DB_URL='postgres://agf:agf@localhost:55433/agf_it?sslmode=disable' \
-  go test ./backend/internal/integration/ -run TestMCPServer -v
+  go -C backend test ./internal/integration/ -run TestMCPServer -v
 ```
 
 Expected: `PASS`, and the output lists the subtests (`member tools/list excludes scraping_health`, etc.). If you see `ok ... 0.0s [no tests to run]` or no subtest lines, `AGF_IT_DB_URL` did not reach `TestMain` — fix that before continuing. A skip is not a pass.
@@ -99,7 +99,7 @@ What remains: the package doc comment, imports, `Handler`, `buildServer`, the `h
 - [ ] **Step 5: Build and vet**
 
 ```bash
-go build ./backend/... && go vet ./backend/mcpserver/
+go -C backend build ./... && go -C backend vet ./mcpserver/
 ```
 
 Expected: no output from either.
@@ -108,7 +108,7 @@ Expected: no output from either.
 
 ```bash
 AGF_IT_DB_URL='postgres://agf:agf@localhost:55433/agf_it?sslmode=disable' \
-  go test ./backend/internal/integration/ -run TestMCPServer -v
+  go -C backend test ./internal/integration/ -run TestMCPServer -v
 ```
 
 Expected: `PASS` with the same subtests as Step 1. A pure move must change nothing.
@@ -200,7 +200,7 @@ Append this subtest inside `TestMCPServer` in `backend/internal/integration/mcp_
 
 ```bash
 AGF_IT_DB_URL='postgres://agf:agf@localhost:55433/agf_it?sslmode=disable' \
-  go test ./backend/internal/integration/ -run 'TestMCPServer/keyword_yield' -v
+  go -C backend test ./internal/integration/ -run 'TestMCPServer/keyword_yield' -v
 ```
 
 Expected: FAIL — the tool is not registered, so `CallTool` returns an error result.
@@ -362,7 +362,7 @@ In `backend/mcpserver/mcpserver.go`, inside the existing `if u.Role == "admin" {
 
 ```bash
 AGF_IT_DB_URL='postgres://agf:agf@localhost:55433/agf_it?sslmode=disable' \
-  go test ./backend/internal/integration/ -run 'TestMCPServer' -v
+  go -C backend test ./internal/integration/ -run 'TestMCPServer' -v
 ```
 
 Expected: PASS, including both new subtests and every pre-existing one.
@@ -500,7 +500,7 @@ Append inside `TestMCPServer`, before the `no bearer` subtest:
 
 ```bash
 AGF_IT_DB_URL='postgres://agf:agf@localhost:55433/agf_it?sslmode=disable' \
-  go test ./backend/internal/integration/ -run 'TestMCPServer/keyword_control' -v
+  go -C backend test ./internal/integration/ -run 'TestMCPServer/keyword_control' -v
 ```
 
 Expected: FAIL — tool not registered.
@@ -655,7 +655,7 @@ In `buildServer`'s admin block, after `keyword_yield`:
 
 ```bash
 AGF_IT_DB_URL='postgres://agf:agf@localhost:55433/agf_it?sslmode=disable' \
-  go test ./backend/internal/integration/ -run 'TestMCPServer' -v
+  go -C backend test ./internal/integration/ -run 'TestMCPServer' -v
 ```
 
 Expected: PASS, all subtests.
@@ -783,7 +783,7 @@ Append inside `TestMCPServer`, before the `no bearer` subtest. `huntID`/`roundID
 
 ```bash
 AGF_IT_DB_URL='postgres://agf:agf@localhost:55433/agf_it?sslmode=disable' \
-  go test ./backend/internal/integration/ -run 'TestMCPServer/(hunt_term_yield|users_overview)' -v
+  go -C backend test ./internal/integration/ -run 'TestMCPServer/(hunt_term_yield|users_overview)' -v
 ```
 
 Expected: FAIL — tools not registered.
@@ -942,7 +942,7 @@ In `buildServer`'s admin block, after `keyword_control`:
 
 ```bash
 AGF_IT_DB_URL='postgres://agf:agf@localhost:55433/agf_it?sslmode=disable' \
-  go test ./backend/internal/integration/ -run 'TestMCPServer' -v
+  go -C backend test ./internal/integration/ -run 'TestMCPServer' -v
 ```
 
 Expected: PASS, all subtests.
@@ -1026,7 +1026,7 @@ git commit -m "feat(mcp): hunt_term_yield and users_overview tools" -- backend/r
 
 ```bash
 AGF_IT_DB_URL='postgres://agf:agf@localhost:55433/agf_it?sslmode=disable' \
-  go test ./backend/internal/integration/ -run 'TestMCPServer/ad_creatives' -v
+  go -C backend test ./internal/integration/ -run 'TestMCPServer/ad_creatives' -v
 ```
 
 Expected: FAIL — tool not registered.
@@ -1160,7 +1160,7 @@ In `buildServer`, with the member tools (after `gem_detail`, outside the admin b
 
 ```bash
 AGF_IT_DB_URL='postgres://agf:agf@localhost:55433/agf_it?sslmode=disable' \
-  go test ./backend/internal/integration/ -run 'TestMCPServer' -v
+  go -C backend test ./internal/integration/ -run 'TestMCPServer' -v
 ```
 
 Expected: PASS, all subtests.
@@ -1286,7 +1286,7 @@ Append inside `TestMCPServer`:
 
 ```bash
 AGF_IT_DB_URL='postgres://agf:agf@localhost:55433/agf_it?sslmode=disable' \
-  go test ./backend/internal/integration/ -run 'TestMCPServer/run_hunt' -v
+  go -C backend test ./internal/integration/ -run 'TestMCPServer/run_hunt' -v
 ```
 
 Expected: FAIL — tools not registered.
@@ -1432,7 +1432,7 @@ In `buildServer`'s admin block, after `users_overview`:
 
 ```bash
 AGF_IT_DB_URL='postgres://agf:agf@localhost:55433/agf_it?sslmode=disable' \
-  go test ./backend/internal/integration/ -run 'TestMCPServer' -v
+  go -C backend test ./internal/integration/ -run 'TestMCPServer' -v
 ```
 
 Expected: PASS, all subtests.
@@ -1442,7 +1442,7 @@ Expected: PASS, all subtests.
 Run this as its own command. Do not pipe it through `tail`, `head`, or `grep` — the pipe eats the exit code.
 
 ```bash
-AGF_IT_DB_URL='postgres://agf:agf@localhost:55433/agf_it?sslmode=disable' go test ./backend/...
+AGF_IT_DB_URL='postgres://agf:agf@localhost:55433/agf_it?sslmode=disable' go -C backend test ./...
 ```
 
 Expected: every package `ok` or `no test files`. Zero `FAIL`.
