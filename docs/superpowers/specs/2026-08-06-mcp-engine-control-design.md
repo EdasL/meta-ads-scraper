@@ -160,10 +160,28 @@ from Claude Code against prod — `run_hunt` with a competitor name, `hunt_statu
 polled to `done`, `ad_creatives` returning URLs, and one creative actually
 downloaded through `/api/media`.
 
-Open item to verify during implementation, not assumed: whether `GET
-/api/media/*key` accepts a personal `fd_` key or only `AGF_API_TOKEN`. If it
-accepts only the shared token, `ad_creatives` needs the media route to admit
-`fd_` keys before the download step works.
+**Resolved 2026-08-06 by live probe: `GET /api/media/*key` accepts a personal
+`fd_` key.** Verified against prod — HTTP 200, `video/mp4`, 3.4 MB. The route
+sits inside the `/api` group behind `KeyAuth`, so any valid personal key clears
+it. No route change was needed and `ad_creatives` URLs download as designed.
+
+Two things the live run found that no green test could:
+
+- **`run_hunt` stored `terms: null` instead of `[]`** when called with
+  competitors only. Go's `json.Marshal` returns `null` for a nil slice, and
+  `jsonbArgDefault` only substitutes `[]` when the marshalled bytes are empty,
+  so the null reached the column (a jsonb null is not a SQL NULL, so `NOT NULL`
+  did not catch it). The worker's `list(rnd.terms)` then raised
+  `'NoneType' object is not iterable`, breaking the competitor-only path —
+  the primary "find this advertiser's ads" use case — outright. Fixed at the
+  handler by normalizing both slices before marshalling.
+- **`AGF_PUBLIC_API_URL` is set in no compose file, manifest, or env template.**
+  The original design read it directly, so production would have returned
+  root-relative URLs an out-of-process MCP client cannot resolve. Replaced with
+  `publicOrigin(req)`: env override when set, else `X-Forwarded-Proto` first
+  hop, else `req.TLS`, else http, joined to `req.Host`. Confirmed live — prod
+  returns absolute `https://api.peon.works/api/media/...` URLs with the env var
+  still unset.
 
 ## Explicitly out of scope
 
