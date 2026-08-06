@@ -41,7 +41,7 @@ export function FolderTiles({
   onCreate: () => void;
 }) {
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 10, marginBottom: 24 }}>
+    <>
       <style>{`
         .ft-press { transition: transform 0.15s ease-out; }
         .ft-press:active { transform: scale(0.97); }
@@ -50,20 +50,28 @@ export function FolderTiles({
           .ft-press:active { transform: none; }
         }
       `}</style>
-      <button type="button" onClick={onOpenLiked} className="ft-press" style={tile}>
-        <IconHeart size={16} aria-hidden style={{ flexShrink: 0 }} />
-        <span className="t-sm w-strong" style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          Liked
-        </span>
-        <span className="nums t-xs" style={{ color: "var(--muted)", flexShrink: 0 }}>{likedCount}</span>
-      </button>
-      <button type="button" onClick={onOpenAds} className="ft-press" style={tile}>
-        <IconAd size={16} aria-hidden style={{ flexShrink: 0 }} />
-        <span className="t-sm w-strong" style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          Ads
-        </span>
-        <span className="nums t-xs" style={{ color: "var(--muted)", flexShrink: 0 }}>{adsCount}</span>
-      </button>
+      {/* Liked and Ads are built-in collections, not folders — grouping them
+          under the "Folders" label made a saved ad look like a folder named
+          "Ads", which is exactly why saved ads were impossible to find. */}
+      <div className="eyebrow" style={{ marginBottom: 8 }}>Collections</div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 10, marginBottom: 20 }}>
+        <button type="button" onClick={onOpenLiked} className="ft-press" style={tile}>
+          <IconHeart size={16} aria-hidden style={{ flexShrink: 0 }} />
+          <span className="t-sm w-strong" style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            Liked gems
+          </span>
+          <span className="nums t-xs" style={{ color: "var(--muted)", flexShrink: 0 }}>{likedCount}</span>
+        </button>
+        <button type="button" onClick={onOpenAds} className="ft-press" style={tile}>
+          <IconAd size={16} aria-hidden style={{ flexShrink: 0 }} />
+          <span className="t-sm w-strong" style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            Saved ads
+          </span>
+          <span className="nums t-xs" style={{ color: "var(--muted)", flexShrink: 0 }}>{adsCount}</span>
+        </button>
+      </div>
+      <div className="eyebrow" style={{ marginBottom: 8 }}>Folders</div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 10, marginBottom: 24 }}>
       {folders.map((f) => (
         <button
           key={keyFor(f.id)}
@@ -79,10 +87,11 @@ export function FolderTiles({
           <span className="nums t-xs" style={{ color: "var(--muted)", flexShrink: 0 }}>{counts.get(f.id) ?? 0}</span>
         </button>
       ))}
-      <button type="button" onClick={onCreate} className="ft-press" style={{ ...tile, background: "transparent" }}>
-        <IconFolderPlus size={16} aria-hidden style={{ flexShrink: 0 }} />
-        <span className="t-sm w-strong">New folder</span>
-      </button>
-    </div>
+        <button type="button" onClick={onCreate} className="ft-press" style={{ ...tile, background: "transparent" }}>
+          <IconFolderPlus size={16} aria-hidden style={{ flexShrink: 0 }} />
+          <span className="t-sm w-strong">New folder</span>
+        </button>
+      </div>
+    </>
   );
 }

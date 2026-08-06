@@ -19,6 +19,11 @@ import { SavedAdCard } from "./SavedAdCard";
 import { LikedRow, SavedCard } from "./SavedCard";
 
 const page: React.CSSProperties = { maxWidth: 1100, margin: "0 auto", padding: "24px 22px 80px" };
+
+/** "1 gem" / "3 gems" — the header counts both object types on this page. */
+function plural(n: number, noun: string): string {
+  return `${n} ${noun}${n === 1 ? "" : "s"}`;
+}
 const selectStyle: React.CSSProperties = {
   background: "var(--surface-3)",
   border: "1px solid var(--line)",
@@ -190,10 +195,10 @@ export function SavedGems() {
   if (saved.length === 0 && liked.length === 0 && folders.length === 0 && savedAds.length === 0) {
     return (
       <main style={page}>
-        <h1 className="t-2xl w-heavy" style={{ margin: 0 }}>My gems</h1>
+        <h1 className="t-2xl w-heavy" style={{ margin: 0 }}>Saved</h1>
         <EmptyState
-          title="No gems saved yet"
-          hint="Save a gem from Discover and it shows up here with your notes."
+          title="Nothing saved yet"
+          hint="Save a gem from Discover, or an ad from any gem's page, and it shows up here."
           ctaLabel="Find a gem"
           ctaHref="/discover"
         />
@@ -324,11 +329,14 @@ export function SavedGems() {
   return (
     <main style={page}>
       <header style={{ marginBottom: 18 }}>
-        <h1 className="t-2xl w-heavy" style={{ margin: 0 }}>My gems</h1>
-        <p className="t-sm" style={{ color: "var(--muted)", marginTop: 6 }}>{saved.length} saved.</p>
+        {/* The page holds gems AND ads — titling it "My gems" hid saved ads. */}
+        <h1 className="t-2xl w-heavy" style={{ margin: 0 }}>Saved</h1>
+        <p className="t-sm" style={{ color: "var(--muted)", marginTop: 6 }}>
+          {plural(saved.length, "gem")}
+          {savedAds.length > 0 ? ` · ${plural(savedAds.length, "ad")}` : ""}
+        </p>
       </header>
 
-      <div className="eyebrow" style={{ marginBottom: 8 }}>Folders</div>
       <FolderTiles
         folders={folders}
         counts={counts}
