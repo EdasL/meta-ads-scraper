@@ -109,10 +109,15 @@ class _Progress:
             self._state["lanes"].pop(str(lane), None)
             self._flush()
 
-    def term_stats(self, term: str, pages: int, found: int, new: int, stop: str) -> None:
+    def term_stats(self, term: str, pages: int, found: int, new: int, stop: str,
+                   skipped: int = 0) -> None:
+        """`pages` counts pages FETCHED from Meta (the cost); `skipped` is how
+        many of those were discarded unread by the skip_pages knob, so
+        pages - skipped is what the term actually read."""
         with self._lock:
             self._state.setdefault("terms", {})[term] = {
-                "pages": pages, "found": found, "new": new, "stop": stop}
+                "pages": pages, "found": found, "new": new, "stop": stop,
+                "skipped": skipped}
             self._flush()
 
     def merge_term_outcomes(self, outcomes: dict) -> None:
@@ -202,14 +207,37 @@ def _sweep_term(engine, extractor, round_id: int, lane: int, term: str,
                 progress: _Progress, stats: dict, lock: threading.Lock,
                 sleep, patience: int = HUNT_PATIENCE,
                 page_cap: int = HUNT_PAGE_CAP,
-                min_pages: int = HUNT_MIN_PAGES) -> tuple[int, int, int, str]:
-    """Deep-page one term. Returns (pages, found, new, stop) for lane telemetry;
-    the shared `stats` accumulators are updated as before. stop is one of
-    'exhausted' (Meta no next page), 'dry' (patience), 'cap' (page_cap),
-    'error' (search failed)."""
+                min_pages: int = HUNT_MIN_PAGES,
+                skip_pages: int = 0) -> tuple[int, int, int, str, int]:
+    """Deep-page one term. Returns (pages, found, new, stop, skipped) for lane
+    telemetry; the shared `stats` accumulators are updated as before. stop is one
+    of 'exhausted' (Meta no next page), 'dry' (patience), 'cap' (page_cap),
+    'error' (search failed), 'skip_over_cap' (skip_pages leaves nothing to read).
+
+    skip_pages discards the first N pages unread: incumbents flood the shallow
+    end, so persisting, triaging and Gemini-judging them costs money and — worse
+    — feeds the dry counter that decides when to abandon a term. Meta's Relay
+    pagination has no offset (request.build_variables takes only query/countries/
+    cursor), so page N+1's cursor exists only after page N came back: the pages
+    are still FETCHED and still rate-limited, only the WORK is skipped.
+
+    min_pages is measured on PROCESSED pages (depth - skip_pages), so the two
+    knobs are independent; with skip_pages 0 this is the previous behaviour.
+    """
+    if skip_pages >= page_cap:
+        # Every page the cap allows would be discarded. Sweeping would burn the
+        # proxy budget to return nothing, and returning nothing quietly would
+        # read as "this term has no ads" — so the term is not swept and the
+        # conflict is named in the feed and in the stop reason.
+        log.warning("hunt round %d: skip_pages %d >= page_cap %d for %r",
+                    round_id, skip_pages, page_cap, term)
+        progress.event(f"Did not search '{term}' — skip pages ({skip_pages}) "
+                       f"must be below the page cap ({page_cap})")
+        return 0, 0, 0, "skip_over_cap", 0
     cursor = None
     depth = 0
     consec_dry = 0
+    skipped = 0
     term_found = term_new = 0
     while True:
         depth += 1
@@ -222,9 +250,22 @@ def _sweep_term(engine, extractor, round_id: int, lane: int, term: str,
             with lock:
                 stats["errors"] += 1
             progress.event(f"Could not search '{term}' — skipped after an error")
-            return depth - 1, term_found, term_new, "error"
+            return depth - 1, term_found, term_new, "error", skipped
         with lock:
             stats["pages"] += 1
+        if depth <= skip_pages:
+            # Discarded unread: no persist, no dry tick, no progress.page (which
+            # would render it as a page that found nothing). One event at the
+            # start keeps the live feed honest about the pause. The page_cap
+            # check is unreachable here — skip_pages < page_cap is enforced above.
+            skipped += 1
+            if depth == 1:
+                progress.event(
+                    f"Skipping the first {skip_pages} pages for '{term}'")
+            if not has_next or not cursor:
+                return depth, term_found, term_new, "exhausted", skipped
+            sleep(HUNT_PAGE_DELAY)
+            continue
         found, new = _persist_page(engine, round_id, term, records, depth,
                                    stats, lock)
         term_found += found
@@ -232,11 +273,11 @@ def _sweep_term(engine, extractor, round_id: int, lane: int, term: str,
         progress.page(lane, term, depth, found, new)
         consec_dry = 0 if new > 0 else consec_dry + 1
         if not has_next or not cursor:
-            return depth, term_found, term_new, "exhausted"
-        if consec_dry >= patience and depth >= min_pages:
-            return depth, term_found, term_new, "dry"
+            return depth, term_found, term_new, "exhausted", skipped
+        if consec_dry >= patience and depth - skip_pages >= min_pages:
+            return depth, term_found, term_new, "dry", skipped
         if depth >= page_cap:
-            return depth, term_found, term_new, "cap"
+            return depth, term_found, term_new, "cap", skipped
         sleep(HUNT_PAGE_DELAY)
 
 
@@ -357,11 +398,12 @@ def run_hunt_sweep(engine, extractors, round_id: int, *,
                     term = queue.popleft()
                 except IndexError:
                     return
-                pages, found, new, stop = _sweep_term(
+                pages, found, new, stop, skipped = _sweep_term(
                     engine, extractor, round_id, lane_id, term,
                     progress, stats, lock, sleep,
-                    knobs["patience"], knobs["page_cap"], knobs["min_pages"])
-                progress.term_stats(term, pages, found, new, stop)
+                    knobs["patience"], knobs["page_cap"], knobs["min_pages"],
+                    knobs["skip_pages"])
+                progress.term_stats(term, pages, found, new, stop, skipped)
                 with lock:
                     stats["terms_swept"] += 1
                 progress.term_done(lane_id)

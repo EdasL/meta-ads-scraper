@@ -78,7 +78,11 @@ def test_clamp_hunt_settings_defaults_and_bounds():
     assert clamp_hunt_settings({"min_pages": 0})["min_pages"] == 1
     # unknown keys ignored; a partial dict fills the rest from defaults
     assert clamp_hunt_settings({"patience": 5, "junk": 1}) == {
-        "page_cap": 40, "patience": 5, "listing_pages": 10, "min_pages": 10}
+        "page_cap": 40, "patience": 5, "listing_pages": 10, "min_pages": 10,
+        "skip_pages": 0}
+    # skip_pages' floor is 0, not 1: reading from page 1 is a legal setting
+    assert clamp_hunt_settings({"skip_pages": 99})["skip_pages"] == 30
+    assert clamp_hunt_settings({"skip_pages": -1})["skip_pages"] == 0
 
 
 def test_round_status_transitions(pg_conn):

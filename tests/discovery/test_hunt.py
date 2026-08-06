@@ -61,7 +61,9 @@ def engine(_migrated_engine):
             " WHERE kept_advertiser_id IS NOT NULL)"))
         conn.execute(text(
             "DELETE FROM discovery.dynamic_keywords "
-            "WHERE keyword IN ('hunt mint term', 'pending term', 'fast tail term') "
+            "WHERE keyword IN ('hunt mint term', 'pending term', 'fast tail term', "
+            "  'skip term', 'dry skip term', 'floor term', 'zero skip term', "
+            "  'bad config term') "
             "AND kind = 'app'"))
         conn.execute(text(
             "DELETE FROM frontend.hunts WHERE user_email = 't@test.local'"))
@@ -158,7 +160,7 @@ def test_round_sweeps_terms_and_records_results(engine):
     # Phase 5 (no lookups here) merges per-term outcome tallies onto the entry:
     # both results stay pending, so kept/relevant/off_target are all 0.
     assert _progress(engine, round_id)["terms"]["sleep app"] == {
-        "pages": 2, "found": 2, "new": 2, "stop": "exhausted",
+        "pages": 2, "found": 2, "new": 2, "stop": "exhausted", "skipped": 0,
         "kept": 0, "relevant": 0, "off_target": 0}
 
 
@@ -210,6 +212,107 @@ def test_dry_exit_waits_for_min_pages(engine):
     term = _progress(engine, round_id)["terms"]["floored term"]
     assert term["stop"] == "dry"
     assert term["pages"] == 6
+
+
+def test_clamp_settings_skip_pages_defaults_and_bounds():
+    assert clamp_hunt_settings(None)["skip_pages"] == 0
+    assert clamp_hunt_settings({"skip_pages": 99})["skip_pages"] == 30
+    # 0 is a legal value here (not a floor-raised minimum like min_pages)
+    assert clamp_hunt_settings({"skip_pages": 0})["skip_pages"] == 0
+    assert clamp_hunt_settings({"skip_pages": -5})["skip_pages"] == 0
+
+
+def test_skip_pages_discards_early_pages(engine):
+    # skip_pages 3: pages 1-3 are still FETCHED (Relay has no offset — the cursor
+    # for page 4 only exists once 1-3 came back) but nothing on them is persisted.
+    # Only the page-4 ad reaches hunt_results.
+    ext = FakeExtractor()
+    ext.script_pages("skip term", [[_ios_ad("900301")], [_ios_ad("900302")],
+                                   [_ios_ad("900303")], [_ios_ad("900304")]])
+    round_id = _mk_round(engine, ["skip term"],
+                         settings={"skip_pages": 3, "min_pages": 1})
+    stats = run_hunt_round(engine, [ext], round_id, sleep=lambda *_: None)
+    assert stats["pages"] == 4        # all four fetched: the work is skipped, not the request
+    assert stats["found"] == 1
+    with engine.connect() as conn:
+        rows = conn.execute(text(
+            "SELECT store_id, page FROM frontend.hunt_results WHERE round_id = :r"),
+            {"r": round_id}).all()
+    assert [(r.store_id, r.page) for r in rows] == [("900304", 4)]
+    term = _progress(engine, round_id)["terms"]["skip term"]
+    assert term["skipped"] == 3
+    assert term["pages"] == 4 and term["found"] == 1 and term["stop"] == "exhausted"
+
+
+def test_skip_pages_do_not_tick_the_dry_counter(engine):
+    # Pages 1-3 are empty AND skipped; with patience 2 a dry counter that ticked
+    # on skipped pages would end the term at page 2. It must not: the first
+    # PROCESSED page (4) carries a net-new ad, then two dry pages end it at 6.
+    ext = FakeExtractor()
+    ext.script_pages("dry skip term",
+                     [[], [], [], [_ios_ad("900310")], [], [], []])
+    round_id = _mk_round(engine, ["dry skip term"],
+                         settings={"skip_pages": 3, "patience": 2, "min_pages": 1})
+    run_hunt_round(engine, [ext], round_id, sleep=lambda *_: None)
+    term = _progress(engine, round_id)["terms"]["dry skip term"]
+    assert term["stop"] == "dry"
+    assert term["pages"] == 6
+    assert term["found"] == 1
+
+
+def test_min_pages_counts_processed_pages_not_fetched(engine):
+    # min_pages 4 with skip_pages 3 means four READ pages, so the dry exit may
+    # not fire before depth 7. Under the old rule (depth >= min_pages) it would
+    # have fired at page 5. patience 1 makes every dry page a candidate exit.
+    ext = FakeExtractor()
+    ext.script_pages("floor term",
+                     [[], [], [], [_ios_ad("900320")], [], [], [], [], []])
+    round_id = _mk_round(engine, ["floor term"],
+                         settings={"skip_pages": 3, "patience": 1, "min_pages": 4})
+    run_hunt_round(engine, [ext], round_id, sleep=lambda *_: None)
+    term = _progress(engine, round_id)["terms"]["floor term"]
+    assert term["stop"] == "dry"
+    assert term["pages"] == 7
+    assert term["skipped"] == 3
+
+
+def test_skip_pages_zero_is_unchanged_behaviour(engine):
+    # Backward compatibility: the same script and knobs as
+    # test_dry_exit_waits_for_min_pages, with skip_pages set explicitly to 0.
+    ad = _ios_ad("900330")
+    ext = FakeExtractor()
+    ext.script_pages("zero skip term", [[ad] for _ in range(8)])
+    round_id = _mk_round(engine, ["zero skip term"],
+                         settings={"patience": 2, "min_pages": 6, "skip_pages": 0})
+    run_hunt_round(engine, [ext], round_id, sleep=lambda *_: None)
+    term = _progress(engine, round_id)["terms"]["zero skip term"]
+    assert term["stop"] == "dry"
+    assert term["pages"] == 6
+    assert term["skipped"] == 0
+
+
+def test_skip_pages_at_or_above_page_cap_reads_nothing_and_says_so(engine):
+    # Degenerate config: every page the cap allows would be discarded. The term
+    # is not swept at all — no Meta requests, a distinct stop reason, and an
+    # event that names the conflict, so it can never read as an empty result.
+    ext = FakeExtractor()
+    ext.script_pages("bad config term", [[_ios_ad("900340")] for _ in range(5)])
+    round_id = _mk_round(engine, ["bad config term"],
+                         settings={"skip_pages": 5, "page_cap": 3})
+    stats = run_hunt_round(engine, [ext], round_id, sleep=lambda *_: None)
+    assert stats["pages"] == 0        # nothing fetched: no proxy budget spent
+    assert stats["found"] == 0
+    prog = _progress(engine, round_id)
+    term = prog["terms"]["bad config term"]
+    assert term["stop"] == "skip_over_cap"
+    assert term["pages"] == 0 and term["skipped"] == 0
+    assert any("bad config term" in e["msg"] and "skip" in e["msg"].lower()
+               for e in prog["events"])
+    with engine.connect() as conn:
+        n = conn.execute(text(
+            "SELECT count(*) FROM frontend.hunt_results WHERE round_id = :r"),
+            {"r": round_id}).scalar()
+    assert n == 0
 
 
 def test_results_carry_page_depth(engine):
@@ -632,5 +735,6 @@ def test_progress_merge_term_outcomes_preserves_sweep_telemetry(engine, round_id
                            "page:joggo": {"kept": 1, "relevant": 0, "off_target": 1}})
     terms = p._state["terms"]
     assert terms["run coach"] == {"pages": 4, "found": 2, "new": 1, "stop": "dry",
+                                  "skipped": 0,
                                   "kept": 1, "relevant": 1, "off_target": 0}
     assert terms["page:joggo"] == {"kept": 1, "relevant": 0, "off_target": 1}

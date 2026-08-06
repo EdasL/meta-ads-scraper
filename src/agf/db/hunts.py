@@ -11,10 +11,13 @@ from sqlalchemy import text
 # Per-round scrape knobs (spec 2026-07-13-peon-agent-tools). Defaults mirror the
 # executor constants; stored per-round values overlay these, bounded below.
 DEFAULT_HUNT_SETTINGS = {
-    "page_cap": 40, "patience": 6, "listing_pages": 10, "min_pages": 10}
+    "page_cap": 40, "patience": 6, "listing_pages": 10, "min_pages": 10,
+    "skip_pages": 0}
+# skip_pages' floor is 0 (read from page 1), unlike the other knobs: 0 is a
+# meaningful setting here, not a disabled one.
 _SETTINGS_BOUNDS = {
     "page_cap": (1, 100), "patience": (1, 10),
-    "listing_pages": (1, 30), "min_pages": (1, 30)}
+    "listing_pages": (1, 30), "min_pages": (1, 30), "skip_pages": (0, 30)}
 
 
 def clamp_hunt_settings(raw: dict | None) -> dict:
