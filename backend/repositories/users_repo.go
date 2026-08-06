@@ -13,6 +13,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/edaslakavicius/emerging-app-finder/backend/db"
+	"github.com/edaslakavicius/emerging-app-finder/backend/models"
 )
 
 type KeyUser struct {
@@ -195,4 +196,23 @@ func MarkOnboarded(ctx context.Context, g *gorm.DB, email string) error {
 		return tx.Exec(`UPDATE frontend.users SET onboarded_at = now()
 		                WHERE lower(email) = lower(?) AND onboarded_at IS NULL`, email).Error
 	})
+}
+
+// UsersOverview lists accounts with their activity counts, newest first.
+// Counts are correlated aggregates so an account with no ratings still
+// appears with a zero rather than dropping out of the result.
+func UsersOverview(ctx context.Context, g *gorm.DB, limit, offset int) ([]models.UserOverviewRow, error) {
+	var rows []models.UserOverviewRow
+	err := db.WithReadTx(ctx, g, func(tx *gorm.DB) error {
+		return tx.Raw(
+			`SELECT u.email, u.name, u.role, u.auth_provider, u.created_at, u.onboarded_at,
+			        (SELECT count(*) FROM frontend.app_ratings r WHERE r.user_email = u.email) AS ratings,
+			        (SELECT count(*) FROM frontend.saved_gems s WHERE s.user_email = u.email)  AS saved_gems
+			   FROM frontend.users u
+			  ORDER BY u.created_at DESC
+			  LIMIT ? OFFSET ?`,
+			limit, offset,
+		).Scan(&rows).Error
+	})
+	return rows, err
 }

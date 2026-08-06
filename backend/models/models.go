@@ -723,3 +723,32 @@ type KeywordControlResult struct {
 	Before  string `json:"before"`
 	After   string `json:"after"`
 }
+
+// HuntTermYieldRow is one hunt search term's outcome tally across rounds.
+// Competitor page pulls appear with SourceTerm "page:<name>". Relevance is
+// nullable in the table (unjudged results fail open), so Relevant + OffTarget
+// need not sum to Found.
+type HuntTermYieldRow struct {
+	SourceTerm string `json:"source_term" gorm:"column:source_term"`
+	Rounds     int    `json:"rounds" gorm:"column:rounds"`
+	Found      int    `json:"found" gorm:"column:found"`
+	Kept       int    `json:"kept" gorm:"column:kept"`
+	Relevant   int    `json:"relevant" gorm:"column:relevant"`
+	OffTarget  int    `json:"off_target" gorm:"column:off_target"`
+}
+
+// UserOverviewRow is one account with its activity counts.
+//
+// Provider's column is auth_provider, NOT the snake_case of the field name —
+// without the explicit tag gorm looks for "provider" and scans a silent empty
+// string. See the Global Constraints note on column tags.
+type UserOverviewRow struct {
+	Email       string     `json:"email" gorm:"column:email"`
+	Name        *string    `json:"name" gorm:"column:name"`
+	Role        string     `json:"role" gorm:"column:role"`
+	Provider    string     `json:"auth_provider" gorm:"column:auth_provider"`
+	Ratings     int        `json:"ratings" gorm:"column:ratings"`
+	SavedGems   int        `json:"saved_gems" gorm:"column:saved_gems"`
+	CreatedAt   time.Time  `json:"created_at" gorm:"column:created_at"`
+	OnboardedAt *time.Time `json:"onboarded_at" gorm:"column:onboarded_at"`
+}

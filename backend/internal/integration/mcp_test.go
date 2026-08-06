@@ -438,6 +438,91 @@ func TestMCPServer(t *testing.T) {
 		}
 	})
 
+	t.Run("hunt_term_yield tallies triage per source term", func(t *testing.T) {
+		hEmail := fmt.Sprintf("mcp-hunt-%d@test.local", time.Now().UnixNano())
+		require.NoError(t, repositories.UpsertUser(ctx, db.DB(), hEmail, "x", "Hunt", "admin"))
+		huntID, err := repositories.CreateHunt(ctx, db.DB(), hEmail, "mcp term yield")
+		require.NoError(t, err)
+		defer db.DB().Exec(`DELETE FROM frontend.hunts WHERE id = ?`, huntID)
+
+		roundID, err := repositories.InsertHuntRound(ctx, db.DB(), huntID, nil,
+			json.RawMessage(`["sleep tracker"]`), nil, nil, nil)
+		require.NoError(t, err)
+
+		require.NoError(t, db.DB().Exec(
+			`INSERT INTO frontend.hunt_results
+			   (round_id, page_id, page_name, store, store_id, source_term, was_new, triage, relevance)
+			 VALUES (?, 'p1', 'One', 'ios', 's1', 'sleep tracker', true, 'kept',   'relevant'),
+			        (?, 'p2', 'Two', 'ios', 's2', 'sleep tracker', true, 'vetoed', 'off_target')`,
+			roundID, roundID).Error)
+
+		sess, err := connect(adminKey)
+		require.NoError(t, err)
+		defer sess.Close()
+		res, err := sess.CallTool(ctx, &mcp.CallToolParams{
+			Name:      "hunt_term_yield",
+			Arguments: map[string]any{"round_id": roundID},
+		})
+		require.NoError(t, err)
+		require.False(t, res.IsError, "content: %s", firstText(res))
+
+		var out struct {
+			Terms []struct {
+				SourceTerm string `json:"source_term"`
+				Found      int    `json:"found"`
+				Kept       int    `json:"kept"`
+				Relevant   int    `json:"relevant"`
+				OffTarget  int    `json:"off_target"`
+			} `json:"terms"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(firstText(res)), &out))
+		require.Len(t, out.Terms, 1)
+		require.Equal(t, "sleep tracker", out.Terms[0].SourceTerm)
+		require.Equal(t, 2, out.Terms[0].Found)
+		require.Equal(t, 1, out.Terms[0].Kept)
+		require.Equal(t, 1, out.Terms[0].Relevant)
+		require.Equal(t, 1, out.Terms[0].OffTarget)
+	})
+
+	t.Run("users_overview includes the seeded member with its rating count", func(t *testing.T) {
+		sess, err := connect(adminKey)
+		require.NoError(t, err)
+		defer sess.Close()
+		res, err := sess.CallTool(ctx, &mcp.CallToolParams{
+			Name:      "users_overview",
+			Arguments: map[string]any{"limit": 200},
+		})
+		require.NoError(t, err)
+		require.False(t, res.IsError, "content: %s", firstText(res))
+
+		var out struct {
+			Users []struct {
+				Email   string `json:"email"`
+				Role    string `json:"role"`
+				Ratings int    `json:"ratings"`
+			} `json:"users"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(firstText(res)), &out))
+		found := false
+		for _, u := range out.Users {
+			if u.Email == memberEmail {
+				found = true
+				require.Equal(t, "member", u.Role)
+				require.GreaterOrEqual(t, u.Ratings, 1, "the seeded like is counted")
+			}
+		}
+		require.True(t, found, "the seeded member appears in the overview")
+	})
+
+	t.Run("member cannot see the admin history tools", func(t *testing.T) {
+		sess, err := connect(memberKey)
+		require.NoError(t, err)
+		defer sess.Close()
+		names := toolNames(sess)
+		require.False(t, names["hunt_term_yield"])
+		require.False(t, names["users_overview"])
+	})
+
 	t.Run("no bearer is rejected before handshake", func(t *testing.T) {
 		_, err := connect("")
 		require.Error(t, err, "anonymous connect must fail at the HTTP 401")

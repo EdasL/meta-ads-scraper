@@ -400,3 +400,31 @@ func jsonbArgDefaultObj(raw json.RawMessage) any {
 	}
 	return string(raw)
 }
+
+// HuntTermYield tallies hunt outcomes per search term. With roundID nil it
+// aggregates every round, which is the "which terms have ever worked" read;
+// with a round id it scopes to that run. Ordered by keepers so the useful
+// terms sort to the top.
+func HuntTermYield(ctx context.Context, g *gorm.DB, roundID *int, limit, offset int) ([]models.HuntTermYieldRow, error) {
+	var rows []models.HuntTermYieldRow
+	err := db.WithReadTx(ctx, g, func(tx *gorm.DB) error {
+		return tx.Raw(
+			`SELECT source_term,
+			        count(DISTINCT round_id)                          AS rounds,
+			        count(*)                                          AS found,
+			        count(*) FILTER (WHERE triage = 'kept')           AS kept,
+			        count(*) FILTER (WHERE relevance = 'relevant')    AS relevant,
+			        count(*) FILTER (WHERE relevance = 'off_target')  AS off_target
+			   FROM frontend.hunt_results
+			  -- The casts are load-bearing, not decoration: gorm sends a nil
+			  -- *int as an untyped NULL and Postgres rejects a bare "$1 IS NULL"
+			  -- with 42P18. round_id is bigint, so int4 would be the wrong width.
+			  WHERE (CAST(? AS bigint) IS NULL OR round_id = CAST(? AS bigint))
+			  GROUP BY source_term
+			  ORDER BY kept DESC, found DESC, source_term
+			  LIMIT ? OFFSET ?`,
+			roundID, roundID, limit, offset,
+		).Scan(&rows).Error
+	})
+	return rows, err
+}

@@ -70,6 +70,12 @@ func buildServer(u middlewares.AuthedUser) *mcp.Server {
 		mcp.AddTool(s, &mcp.Tool{Name: "keyword_control",
 			Description: "Change sweep keyword lifecycle: activate, rest, retire, or seed new trial keywords. Applies on the next flywheel tick."},
 			h.keywordControl)
+		mcp.AddTool(s, &mcp.Tool{Name: "hunt_term_yield",
+			Description: "Hunt search terms tallied by outcome: found, kept, relevant, off target. Competitor pulls appear as page:<name>."},
+			h.huntTermYield)
+		mcp.AddTool(s, &mcp.Tool{Name: "users_overview",
+			Description: "Accounts with rating counts, saved-gem counts, provider, and onboarding date."},
+			h.usersOverview)
 	}
 	return s
 }

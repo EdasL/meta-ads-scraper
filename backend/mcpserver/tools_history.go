@@ -42,3 +42,47 @@ func (h *handlers) keywordYield(ctx context.Context, _ *mcp.CallToolRequest, in 
 	}
 	return nil, map[string]any{"keywords": rows}, nil
 }
+
+// ---- hunt_term_yield (admin only) ----
+
+type huntTermYieldIn struct {
+	RoundID int `json:"round_id,omitempty" jsonschema:"scope to one hunt round; omit for every round"`
+	Limit   int `json:"limit,omitempty" jsonschema:"max rows to return (default 50, max 200)"`
+	Offset  int `json:"offset,omitempty" jsonschema:"rows to skip for paging"`
+}
+
+func (h *handlers) huntTermYield(ctx context.Context, _ *mcp.CallToolRequest, in huntTermYieldIn) (*mcp.CallToolResult, any, error) {
+	if h.u.Role != "admin" {
+		return nil, nil, errors.New("This tool requires an admin account.")
+	}
+	var round *int
+	if in.RoundID > 0 {
+		round = &in.RoundID
+	}
+	rows, err := repositories.HuntTermYield(ctx, db.DB(), round, clampLimit(in.Limit), in.Offset)
+	if err != nil {
+		return nil, nil, errors.New("something went wrong reading hunt term yield.")
+	}
+	if len(rows) == 0 {
+		return nil, map[string]any{"terms": rows, "note": "No hunt results yet."}, nil
+	}
+	return nil, map[string]any{"terms": rows}, nil
+}
+
+// ---- users_overview (admin only) ----
+
+type usersOverviewIn struct {
+	Limit  int `json:"limit,omitempty" jsonschema:"max rows to return (default 50, max 200)"`
+	Offset int `json:"offset,omitempty" jsonschema:"rows to skip for paging"`
+}
+
+func (h *handlers) usersOverview(ctx context.Context, _ *mcp.CallToolRequest, in usersOverviewIn) (*mcp.CallToolResult, any, error) {
+	if h.u.Role != "admin" {
+		return nil, nil, errors.New("This tool requires an admin account.")
+	}
+	rows, err := repositories.UsersOverview(ctx, db.DB(), clampLimit(in.Limit), in.Offset)
+	if err != nil {
+		return nil, nil, errors.New("something went wrong reading the user list.")
+	}
+	return nil, map[string]any{"users": rows}, nil
+}
