@@ -6,7 +6,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildGemLinks, bareDomain, externalHref } from "./links.ts";
+import { buildGemLinks, bareDomain, externalHref, adLibraryAdUrl, adLibraryPageUrl } from "./links.ts";
 
 /** Minimal dossier stub — buildGemLinks only reads company + apps. */
 function gem(overrides) {
@@ -29,6 +29,15 @@ test("externalHref keeps a scheme, adds https when missing", () => {
   assert.equal(externalHref("https://sleepwave.app/start"), "https://sleepwave.app/start");
   assert.equal(externalHref("http://x.com"), "http://x.com");
   assert.equal(externalHref("sleepwave.app/start"), "https://sleepwave.app/start");
+});
+
+test("ad library urls pin the country filter to US", () => {
+  assert.equal(
+    adLibraryAdUrl("998877"),
+    "https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=US&id=998877",
+  );
+  assert.match(adLibraryPageUrl("12345"), /[?&]country=US(&|$)/);
+  assert.match(adLibraryPageUrl("12345", true), /[?&]country=US(&|$)/);
 });
 
 test("buildGemLinks: empty when no page_id / domain / app", () => {

@@ -15,9 +15,11 @@ export function bareDomain(domain: string | null | undefined): string {
   return domain.replace(/^https?:\/\//i, "").replace(/\/+$/, "");
 }
 
-/** The Meta Ad Library page for ONE ad (its public per-ad record). */
+/** The Meta Ad Library page for ONE ad (its public per-ad record). `country=US`
+ * is explicit: without it Meta reuses whatever country filter the viewer last
+ * had selected. */
 export function adLibraryAdUrl(externalAdId: string): string {
-  return `https://www.facebook.com/ads/library/?id=${externalAdId}`;
+  return `https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=US&id=${externalAdId}`;
 }
 
 /** The Meta Ad Library page for a Facebook page's ads. `activeOnly` restricts to

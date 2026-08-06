@@ -6,6 +6,7 @@ import { getGem } from "@/lib/api";
 import type { Rating } from "@/lib/api";
 import { growthLine, monthLabel } from "@/lib/why";
 import { compactCount } from "@/lib/format";
+import { adLibraryAdUrl as buildAdLibraryAdUrl } from "@/lib/links";
 import { AppIcon, ScoreBadge, Trend } from "@/components/ui";
 import { AdGrowth } from "@/components/detail/EvidenceReel";
 
@@ -29,8 +30,7 @@ function deltaLine(delta: number | undefined): string | null {
   return `${delta > 0 ? "+" : ""}${compactCount(delta)} in 28d`;
 }
 
-const adLibraryAdUrl = (id?: string) =>
-  id ? `https://www.facebook.com/ads/library/?id=${id}` : undefined;
+const adLibraryAdUrl = (id?: string) => (id ? buildAdLibraryAdUrl(id) : undefined);
 
 // One ad creative rendered as a small image/video thumbnail (no text card).
 function AdThumb({ c }: { c: Creative }) {
