@@ -22,6 +22,7 @@ Spec: `docs/superpowers/specs/2026-08-06-mcp-engine-control-design.md`
 - **Test emails must be per-run unique** (`fmt.Sprintf("...-%d@test.local", time.Now().UnixNano())`) — the test DB is shared across runs.
 - **Seeded test rows must use a unique prefix and be cleaned up** with a `defer db.DB().Exec("DELETE ... WHERE ... LIKE ?", prefix+"%")`, matching the existing `MCPHEALTH-` pattern.
 - **Commit to `main` directly.** No feature branches.
+- **A nullable parameter compared with `IS NULL` must be CAST.** `WHERE (? IS NULL OR col = ?)` fails at prepare time with `42P18: could not determine data type of parameter $1` — gorm sends a nil `*int` as an untyped NULL and Postgres cannot infer the type from `IS NULL` alone. Write `WHERE (CAST(? AS bigint) IS NULL OR col = CAST(? AS bigint))`, matching the column's real width (`bigint` for `hunt_results.round_id`; Go `int` is 64-bit, so int4 would truncate). Found live in Task 4, where the plan's own test covered only the scoped path and would have shipped the unscoped call — the primary read — broken and green.
 - **`discovery.dynamic_keywords` is keyed on `(keyword, kind)`, not `keyword`.** Migration 131 added `kind` (`'app' | 'funnel'`) and moved the unique constraint, so `ON CONFLICT (keyword)` fails outright with SQLSTATE 42P10 and an unscoped `WHERE keyword = ?` reaches funnel-pool rows too. Every read and write against this table must be scoped `AND kind = 'app'` and use `ON CONFLICT (keyword, kind)`, matching what the Python pipeline mints and sweeps (`src/agf/db/dynamic_keywords.py`). The funnel flywheel was deleted 2026-07-07, so stale `kind='funnel'` rows may still exist in prod — the scoping is what keeps the read and the write agreeing about which rows exist, independent of whether any are present. Found live in Task 3; the SQL in Task 2 and Task 3 below predates this discovery and is scoped in the shipped code, not in the plan text.
 
 ---
@@ -677,7 +678,7 @@ Two read tools, one task: both are single queries into `tools_history.go` with n
 
 **Files:**
 - Modify: `backend/repositories/hunt_repo.go` (append `HuntTermYield`)
-- Modify: `backend/repositories/user_repo.go` (append `UsersOverview`)
+- Modify: `backend/repositories/users_repo.go` (append `UsersOverview`)
 - Modify: `backend/mcpserver/tools_history.go` (append both handlers)
 - Modify: `backend/mcpserver/mcpserver.go` (register both)
 - Modify: `backend/models/models.go` (append two row types)
@@ -856,7 +857,7 @@ func HuntTermYield(ctx context.Context, g *gorm.DB, roundID *int, limit, offset 
 }
 ```
 
-Append to `backend/repositories/user_repo.go`:
+Append to `backend/repositories/users_repo.go`:
 
 ```go
 // UsersOverview lists accounts with their activity counts, newest first.
@@ -879,7 +880,7 @@ func UsersOverview(ctx context.Context, g *gorm.DB, limit, offset int) ([]models
 }
 ```
 
-Before writing this, open `backend/repositories/user_repo.go` and confirm the file's existing import block already has `db`, `models`, `gorm`, and `context`; add whichever are missing.
+Before writing this, open `backend/repositories/users_repo.go` and confirm the file's existing import block already has `db`, `models`, `gorm`, and `context`; add whichever are missing.
 
 - [ ] **Step 5: Write both handlers**
 
