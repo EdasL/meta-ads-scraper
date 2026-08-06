@@ -145,6 +145,16 @@ Steps, each writing its `phase` label to the job row so the UI can narrate:
    advertiser and calls `refresh_emerging_matview`, so the gem is live when the
    job reports done — no waiting on the `*/15` compute cycle.
 
+**Terminal-status ownership.** `run_job` writes its own terminal status to the
+row it is given, so step 5 is the LAST writer on the happy path and its `done`
+is the job's `done`. Steps 1–4 own terminal status only for their own failures:
+each wraps in the module-level handler that writes `error` + the crawl_log
+marker and returns before reaching step 5. There is exactly one terminal write
+per run. `mark_crawled_on_success` stays False — `add_page_one` writes its own
+`entity_type='add_page'` marker, and a second `entity_type='enrich'` marker
+would make a founder's paste suppress the enrich lane's own TTL scheduling for
+that advertiser.
+
 Budget: SIGALRM at `AGF_ADD_PAGE_TIMEOUT_SEC` (default 600), with the daemon's
 subprocess hard-kill padded above it, following `keeper_one`'s pattern.
 
