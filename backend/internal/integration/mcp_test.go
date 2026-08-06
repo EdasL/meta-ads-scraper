@@ -484,6 +484,87 @@ func TestMCPServer(t *testing.T) {
 		require.Equal(t, 1, out.Terms[0].OffTarget)
 	})
 
+	// Regression guard for the unscoped read. Omitting round_id makes the
+	// repository pass a nil *int, which gorm sends as an untyped NULL — a bare
+	// "? IS NULL" predicate is rejected by Postgres with 42P18 and the whole
+	// tool errors. The scoped subtest above never exercises that path, so
+	// without this one the casts in HuntTermYield could be dropped and the
+	// suite would still pass. Terms are per-run-unique and asserted by lookup
+	// rather than by position, so other rows on the shared DB cannot break it.
+	t.Run("hunt_term_yield without a round id spans every round", func(t *testing.T) {
+		n := time.Now().UnixNano()
+		termA := fmt.Sprintf("mcp-all-rounds-%d", n)
+		termB := fmt.Sprintf("page:mcp-all-rounds-%d", n)
+
+		hEmail := fmt.Sprintf("mcp-hunt-all-%d@test.local", n)
+		require.NoError(t, repositories.UpsertUser(ctx, db.DB(), hEmail, "x", "HuntAll", "admin"))
+		huntID, err := repositories.CreateHunt(ctx, db.DB(), hEmail, "mcp all rounds")
+		require.NoError(t, err)
+		// hunts -> hunt_rounds -> hunt_results are both ON DELETE CASCADE, so
+		// this one delete removes every row seeded below.
+		defer db.DB().Exec(`DELETE FROM frontend.hunts WHERE id = ?`, huntID)
+
+		// Two rounds under one hunt. termA appears in BOTH, so an aggregate that
+		// silently scoped to a single round would report rounds=1, not 2.
+		round1, err := repositories.InsertHuntRound(ctx, db.DB(), huntID, nil,
+			json.RawMessage(`["a"]`), nil, nil, nil)
+		require.NoError(t, err)
+		round2, err := repositories.InsertHuntRound(ctx, db.DB(), huntID, nil,
+			json.RawMessage(`["a"]`), nil, nil, nil)
+		require.NoError(t, err)
+
+		require.NoError(t, db.DB().Exec(
+			`INSERT INTO frontend.hunt_results
+			   (round_id, page_id, page_name, store, store_id, source_term, was_new, triage, relevance)
+			 VALUES (?, ?, 'A', 'ios', ?, ?, true, 'kept',   'relevant'),
+			        (?, ?, 'B', 'ios', ?, ?, true, 'kept',   NULL),
+			        (?, ?, 'C', 'ios', ?, ?, true, 'vetoed', 'off_target')`,
+			round1, fmt.Sprintf("ar1-%d", n), fmt.Sprintf("as1-%d", n), termA,
+			round2, fmt.Sprintf("ar2-%d", n), fmt.Sprintf("as2-%d", n), termA,
+			round2, fmt.Sprintf("ar3-%d", n), fmt.Sprintf("as3-%d", n), termB).Error)
+
+		sess, err := connect(adminKey)
+		require.NoError(t, err)
+		defer sess.Close()
+		// No round_id key at all: this is the "which terms have ever worked" read.
+		res, err := sess.CallTool(ctx, &mcp.CallToolParams{
+			Name:      "hunt_term_yield",
+			Arguments: map[string]any{"limit": 200},
+		})
+		require.NoError(t, err)
+		require.False(t, res.IsError, "content: %s", firstText(res))
+
+		var out struct {
+			Terms []struct {
+				SourceTerm string `json:"source_term"`
+				Rounds     int    `json:"rounds"`
+				Found      int    `json:"found"`
+				Kept       int    `json:"kept"`
+				Relevant   int    `json:"relevant"`
+				OffTarget  int    `json:"off_target"`
+			} `json:"terms"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(firstText(res)), &out))
+
+		byTerm := map[string]int{}
+		for i, tr := range out.Terms {
+			byTerm[tr.SourceTerm] = i
+		}
+		ia, ok := byTerm[termA]
+		require.True(t, ok, "the term seeded into both rounds must appear")
+		require.Equal(t, 2, out.Terms[ia].Rounds, "the tally spans both rounds")
+		require.Equal(t, 2, out.Terms[ia].Found)
+		require.Equal(t, 2, out.Terms[ia].Kept)
+		// One of the two rows has a NULL relevance, so relevant+off_target < found.
+		require.Equal(t, 1, out.Terms[ia].Relevant)
+		require.Equal(t, 0, out.Terms[ia].OffTarget)
+
+		ib, ok := byTerm[termB]
+		require.True(t, ok, "a competitor page pull from the second round must appear")
+		require.Equal(t, 1, out.Terms[ib].Rounds)
+		require.Equal(t, 1, out.Terms[ib].OffTarget)
+	})
+
 	t.Run("users_overview includes the seeded member with its rating count", func(t *testing.T) {
 		sess, err := connect(adminKey)
 		require.NoError(t, err)
