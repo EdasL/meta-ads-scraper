@@ -29,6 +29,10 @@ type KeywordYieldParams struct {
 // The candidate counts come from a correlated aggregate over
 // discovery.candidates rather than a JOIN + GROUP BY: a keyword with thousands
 // of candidates would otherwise fan the row set out before grouping.
+//
+// Scoped to kind = 'app', matching ControlKeywords. The read and the write must
+// agree on which rows exist: listing a funnel-pool keyword the write cannot
+// reach would report it back as unknown.
 func KeywordYield(ctx context.Context, g *gorm.DB, p KeywordYieldParams) ([]models.KeywordYieldRow, error) {
 	var rows []models.KeywordYieldRow
 	err := db.WithReadTx(ctx, g, func(tx *gorm.DB) error {
@@ -50,7 +54,8 @@ func KeywordYield(ctx context.Context, g *gorm.DB, p KeywordYieldParams) ([]mode
 			          FROM discovery.candidates
 			         WHERE source_keyword = k.keyword
 			   ) c ON TRUE
-			  WHERE (? = '' OR k.source = ?)
+			  WHERE k.kind = 'app'
+			    AND (? = '' OR k.source = ?)
 			    AND (? = '' OR k.status = ?)
 			    AND k.sweeps_used >= ?
 			  ORDER BY keepers DESC, candidates DESC, k.keyword

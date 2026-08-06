@@ -239,6 +239,38 @@ func TestMCPServer(t *testing.T) {
 		require.Empty(t, out.Keywords, "min_sweeps 5 excludes a keyword swept 3 times")
 	})
 
+	t.Run("keyword_yield lists the app pool only", func(t *testing.T) {
+		// A keyword's identity is (keyword, kind), so the same phrase can sit in
+		// both pools. keyword_control writes to kind='app'; this read must agree
+		// with it, or an operator could act on a row the write cannot reach.
+		kw := fmt.Sprintf("mcp-kind-kw-%d", time.Now().UnixNano())
+		src := fmt.Sprintf("mcp-kind-%d", time.Now().UnixNano())
+		require.NoError(t, db.DB().Exec(
+			`INSERT INTO discovery.dynamic_keywords (keyword, source, status, kind)
+			 VALUES (?, ?, 'active', 'app'), (?, ?, 'active', 'funnel')`,
+			kw, src, kw, src).Error)
+		defer db.DB().Exec(`DELETE FROM discovery.dynamic_keywords WHERE keyword = ?`, kw)
+
+		sess, err := connect(adminKey)
+		require.NoError(t, err)
+		defer sess.Close()
+		res, err := sess.CallTool(ctx, &mcp.CallToolParams{
+			Name:      "keyword_yield",
+			Arguments: map[string]any{"source": src},
+		})
+		require.NoError(t, err)
+		require.False(t, res.IsError, "content: %s", firstText(res))
+
+		var out struct {
+			Keywords []struct {
+				Keyword string `json:"keyword"`
+			} `json:"keywords"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(firstText(res)), &out))
+		require.Len(t, out.Keywords, 1, "the funnel-pool row must not be listed")
+		require.Equal(t, kw, out.Keywords[0].Keyword)
+	})
+
 	t.Run("member cannot see or call keyword_yield", func(t *testing.T) {
 		sess, err := connect(memberKey)
 		require.NoError(t, err)
