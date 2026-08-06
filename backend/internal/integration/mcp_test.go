@@ -734,12 +734,17 @@ func TestMCPServer(t *testing.T) {
 		}()
 
 		// The round carries the competitor and the settings verbatim.
-		var competitors, settings string
+		var terms, competitors, settings string
 		require.NoError(t, db.DB().Raw(
-			`SELECT competitor_apps::text, settings::text FROM frontend.hunt_rounds WHERE id = ?`,
-			out.RoundID).Row().Scan(&competitors, &settings))
+			`SELECT terms::text, competitor_apps::text, settings::text FROM frontend.hunt_rounds WHERE id = ?`,
+			out.RoundID).Row().Scan(&terms, &competitors, &settings))
 		require.Contains(t, competitors, "Quizlooker")
 		require.Contains(t, settings, "listing_pages")
+		// The omitted side must store an empty array, never a JSON null. Go
+		// marshals a nil slice to `null`, and a jsonb null is not a SQL NULL, so
+		// the NOT NULL constraint does not catch it — it reaches the worker, where
+		// list(rnd.terms) raises TypeError and the round dies on its first step.
+		require.Equal(t, "[]", terms, "an unset terms list must store [] and not null")
 		// Only the knob the caller set may reach the worker. An unset knob must
 		// be absent, not a zero — clamp_hunt_settings would raise a zero to the
 		// bound's minimum and silently cripple the round.
@@ -766,6 +771,40 @@ func TestMCPServer(t *testing.T) {
 		}
 		require.NoError(t, json.Unmarshal([]byte(firstText(res)), &st))
 		require.Equal(t, "queued", st.Status)
+	})
+
+	// The mirror of the competitor-only case above. Both sides of the input have
+	// to survive the nil-slice-to-`null` trap, so both are asserted; a guard on
+	// only one of them would leave the other broken in exactly the same way.
+	t.Run("run_hunt stores an empty competitor list for a terms-only round", func(t *testing.T) {
+		sess := adminSession(t)
+		res, err := sess.CallTool(ctx, &mcp.CallToolParams{
+			Name: "run_hunt",
+			Arguments: map[string]any{
+				"terms":  []string{"sleep tracker"},
+				"intent": "keyword sweep only",
+			},
+		})
+		require.NoError(t, err)
+		require.False(t, res.IsError, "content: %s", firstText(res))
+
+		var out struct {
+			HuntID  int `json:"hunt_id"`
+			RoundID int `json:"round_id"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(firstText(res)), &out))
+		require.Greater(t, out.RoundID, 0)
+		defer func() {
+			db.DB().Exec(`DELETE FROM public.pipeline_jobs WHERE kind = 'hunt' AND advertiser_id = ?`, out.RoundID)
+			db.DB().Exec(`DELETE FROM frontend.hunts WHERE id = ?`, out.HuntID)
+		}()
+
+		var terms, competitors string
+		require.NoError(t, db.DB().Raw(
+			`SELECT terms::text, competitor_apps::text FROM frontend.hunt_rounds WHERE id = ?`,
+			out.RoundID).Row().Scan(&terms, &competitors))
+		require.Contains(t, terms, "sleep tracker")
+		require.Equal(t, "[]", competitors, "an unset competitor list must store [] and not null")
 	})
 
 	t.Run("run_hunt rejects a call with no terms and no competitors", func(t *testing.T) {

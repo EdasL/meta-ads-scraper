@@ -118,6 +118,21 @@ func (h *handlers) runHunt(ctx context.Context, _ *mcp.CallToolRequest, in runHu
 		return nil, nil, errors.New("provide at least one term or one competitor.")
 	}
 
+	// A hunt is legal with only one side supplied, and the side the caller left
+	// out arrives here as a nil slice. json.Marshal turns a nil slice into the
+	// literal `null`, not `[]` — and since that is four bytes, not zero, the
+	// repository's empty-value default never substitutes and the column stores a
+	// JSON null. A jsonb null is not a SQL NULL, so the NOT NULL constraint does
+	// not object either; the round is written, looks well formed, and then kills
+	// the Python worker on `list(rnd.terms)`. Normalize both sides to an empty
+	// slice so each one always serializes as an empty array.
+	if in.Terms == nil {
+		in.Terms = []string{}
+	}
+	if in.Competitors == nil {
+		in.Competitors = []string{}
+	}
+
 	terms, err := json.Marshal(in.Terms)
 	if err != nil {
 		return nil, nil, errors.New("terms could not be encoded.")
