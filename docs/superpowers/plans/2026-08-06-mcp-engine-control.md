@@ -1422,7 +1422,7 @@ func (h *handlers) huntStatus(ctx context.Context, _ *mcp.CallToolRequest, in hu
 }
 ```
 
-Confirm `models.HuntRoundReport`'s status field is exported as `Status` with a `json:"status"` tag before relying on `report.Status`; if the model names it differently, use that name.
+`models.HuntRoundReport` is defined in `backend/models/hunt.go` (NOT `models.go`) and its status field is verified exported as `Status string \`json:"status"\``, so `report.Status` is correct as written. `RoundResults`' `limit` argument is passed `clampLimit(0)`, which returns the default 50 — keep that call rather than a bare literal so the page size stays consistent with every other tool.
 
 - [ ] **Step 5: Register both**
 
