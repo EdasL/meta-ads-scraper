@@ -22,6 +22,7 @@ Spec: `docs/superpowers/specs/2026-08-06-mcp-engine-control-design.md`
 - **Test emails must be per-run unique** (`fmt.Sprintf("...-%d@test.local", time.Now().UnixNano())`) — the test DB is shared across runs.
 - **Seeded test rows must use a unique prefix and be cleaned up** with a `defer db.DB().Exec("DELETE ... WHERE ... LIKE ?", prefix+"%")`, matching the existing `MCPHEALTH-` pattern.
 - **Commit to `main` directly.** No feature branches.
+- **`discovery.dynamic_keywords` is keyed on `(keyword, kind)`, not `keyword`.** Migration 131 added `kind` (`'app' | 'funnel'`) and moved the unique constraint, so `ON CONFLICT (keyword)` fails outright with SQLSTATE 42P10 and an unscoped `WHERE keyword = ?` reaches funnel-pool rows too. Every read and write against this table must be scoped `AND kind = 'app'` and use `ON CONFLICT (keyword, kind)`, matching what the Python pipeline mints and sweeps (`src/agf/db/dynamic_keywords.py`). The funnel flywheel was deleted 2026-07-07, so stale `kind='funnel'` rows may still exist in prod — the scoping is what keeps the read and the write agreeing about which rows exist, independent of whether any are present. Found live in Task 3; the SQL in Task 2 and Task 3 below predates this discovery and is scoped in the shipped code, not in the plan text.
 
 ---
 
