@@ -114,8 +114,11 @@ function AdCard({ c, gem }: { c: Creative; gem: GemDossier }) {
         flexDirection: "column",
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "8px 10px" }}>
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+      {/* Wraps: the badge + Ad Library link already filled a narrow card, so the
+          save heart has to be able to drop to its own line instead of spilling
+          past the card border. */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8, padding: "8px 10px" }}>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 6, flexWrap: "wrap", minWidth: 0 }}>
           <AdBadges c={c} />
         </span>
         {c.external_ad_id && (
