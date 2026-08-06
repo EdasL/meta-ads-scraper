@@ -700,17 +700,18 @@ type PreferenceCardRow struct {
 // candidate outcomes: how many candidates the keyword surfaced and how many
 // of those survived triage. Keepers is the yield number that matters — a
 // keyword can flood candidates and keep none.
+// Every column is named explicitly rather than left to gorm's derivation from
+// the field name: NextEligible would otherwise resolve to "next_eligible" and
+// scan away as null.
 type KeywordYieldRow struct {
-	Keyword      string     `json:"keyword"`
-	Source       string     `json:"source"`
-	Status       string     `json:"status"`
-	SweepsUsed   int        `json:"sweeps_used"`
-	Candidates   int        `json:"candidates"`
-	Keepers      int        `json:"keepers"`
-	DryStreak    int        `json:"dry_streak"`
-	RestCount    int        `json:"rest_count"`
-	LastSweptAt  *time.Time `json:"last_swept_at"`
-	// The field name does not derive the column name here, so state it: gorm
-	// would look for "next_eligible" and scan the value away as null.
+	Keyword      string     `json:"keyword" gorm:"column:keyword"`
+	Source       string     `json:"source" gorm:"column:source"`
+	Status       string     `json:"status" gorm:"column:status"`
+	SweepsUsed   int        `json:"sweeps_used" gorm:"column:sweeps_used"`
+	Candidates   int        `json:"candidates" gorm:"column:candidates"`
+	Keepers      int        `json:"keepers" gorm:"column:keepers"`
+	DryStreak    int        `json:"dry_streak" gorm:"column:dry_streak"`
+	RestCount    int        `json:"rest_count" gorm:"column:rest_count"`
+	LastSweptAt  *time.Time `json:"last_swept_at" gorm:"column:last_swept_at"`
 	NextEligible *time.Time `json:"next_eligible_at" gorm:"column:next_eligible_at"`
 }

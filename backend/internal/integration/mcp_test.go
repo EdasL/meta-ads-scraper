@@ -178,9 +178,14 @@ func TestMCPServer(t *testing.T) {
 	t.Run("keyword_yield reports keeper counts per keyword", func(t *testing.T) {
 		kw := fmt.Sprintf("mcp-yield-kw-%d", time.Now().UnixNano())
 		pfx := fmt.Sprintf("MCPYIELD-%d-", time.Now().UnixNano())
+		// Both timestamps are seeded non-NULL so the assertions below catch a
+		// column-name mismatch: gorm derives "next_eligible" from the field name,
+		// which silently scans the value away as null unless the model pins the
+		// column explicitly.
 		require.NoError(t, db.DB().Exec(
-			`INSERT INTO discovery.dynamic_keywords (keyword, source, status, sweeps_used, new_candidates_total)
-			 VALUES (?, 'mcp-test', 'active', 3, 2)`, kw).Error)
+			`INSERT INTO discovery.dynamic_keywords
+			   (keyword, source, status, sweeps_used, new_candidates_total, last_swept_at, next_eligible_at)
+			 VALUES (?, 'mcp-test', 'active', 3, 2, now(), now() + interval '1 day')`, kw).Error)
 		require.NoError(t, db.DB().Exec(
 			`INSERT INTO discovery.candidates (page_id, store, store_id, source_keyword, status)
 			 VALUES (?, 'ios', ?, ?, 'kept'), (?, 'ios', ?, ?, 'dropped')`,
@@ -200,11 +205,13 @@ func TestMCPServer(t *testing.T) {
 
 		var out struct {
 			Keywords []struct {
-				Keyword    string `json:"keyword"`
-				Status     string `json:"status"`
-				SweepsUsed int    `json:"sweeps_used"`
-				Candidates int    `json:"candidates"`
-				Keepers    int    `json:"keepers"`
+				Keyword      string     `json:"keyword"`
+				Status       string     `json:"status"`
+				SweepsUsed   int        `json:"sweeps_used"`
+				Candidates   int        `json:"candidates"`
+				Keepers      int        `json:"keepers"`
+				LastSweptAt  *time.Time `json:"last_swept_at"`
+				NextEligible *time.Time `json:"next_eligible_at"`
 			} `json:"keywords"`
 		}
 		require.NoError(t, json.Unmarshal([]byte(firstText(res)), &out))
@@ -214,6 +221,22 @@ func TestMCPServer(t *testing.T) {
 		require.Equal(t, 3, out.Keywords[0].SweepsUsed)
 		require.Equal(t, 2, out.Keywords[0].Candidates, "both candidates counted")
 		require.Equal(t, 1, out.Keywords[0].Keepers, "only the kept one")
+		require.NotNil(t, out.Keywords[0].LastSweptAt, "last_swept_at survives the scan")
+		require.False(t, out.Keywords[0].LastSweptAt.IsZero())
+		require.NotNil(t, out.Keywords[0].NextEligible, "next_eligible_at survives the scan")
+		require.False(t, out.Keywords[0].NextEligible.IsZero())
+
+		// min_sweeps is a floor: the seeded keyword has sweeps_used = 3, so a
+		// floor of 5 must exclude it.
+		res, err = sess.CallTool(ctx, &mcp.CallToolParams{
+			Name:      "keyword_yield",
+			Arguments: map[string]any{"source": "mcp-test", "min_sweeps": 5},
+		})
+		require.NoError(t, err)
+		require.False(t, res.IsError, "content: %s", firstText(res))
+		out.Keywords = nil
+		require.NoError(t, json.Unmarshal([]byte(firstText(res)), &out))
+		require.Empty(t, out.Keywords, "min_sweeps 5 excludes a keyword swept 3 times")
 	})
 
 	t.Run("member cannot see or call keyword_yield", func(t *testing.T) {
