@@ -130,7 +130,10 @@ def _media_only_pass(conn, advertiser_id, deps: EnrichDeps, *, done, cap) -> int
         try:                                  # fbcdn URLs expire → per-ad isolation
             ca = download_creative(conn, ad_id, url, ctype, fetch=deps.fetch_bytes,
                                    put=deps.put, s3=deps.s3)
-        except Exception:
+        except Exception as exc:
+            # A dead fbcdn URL is routine; a storage failure is not. Bare
+            # continue hid 5 days of SignatureDoesNotMatch (2026-08-06..11).
+            log.warning("media download failed for ad %s: %s", ad_id, exc)
             continue
         cap -= 1
         if ca.s3_key:
@@ -310,7 +313,8 @@ async def enrich_gem(conn, advertiser_id, *, top_n=5, media_cap=120,
             try:                              # fbcdn URLs expire → a dead one mustn't kill the gem
                 ca = download_creative(conn, ad.id, url, ctype, fetch=deps.fetch_bytes,
                                        put=deps.put, s3=deps.s3)
-            except Exception:
+            except Exception as exc:
+                log.warning("media download failed for ad %s: %s", ad.id, exc)
                 continue
             if ca.dedup_of is None:
                 n_creatives += 1
