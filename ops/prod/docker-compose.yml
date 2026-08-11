@@ -59,8 +59,12 @@ services:
       AGF_PROXIES: ${AGF_PROXIES}
       GEMINI_API_KEY: ${GEMINI_API_KEY}
       S3_ENDPOINT: ${S3_ENDPOINT}
-      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
-      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      # GCS S3-compat HMAC creds + bucket location (v4 signing needs the region).
+      # ${MINIO_ROOT_USER} here was the 2026-08-06 outage: 8-char MinIO creds
+      # sent to GCS -> SignatureDoesNotMatch on every upload, swallowed silently.
+      MINIO_ACCESS_KEY: ${S3_ACCESS_KEY:-${MINIO_ROOT_USER}}
+      MINIO_SECRET_KEY: ${S3_SECRET_KEY:-${MINIO_ROOT_PASSWORD}}
+      S3_REGION: ${S3_REGION:-us-east-1}
       S3_BUCKET: ${S3_BUCKET}
       # Sweep cadence: DAILY, not every tick. The fixed ~301-keyword set is rested-
       # depleted (probe 2026-07-02: re-sweeping crashed new/kw 1.43->0.002 in 2 days;
@@ -142,8 +146,12 @@ services:
       AGF_PROXIES: ${AGF_PROXIES}
       AGF_FUNNEL_PROXY: ${AGF_FUNNEL_PROXY:-}
       S3_ENDPOINT: ${S3_ENDPOINT}
-      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
-      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      # GCS S3-compat HMAC creds + bucket location (v4 signing needs the region).
+      # ${MINIO_ROOT_USER} here was the 2026-08-06 outage: 8-char MinIO creds
+      # sent to GCS -> SignatureDoesNotMatch on every upload, swallowed silently.
+      MINIO_ACCESS_KEY: ${S3_ACCESS_KEY:-${MINIO_ROOT_USER}}
+      MINIO_SECRET_KEY: ${S3_SECRET_KEY:-${MINIO_ROOT_PASSWORD}}
+      S3_REGION: ${S3_REGION:-us-east-1}
       S3_BUCKET: ${S3_BUCKET}
       # Fresh-listing phase of "Refresh data": pages pulled per click and the
       # budget for the listing fetch itself (the rest of the phase is bounded by
@@ -169,8 +177,12 @@ services:
       AGF_PROXIES: ${AGF_PROXIES}
       GEMINI_API_KEY: ${GEMINI_API_KEY}
       S3_ENDPOINT: ${S3_ENDPOINT}
-      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
-      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      # GCS S3-compat HMAC creds + bucket location (v4 signing needs the region).
+      # ${MINIO_ROOT_USER} here was the 2026-08-06 outage: 8-char MinIO creds
+      # sent to GCS -> SignatureDoesNotMatch on every upload, swallowed silently.
+      MINIO_ACCESS_KEY: ${S3_ACCESS_KEY:-${MINIO_ROOT_USER}}
+      MINIO_SECRET_KEY: ${S3_SECRET_KEY:-${MINIO_ROOT_PASSWORD}}
+      S3_REGION: ${S3_REGION:-us-east-1}
       S3_BUCKET: ${S3_BUCKET}
       AGF_ENRICH_ONE_TIMEOUT_SEC: ${AGF_ENRICH_ONE_TIMEOUT_SEC:-300}
       AGF_PIPELINE_POLL_SEC: ${AGF_PIPELINE_POLL_SEC:-5}
@@ -203,8 +215,12 @@ services:
       # add_page only: the inline enrich writes creatives to GCS and calls Gemini.
       GEMINI_API_KEY: ${GEMINI_API_KEY}
       S3_ENDPOINT: ${S3_ENDPOINT}
-      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
-      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      # GCS S3-compat HMAC creds + bucket location (v4 signing needs the region).
+      # ${MINIO_ROOT_USER} here was the 2026-08-06 outage: 8-char MinIO creds
+      # sent to GCS -> SignatureDoesNotMatch on every upload, swallowed silently.
+      MINIO_ACCESS_KEY: ${S3_ACCESS_KEY:-${MINIO_ROOT_USER}}
+      MINIO_SECRET_KEY: ${S3_SECRET_KEY:-${MINIO_ROOT_PASSWORD}}
+      S3_REGION: ${S3_REGION:-us-east-1}
       S3_BUCKET: ${S3_BUCKET}
       AGF_ADD_PAGE_TIMEOUT_SEC: ${AGF_ADD_PAGE_TIMEOUT_SEC:-600}
     depends_on:
