@@ -1,4 +1,5 @@
 import { auth } from "@/lib/auth";
+import { isProxyablePath } from "@/lib/backendProxy";
 import { NextRequest, NextResponse } from "next/server";
 
 /**
@@ -17,28 +18,8 @@ const TOKEN = process.env.AGF_API_TOKEN ?? "";
 // <video> decoding; X-Total-Count powers the feed's paging count).
 const PASS_THROUGH = ["content-type", "content-length", "cache-control", "x-total-count"];
 
-// Fail-closed allowlist: the FIRST path segment (the resource) must be one of
-// the Go /api group's public routes (backend/routers/routers.go). Everything
-// else — notably /api/internal/* (key mint, login oracle, key revoke) — is
-// 404'd here so a signed-in session can never reach it with the server-held
-// internal token. A denylist would be miss-prone; this is the closed set.
-const ALLOWED_RESOURCES = new Set([
-  "shortlist", // /shortlist, /shortlist/categories
-  "gems", // /gems/:id (+ /scaling, /app-metrics)
-  "review", // /review/queue, /review/:id/decision
-  "preference-queue",
-  "enrich", // /enrich/:id (GET status, POST trigger)
-  "saved-gems", // /saved-gems (+ /:id, /:id/remove)
-  "saved-ads", // /saved-ads (+ /:id, /:id/remove)
-  "saved-groups", // /saved-groups (+ /:id/update, /:id/remove, /:id/gems)
-  "liked-gems", // /liked-gems (built-in Liked collection)
-  "ratings", // /ratings (+ /:id)
-  "health", // /health/metrics, /health/coverage
-  "media", // /media/*key
-  "me", // /me (profile), /me/onboarded
-  "hunts", // /hunts (+ /:id, /:id/messages, /:id/rounds)
-]);
-
+// The fail-closed allowlist lives in lib/backendProxy.ts so a test can read it
+// (this module imports next-auth and cannot be imported from node --test).
 function notFound() {
   return NextResponse.json({ detail: "not found." }, { status: 404 });
 }
@@ -50,21 +31,9 @@ async function proxy(req: NextRequest, { params }: { params: Promise<{ path: str
 
   const { path } = await params;
 
-  // Reject traversal / malformed segments before matching so no "../internal"
-  // or encoded-slash trick can escape the allowlisted resource.
-  if (
-    path.length === 0 ||
-    path.some((seg) => seg === "" || seg === "." || seg === ".." || /[/\\]|%2e|%2f/i.test(seg))
-  ) {
-    return notFound();
-  }
-
-  // Match on the FIRST segment (the resource), not a substring — "internalfoo"
-  // won't match "internal", and "gems/123/scaling" resolves to "gems".
-  const resource = path[0];
-  if (resource === "internal" || !ALLOWED_RESOURCES.has(resource)) {
-    return notFound();
-  }
+  // Traversal, malformed segments and anything outside the allowlist are 404'd
+  // (see lib/backendProxy.ts).
+  if (!isProxyablePath(path)) return notFound();
 
   const url = `${API}/${path.join("/")}${req.nextUrl.search}`;
 
