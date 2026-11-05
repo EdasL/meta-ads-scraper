@@ -1,0 +1,381 @@
+{
+  "captured_on": "2026-11-05",
+  "label_source": "Agent review of observed ad copy against each explicit target before the first Jev trial. Advertising similarity only; no efficacy or performance claims. Validation labels were fixed after the development trial, before the unchanged validation trial.",
+  "cases": [
+    {
+      "split": "development",
+      "domain": "fitness",
+      "target": {
+        "need": "Build a manageable exercise habit and improve body shape through short, guided beginner workouts.",
+        "audience": "People starting fitness or returning after inactivity, rather than established athletes adding performance training."
+      },
+      "ad": {
+        "ad_archive_id": "1457955942936229",
+        "page_id": "102851792219319",
+        "page_name": "WalkFit Daily Walking Plan",
+        "body_text": "Your 8-Week Tai Chi Walking Transformation🔥\nWeek 1-2: Build the habit, feel lighter🌟\nWeek 3-4: Clothes start fitting differently👗\nWeek 5-6: Energy levels through the roof⚡️\nWeek 7-8: Drop 2-3 dress sizes💪\n\nAll from Tai Chi walking. Start today🚀"
+      },
+      "expected": "match"
+    },
+    {
+      "split": "development",
+      "domain": "fitness",
+      "target": {
+        "need": "Build a manageable exercise habit and improve body shape through short, guided beginner workouts.",
+        "audience": "People starting fitness or returning after inactivity, rather than established athletes adding performance training."
+      },
+      "ad": {
+        "ad_archive_id": "1743547280221889",
+        "page_id": "103525072757095",
+        "page_name": "The Running Week",
+        "body_text": "From couch to confident runner in just 8 weeks! Get our FREE plan and start today👇"
+      },
+      "expected": "match"
+    },
+    {
+      "split": "development",
+      "domain": "fitness",
+      "target": {
+        "need": "Build a manageable exercise habit and improve body shape through short, guided beginner workouts.",
+        "audience": "People starting fitness or returning after inactivity, rather than established athletes adding performance training."
+      },
+      "ad": {
+        "ad_archive_id": "1117801934307485",
+        "page_id": "328627523855071",
+        "page_name": "Calm",
+        "body_text": "🎧 Bilateral stimulation can help you regulate ❌ No matter what you've tried before, EMDR-inspired bilateral audio works differently — on your nervous system itself. 🏆 Experience Calm's Bilateral Stimulation! Trusted by millions worldwide."
+      },
+      "expected": "mismatch"
+    },
+    {
+      "split": "development",
+      "domain": "fitness",
+      "target": {
+        "need": "Build a manageable exercise habit and improve body shape through short, guided beginner workouts.",
+        "audience": "People starting fitness or returning after inactivity, rather than established athletes adding performance training."
+      },
+      "ad": {
+        "ad_archive_id": "1824296758996640",
+        "page_id": "1284824361384746",
+        "page_name": "Sienna Walker - Online Shopping Expert",
+        "body_text": "Stop buying clothes, start investing in style.\nCreate a wardrobe that feels effortless, chic, and 100% you!\n\n✅ Personalized outfit suggestions based on your unique style\n✅ Smart wardrobe advice to stop impulse buys and save money\n✅ Timeless outfit capsules for every season and occasion\n\nLet’s build a wardrobe that’s functional, stylish, and filled with outfits you love."
+      },
+      "expected": "mismatch"
+    },
+    {
+      "split": "development",
+      "domain": "fitness",
+      "target": {
+        "need": "Build a manageable exercise habit and improve body shape through short, guided beginner workouts.",
+        "audience": "People starting fitness or returning after inactivity, rather than established athletes adding performance training."
+      },
+      "ad": {
+        "ad_archive_id": "1558704715965991",
+        "page_id": "102059148893302",
+        "page_name": "Wevana",
+        "body_text": "{{product.brand}}"
+      },
+      "expected": "uncertain"
+    },
+    {
+      "split": "development",
+      "domain": "fitness",
+      "target": {
+        "need": "Build a manageable exercise habit and improve body shape through short, guided beginner workouts.",
+        "audience": "People starting fitness or returning after inactivity, rather than established athletes adding performance training."
+      },
+      "ad": {
+        "ad_archive_id": "1372017226001179",
+        "page_id": "109468687259803",
+        "page_name": "BetterMe Men",
+        "body_text": "😮‍💨 You can deadlift all day and still be gasping at minute four.\nBetterMe's Running Plan is a follow-along program that builds the engine underneath the strength you already have — starting with short run-walk intervals.\n🏋️ Three runs a week, capped — it sits next to your lifting\n🏃 Start with run-walk, not an all-out mile\n📈 Distance moves only when your last runs say you're ready\nSame body. New engine. ⚡\nBuild the Engine 👟"
+      },
+      "expected": "mismatch"
+    },
+    {
+      "split": "development",
+      "domain": "calm",
+      "target": {
+        "need": "Unwind from stress, calm an overactive mind, or settle for sleep.",
+        "audience": "Adult consumers seeking relief for themselves, rather than clinicians buying equipment for a professional practice."
+      },
+      "ad": {
+        "ad_archive_id": "1558916312249598",
+        "page_id": "121124657654519",
+        "page_name": "Solfeggio Healing Home",
+        "body_text": "Did You Know EMDR - Bilateral Stimulation is Available on Spotify? Stream Anytime 😇 😌"
+      },
+      "expected": "match"
+    },
+    {
+      "split": "development",
+      "domain": "calm",
+      "target": {
+        "need": "Unwind from stress, calm an overactive mind, or settle for sleep.",
+        "audience": "Adult consumers seeking relief for themselves, rather than clinicians buying equipment for a professional practice."
+      },
+      "ad": {
+        "ad_archive_id": "1305928528195533",
+        "page_id": "102059148893302",
+        "page_name": "Wevana",
+        "body_text": "Less hardware. Less friction. Better sessions.\n\nWevana Tabs help therapists create a cleaner, more streamlined bilateral stimulation experience without messy wires or clunky remotes.\n\nDiscover Wevana at wevana.com."
+      },
+      "expected": "mismatch"
+    },
+    {
+      "split": "development",
+      "domain": "calm",
+      "target": {
+        "need": "Unwind from stress, calm an overactive mind, or settle for sleep.",
+        "audience": "Adult consumers seeking relief for themselves, rather than clinicians buying equipment for a professional practice."
+      },
+      "ad": {
+        "ad_archive_id": "1457955942936229",
+        "page_id": "102851792219319",
+        "page_name": "WalkFit Daily Walking Plan",
+        "body_text": "Your 8-Week Tai Chi Walking Transformation🔥\nWeek 1-2: Build the habit, feel lighter🌟\nWeek 3-4: Clothes start fitting differently👗\nWeek 5-6: Energy levels through the roof⚡️\nWeek 7-8: Drop 2-3 dress sizes💪\n\nAll from Tai Chi walking. Start today🚀"
+      },
+      "expected": "mismatch"
+    },
+    {
+      "split": "development",
+      "domain": "calm",
+      "target": {
+        "need": "Unwind from stress, calm an overactive mind, or settle for sleep.",
+        "audience": "Adult consumers seeking relief for themselves, rather than clinicians buying equipment for a professional practice."
+      },
+      "ad": {
+        "ad_archive_id": "1827722208273978",
+        "page_id": "851229608079602",
+        "page_name": "Femrun",
+        "body_text": "This Monday we're starting a 10 minute walk to run challenge. You begin by walking, and your coach adds a little running each week until you run your first mile. No gym and no running experience needed."
+      },
+      "expected": "mismatch"
+    },
+    {
+      "split": "development",
+      "domain": "calm",
+      "target": {
+        "need": "Unwind from stress, calm an overactive mind, or settle for sleep.",
+        "audience": "Adult consumers seeking relief for themselves, rather than clinicians buying equipment for a professional practice."
+      },
+      "ad": {
+        "ad_archive_id": "1061167790025251",
+        "page_id": "328627523855071",
+        "page_name": "Calm",
+        "body_text": "{{product.brand}}"
+      },
+      "expected": "uncertain"
+    },
+    {
+      "split": "development",
+      "domain": "calm",
+      "target": {
+        "need": "Unwind from stress, calm an overactive mind, or settle for sleep.",
+        "audience": "Adult consumers seeking relief for themselves, rather than clinicians buying equipment for a professional practice."
+      },
+      "ad": {
+        "ad_archive_id": "1378557861006409",
+        "page_id": "102059148893302",
+        "page_name": "Wevana",
+        "body_text": "You gave everything to protect our peace. Now, we want to help you find yours.\n\nThe battles we bring home aren't always visible, and navigating the aftermath of high-stress environments takes a toll. Founded by a U.S. veteran, Wevana was built specifically to give back to our military and law enforcement communities.\n\nOur wireless tabs use gentle, alternating pulses (bilateral stimulation) to help naturally regulate your nervous system and ease hypervigilance. No clunky wires, no clinical settings, just portable relief when you need it most.\n\nAs a heartfelt thank you for your service, verify with GovX for an exclusive 15% discount. Tap into relief today. 🇺🇸"
+      },
+      "expected": "match"
+    },
+    {
+      "domain": "fitness",
+      "target": {
+        "need": "Build a manageable exercise habit and improve body shape through short, guided beginner workouts.",
+        "audience": "People starting fitness or returning after inactivity, rather than established athletes adding performance training."
+      },
+      "ad": {
+        "ad_archive_id": "1524201309478904",
+        "page_id": "162130887727985",
+        "page_name": "Booming Bookkeeping Business",
+        "body_text": "I Knew I Wanted to Start My Own Business… But Everything Felt Risky - Until I Found This:\n\nIf you’re tired of the 9-5 and hunting for the right business to start, this overlooked skill might just change everything.\n\nBy Jenna C., Contributor\n\nI knew I wanted to quit my job.\nI was sick of trading time for a paycheck.\nI wanted ownership, freedom, and work that actually meant something to me.\n\nBut every time I Googled “business ideas,” I felt more overwhelmed than before.\n\nDropshipping? Too saturated.\nCoaching? What would I even coach on?\nAmazon FBA? Expensive, risky, competitive.\nContent creation? I’m not trying to go viral.\n\nEverything felt like either a scam, a slog, or a long shot.\n\nThen one night, buried in a Reddit thread, I saw someone mention something that almost no one talks about:\n\n“Bookkeeping is the ultimate beginner business. Low cost. High demand. Clients who stick with you for years.”\n\nAnd that’s when everything clicked.\n\nThe Business You’ve Probably Never Considered (But Should)\n\nBookkeeping isn’t flashy.\n\nIt’s not sexy.\n\nBut it might just be the smartest move no one’s talking about.\n\nWhen I found the 5-Day Keyboard Rich Challenge, hosted by CPA Bill Von Fumetti, it felt like the missing piece I’d been looking for.\n\nIt’s a free, live training where you learn exactly how to start a remote bookkeeping business from scratch - even if you’ve never opened a bookkeeping software or taken a finance class.\n\nAnd it’s built specifically for people like me (and probably you):\n\n✅ Career changers\n✅ Side hustlers\n✅ Aspiring entrepreneurs who want something real\n✅ Retirees\n\nWhat Makes Bookkeeping So Smart?\n\nLet’s be honest. Most online business ideas s..k.\nThey either take years to monetize, require a massive audience, or rely on unstable platforms.\n\nBookkeeping is different.\n\n✅ Every business needs one - and many pay monthly\n✅ You don’t need to “sell” - clients often come to you if you position it well\n✅ A Software makes it simple\n✅ Many bookkeepers charge on average $76/h \n✅ With a few consistent clients, you could replace or supplement your income\n\nAnd the best part? You can start part-time.\n\nLearn the skill, land your first client, then decide if you want to go all-in.\n\nWhat Happens in the 5-Day Challenge?\n\nThis isn’t a webinar. It’s a guided, step-by-step Zoom training.\n\nEach day, you log in for ~90 minutes and unlock a new piece of the blueprint:\n\nDay 1: Why bookkeeping is the best-kept secret in the business world\n\nDay 2: How to use a bookkeeping software (even if you’ve never touched it before)\n\nDay 3: Set up your business structure & tools\n\nDay 4: Find and land your first 1-3 clients (with no cold calls)\n\nDay 5: How to price, position, and start confidently\n\nIt’s free. It’s high-value. And it’s built for people who are done browsing ideas and ready to take action.\n\nReal Stories from Real People:\n\nThis challenge has helped over 8,000 people break into the business world with bookkeeping.\n\nNo financial degrees. No sales. No fancy setup.\n\nJust a legit, service-based business that grows with you.\n\nHere’s What I Learned (That Changed Everything)\n\nI don’t need a “million-dollar idea.”\nI don’t need to go viral.\nI don’t need to risk thousands upfront.\n\nI just need to solve a real problem for people who are happy to pay for it - every month.\n\nThat’s exactly what bookkeeping lets you do.\n\n👉 Want to See If It’s Right for You?\n\nIf you’ve been thinking, “I know I want to start a business… but I don’t know what kind,” this might be your sign.\n\nThe next Keyboard Rich 5-Day Challenge starts on Monday\n\nIt’s 100% free. \n\nAnd it might be the business idea you didn’t even know you were looking for.\n\n🎯 Save your seat here →\n\nhttps://thebookkeepingchallenge.com/live <<-- click here\n\nWorst case? You spend 90 minutes a day learning a high-value skill.\n\nBest case? You gain the confidence and tools to build a flexible business that fits your life."
+      },
+      "expected": "mismatch",
+      "split": "validation"
+    },
+    {
+      "domain": "fitness",
+      "target": {
+        "need": "Build a manageable exercise habit and improve body shape through short, guided beginner workouts.",
+        "audience": "People starting fitness or returning after inactivity, rather than established athletes adding performance training."
+      },
+      "ad": {
+        "ad_archive_id": "1426732895537186",
+        "page_id": "116143894813499",
+        "page_name": "Lessie Fitness",
+        "body_text": "😮‍💨 Always running on empty? You need just the right kind of movement.\n10 minutes of BetterMe Calisthenics and your body finally exhales.\n👉 Tap “Start” and feel it today."
+      },
+      "expected": "uncertain",
+      "split": "validation"
+    },
+    {
+      "domain": "fitness",
+      "target": {
+        "need": "Build a manageable exercise habit and improve body shape through short, guided beginner workouts.",
+        "audience": "People starting fitness or returning after inactivity, rather than established athletes adding performance training."
+      },
+      "ad": {
+        "ad_archive_id": "1661656028938988",
+        "page_id": "103977514809228",
+        "page_name": "Content Creator.com",
+        "body_text": "Ready to master AI Content Creation (the easy way) in less than 2 days? \n\n🎓 The AI Creator Course from the ContentCreator..com team was built for complete beginners who want to finally understand what AI can do—and how to actually use it.\n\nInside, we’ll walk you through everything step-by-step, with simple explanations and easy demos. \n\nYou’ll learn how to:\n✅ Brainstorm, Script, Storyboard Viral Content\n✅ Clone yourself in minutes\n✅ Create realistic AI influencers & UGC videos\n✅ Add AI visual effects to real footage\n✅ Master perfect character consistency\n✅ Replace boring backgrounds with cinematic environments using AI\n\n💵 Plus get LIFETIME DISCOUNTS on the best AI Filmmaking tools that will save you more than the cost of the course.\n\nRight now save $200 on the AI Creator Course with a Day Money-Back Guarantee so there is no risk to try it.\n\nJoin here: https://www.contentcreator.com/the-ai-creator-course"
+      },
+      "expected": "mismatch",
+      "split": "validation"
+    },
+    {
+      "domain": "fitness",
+      "target": {
+        "need": "Build a manageable exercise habit and improve body shape through short, guided beginner workouts.",
+        "audience": "People starting fitness or returning after inactivity, rather than established athletes adding performance training."
+      },
+      "ad": {
+        "ad_archive_id": "849734674850445",
+        "page_id": "44994367247",
+        "page_name": "Tony Horton",
+        "body_text": "Introducing the future of fitness, tailored for EVERYONE - **PowerSync 60™**.\n\nAfter months of sweat, dedication, and collaboration with the brilliant Dr. Mindy Pelz, I’m thrilled to unveil a 60-day program that beautifully intertwines fitness with the unique hormonal cycles of women - yes, even for those who've transitioned through menopause.\n\nBut hey, fellas, don’t feel left out! While PowerSync 60™ has special elements to maximize results for women, this program is designed for EVERYONE. 🙌\n\n💪 11 diverse workouts for all ages and abilities.\n💥 Power Up and Power Down options, so you can adjust according to your monthly cycle and fitness prowess.\n📆 Custom calendars for both men and women to chart your progress.\n🔄 Four unique phases tailored for women’s cycles, aligning your workouts for peak benefits.\n\nReady to synchronize your power and achieve results like never before? 🌟 Let’s do this!\n\nStay strong and sync on!\n\n— Tony"
+      },
+      "expected": "match",
+      "split": "validation"
+    },
+    {
+      "domain": "fitness",
+      "target": {
+        "need": "Build a manageable exercise habit and improve body shape through short, guided beginner workouts.",
+        "audience": "People starting fitness or returning after inactivity, rather than established athletes adding performance training."
+      },
+      "ad": {
+        "ad_archive_id": "1798223641621068",
+        "page_id": "112411920390398",
+        "page_name": "Evlo Fitness",
+        "body_text": "The workout that makes consistency finally feel possible — try Evlo FREE today! Named one of Women’s Health’s Best Fitness Apps. Science-backed workouts designed to help you get stronger without the all-or-nothing approach."
+      },
+      "expected": "match",
+      "split": "validation"
+    },
+    {
+      "domain": "fitness",
+      "target": {
+        "need": "Build a manageable exercise habit and improve body shape through short, guided beginner workouts.",
+        "audience": "People starting fitness or returning after inactivity, rather than established athletes adding performance training."
+      },
+      "ad": {
+        "ad_archive_id": "1135408645816454",
+        "page_id": "996675493520434",
+        "page_name": "Gentle Gains",
+        "body_text": "LAST CHANCE: 35% OFF for a LIMITED Time! 🔥\n\n✔ Targets core, waist & full body in one workout\n✔ Low-impact & joint-friendly (perfect for back pain)\n✔ Just 15 minutes a day at home\n✔ Beginner-friendly with guided workouts\n✔ Compact & easy to use anywhere\n\n“I felt the difference on the 3rd day.” ⭐⭐⭐⭐⭐\n\nThousands are already transforming at home\n\n35% OFF + FREE Shipping on orders over $65! 🚨\n\nStart your at-home transformation today 👇\nhttps://gentlegains.com/products/full-body-toning-exercise-band"
+      },
+      "expected": "match",
+      "split": "validation"
+    },
+    {
+      "domain": "fitness",
+      "target": {
+        "need": "Build a manageable exercise habit and improve body shape through short, guided beginner workouts.",
+        "audience": "People starting fitness or returning after inactivity, rather than established athletes adding performance training."
+      },
+      "ad": {
+        "ad_archive_id": "2213769146184483",
+        "page_id": "116143894813499",
+        "page_name": "Lessie Fitness",
+        "body_text": "Your body can become the equipment. Try Calisthenics.\n\nInstead of machines and weights, this 28-day plan teaches your body to move, hold, and build strength using its own resistance.\nYou’ll develop:\n💪 Stronger arms and shoulders\n🔥 A tight, active core\n🦵 Powerful legs and glutes\n⚡ Better balance and control\n\nYour 28-Day Calisthenics Plan\n🟢 Week 1: Learn foundational bodyweight moves\n🟢 Week 2: Build control and core stability\n🟢 Week 3: Increase strength and endurance\n🟢 Week 4: Move with power and confidence\n\n🏠 No equipment needed\n⏱ Short daily sessions\n💪 Strength built with your own body\n\n✨ When your body becomes the resistance, strength feels different."
+      },
+      "expected": "match",
+      "split": "validation"
+    },
+    {
+      "domain": "calm",
+      "target": {
+        "need": "Unwind from stress, calm an overactive mind, or settle for sleep.",
+        "audience": "Adult consumers seeking relief for themselves, rather than clinicians buying equipment for a professional practice."
+      },
+      "ad": {
+        "ad_archive_id": "3429392707229030",
+        "page_id": "694141050454587",
+        "page_name": "Life With Rachael",
+        "body_text": "I want to share this for any parents who are exhausted from the school calls, the morning meltdowns and the bedtime battles because that was our life not long ago.\n\nMy child was really struggling. Meltdowns before we even got out the door, difficulty focusing in class, the teacher flagging things regularly. Public meltdowns that left me mortified and exhausted. And then bedtime came and the brain that had been wound up all day just would not slow down.\n\nAt one point the doctor mentioned things like OT, behavioural therapy and medication and I remember sitting in the car after that appointment adding up the costs in my head thinking there has to be something else. Something that does not cost a fortune every month and does not involve putting anything into my child's body.\n\nI tried breathing exercises, weighted blankets, white noise. Nothing really got to the root of it.\n\nThen I came across CalmCarry. It works on a pressure point in the palm called PC8 that has been used in acupressure for thousands of years to help the nervous system calm down naturally. It sends gentle pulses to that exact spot. Nothing goes into the body at all. My child just holds it.\n\nThe change has been so real. School mornings are so much calmer now. The meltdowns are less frequent and less intense. My child is focusing better in class and the teacher has actually noticed the difference. And bedtime, which used to take forever, now wraps up so much more easily.\n\nMy child is just happier. That is the part that gets me the most.\n\nI ended up ordering one for myself and my husband too because we needed it just as much honestly.\n\nThey have a big discount on right now and a 100-Day Money-Back Guarantee so there is genuinely nothing to lose by trying it 👇 \nhttps://www.theglowcompany.co/pages/calmcarry-kids-natural-calm-and-sleep-support-for-children"
+      },
+      "expected": "mismatch",
+      "split": "validation"
+    },
+    {
+      "domain": "calm",
+      "target": {
+        "need": "Unwind from stress, calm an overactive mind, or settle for sleep.",
+        "audience": "Adult consumers seeking relief for themselves, rather than clinicians buying equipment for a professional practice."
+      },
+      "ad": {
+        "ad_archive_id": "2053012685266145",
+        "page_id": "961028003750426",
+        "page_name": "Sarah Mitchell",
+        "body_text": "I have a scar on my forearm from my own dog.\n \nFor four months I told everyone I got it from a bramble on a hike.\n \nMy coworkers. My mom. My best friend.\n \nNobody knew.\n \nBecause how do you tell someone that the dog you love — the dog you've had for three years, the dog who sleeps on your bed every night — turned around on a walk and bit you?\n \nNot a stranger. Not a child. Not someone who provoked him.\n \nMe.\n \nThe person who feeds him every morning. Who scratches his ears. Who spent $4,600 trying to fix his reactivity so he could have a better life.\n \nIt happened on a Tuesday afternoon in October.\n \nWe were on our usual route. Diesel spotted a dog about 40 feet ahead. He went into full reaction — lunging, barking, spinning.\n \nI tried to redirect him the way the trainer taught me. Stepped in front of him. Said his name firmly.\n \nHe turned and bit my forearm.\n \nOne second. Clean puncture. Blood immediately.\n \nI stood on that sidewalk holding my arm and I didn't cry. I just stared at him.\n \nHe was already calm again. Tail low. Looking at me like nothing had happened.\n \nI walked home in silence.\n \nCleaned the wound in the bathroom with the door locked. Put a bandage on. Went and sat on the couch.\n \nDiesel came and put his head in my lap.\n \nAnd I sat there thinking: what is happening to us?\n \nI'd had Diesel since he was 14 months old. Adopted him from a rescue. He was nervous at first — that's normal, they said. Give him time.\n \nThe reactivity started around month three.\n \nLunging at dogs on walks. Then at cyclists. Then at joggers.\n \nI hired a trainer immediately. Positive reinforcement, counter-conditioning, all of it.\n \nIt helped. For about six weeks.\n \nThen it stopped helping.\n \nSecond trainer. $140 per session. Eight sessions.\n \nBetter for a while. Then the same plateau.\n \nBy year two, Diesel was on Prozac.\n \nIt took the edge off. Some days.\n \nOther days he was just as explosive as before the medication.\n \nMy vet said: \"Some dogs need a higher dose. Some dogs just have a reactivity ceiling.\"\n \nI didn't know what a reactivity ceiling was. But it didn't sound like something with a solution.\n \nI kept going. Kept training. Kept medicating. Kept managing every single walk like a military operation.\n \nDifferent side of the street. Treats ready. Eyes scanning ahead constantly.\n \nAnd then October happened.\n \nAfter he bit me, I didn't tell the trainer. I didn't tell the vet.\n \nI was ashamed. And I was scared of what they might say.\n \nThat he was dangerous. That we'd reached the end of what was manageable.\n \nI kept the bandage on for two weeks. Wore long sleeves until the scar faded enough that nobody would ask.\n \nBut I couldn't stop thinking about it.\n \nHe bit me.\n \nAnd the worst part — the part I couldn't say out loud to anyone — was that I understood why.\n \nHe wasn't trying to hurt me. He was in a state of complete panic. His nervous system had completely overridden everything. He didn't see me in that moment.\n \nHe was just trying to escape something his brain told him was a threat.\n \nAnd I had stepped into the middle of that.\n \nBut understanding it didn't make it less frightening.\n \nBecause if his brain could override his bond with me — what happened the next time a child ran up to him? What happened the next time someone reached out to pet him without asking?\n \nI started researching obsessively. Not training techniques. Not medication dosages.\n \nWhy.\n \nWhy does a dog's brain override everything — even their attachment to the person they love\n[Middle omitted; use read_ad_copy for full copy]\n once in three years.\n \nWeek 3: He saw a cyclist coming and didn't lunge. Slowed slightly. Kept moving.\n \nWeek 4: We walked past the spot where he bit me.\n \nHe didn't react to anything on that block.\n \nI stood there for a moment after we passed it.\n \nWeek 6: I let him off leash in the backyard while my neighbor was in her yard next door with her dog.\n \nHe looked at the dog through the fence. Whined once. Walked away.\n \nI sat down on the grass and just stayed there.\n \nEight weeks in, I told my best friend what really happened in October.\n \nShe was quiet for a long time.\n \n\"Why didn't you tell me?\"\n \n\"I was ashamed.\"\n \n\"Of him or of yourself?\"\n \nI thought about it.\n \n\"Both.\"\n \nDiesel has never bitten me again.\n \nHe's not a different dog. He still has moments. But his brain has a buffer now. His gut can produce what it was always supposed to produce.\n \nThe walks aren't military operations anymore.\n \nAnd the thing I was most scared of — that his brain could completely override his bond with me — hasn't happened since.\n \nIf your dog has ever redirected onto you during a reactive episode — if you've been scratched, pulled down, or bitten and told someone a different story about where it came from — you're not alone.\n \nAnd it's not because your dog doesn't love you.\n \nIt's because their gut can't produce what their brain needs to stay connected to you when panic hits.\n \nTraining can't fix that. Medication manages it but doesn't fix it. Only repairing the gut can fix it.\n \nThe only supplement I trust now: CalmAxis.\n \n👉 https://trycanislabs.com/products/calmaxis-chews\n \n---\n \nP.S. After Diesel bit me, I looked up what happens when a dog bites their owner and gets reported. In most states, a documented bite — even to a family member — can result in a dangerous dog classification. Once that classification exists, a second incident almost always means mandatory euthanasia. I never reported it. I was scared of what would happen to him. But I also knew I couldn't keep pretending the problem wasn't escalating. If your dog has redirected onto you — even once — please take it seriously. It's not a one-time thing. It's a warning from a broken system that's getting worse.\n \nP.P.S. I'm not paid by CalmAxis. I'm just someone who wore long sleeves for four months because I was ashamed of a scar I didn't know how to explain. If this helps even one person avoid what I went through — or avoid losing their dog to something that had a biological cause all along — it's worth writing."
+      },
+      "expected": "mismatch",
+      "split": "validation"
+    },
+    {
+      "domain": "calm",
+      "target": {
+        "need": "Unwind from stress, calm an overactive mind, or settle for sleep.",
+        "audience": "Adult consumers seeking relief for themselves, rather than clinicians buying equipment for a professional practice."
+      },
+      "ad": {
+        "ad_archive_id": "2575723979516630",
+        "page_id": "226809855997477",
+        "page_name": "Allison Arnold - Migraine Coach",
+        "body_text": "I was diagnosed with POTS at 29. I'm 34 now. Turns out my POTS was real, but nobody ever screened me for the thing that was actually causing my POTS to flare so badly, so often, that I couldn't work for five years.\nFor five years, I \"managed\" a condition without knowing what was firing it.\n\nFive years of compression stockings pulled up to my thighs. I own eleven pairs. Class 2 medical grade. I put them on lying down every morning before I stood up. If I stood up without them my heart rate would jump from 68 to 148 within thirty seconds.\nFive years of salt loading. Ten grams a day. Salt tabs, LMNT packets, broth in the morning, olives at lunch. My blood pressure ran on the low end of normal all the time. Without the salt, I'd faint.\nFive years of a beta blocker my cardiologist prescribed to keep my heart rate from spiking when I stood up. It worked but it made me exhausted. Some days it made me too tired to shower.\nFive years of ivabradine when the beta blocker stopped working alone. Then midodrine. Then fludrocortisone. My cardiologist called it \"the standard POTS protocol.\" I called it \"the reason I can't feel my hands after 3 p.m.\"\nFive years of being handed a new modality — a tilt-table test that lasted forty-two minutes and had me in a puddle of tears by the end, a QSART sweat test, a full autonomic panel at a specialty clinic in Cleveland — and told to \"just give it time.\"\nI did everything they asked.\n\nI did a \"recumbent exercise protocol\" designed for POTS patients. I could bike lying down for ten minutes at a time. That was my exercise. I did it three times a week for two years.\nI saw a functional cardiologist who charged $2,400 for a consult and put me on a $520-a-month supplement stack that included NAD+ IV drips once a week. I stayed on it for eight months.\nI did the Levine Protocol — a graded exercise program designed for POTS. I could not get past week 4. Every time I progressed, I would crash for the next week.\nI saw a Mayo Clinic dysautonomia specialist. He confirmed the diagnosis. He said POTS is a lifelong management condition. He said the best I could hope for was a \"functional baseline\" that let me work part-time.\nPart-time.\nI was 29 when I was diagnosed. I had just made partner at my law firm. Three months later I could not stand up long enough to give a deposition.\n\nI felt like I was crazy. The tilt-table was abnormal. My heart rate did what POTS heart rates do. But every single day, I could not understand why my nervous system had turned on me so completely, so suddenly.\nBy the time my alarm went off, I was already calculating. I lay in bed for twenty minutes doing my \"pre-stand protocol\" — drinking twenty ounces of water, doing leg lifts, taking my beta blocker, waiting for the salt tab to dissolve. Then I put on the compression stockings. Then I sat up slowly. Then I stood up.\nGetting into the shower was a production. I sat on a shower chair. I kept the water lukewarm because hot water triggered a POTS flare. I washed my hair with my head tilted down because if I lifted my arms too long my heart rate would spike and I would faint.\nBy 10 a.m. I would be at my desk in compression stockings and a Camelbak of electrolyte water, working from home because I could not commute. I had left the law firm at year two. I was doing freelance contract work part-time. My income had dropped 70 percent.\nBy 2 p.m. I would hit what my POTS group called \"the wall.\" Not the migraine wall — the POTS wall. My chest would feel tight. My h\n[Middle omitted; use read_ad_copy for full copy]\nack to the law firm. Part-time first. Then full-time. My compression stockings are still in my drawer. I still take my beta blocker at a reduced dose. But I stand at my desk. I take stairs. I flew to New York for a client meeting last month and I sat upright the whole time.\nI still have POTS. It didn't go away. But the cascade that was driving my POTS into disabling territory has quieted. And the difference between disabling POTS and manageable POTS is the difference between the me who couldn't work and the me who's back in a courtroom.\n\nIf you have been diagnosed with POTS. If you are on beta blockers, midodrine, fludrocortisone. If you wear compression stockings every day. If your life has become a series of workarounds.\nIf you also have \"bad head days\" three or four times a month that are different from your normal POTS days — worse — and you have never connected them to Migraine.\nI am not saying you don't have POTS. You probably do. I am not your doctor.\nI am saying I spent five years being treated for the autonomic condition without anyone screening me for the neurological condition that was firing it. And when I finally addressed the trigeminal cascade upstream, my POTS symptoms became manageable in a way five years of cardiology never made them.\n\nFlorus is built for the cascade. Skin to nerve in 90 seconds. Three application points. Five ingredients.\n7,405 five-star reviews. 90-day money-back guarantee.\nAfter five years of dysautonomia protocols, what is three more months?\n\n👉 Every migraine tool you have works downstream of the source. Here's what works at it: https://florusrelief.com/blogs/news/every-migraine-tool-you-have-works-downstream-of-the-source-here-is-what-works-at-it\nYou don't have to keep managing something that's being fired by something else.\n\nP.S. Aliyah is now a Migraine coach herself. She specializes in POTS patients. She refused to accept a referral fee when I offered one. She said the only payment she wanted was for me to write my story. So I am writing it.\n\nP.P.S. The Amazon knockoffs are synthetic peppermint fragrance oil. They will not work for POTS. You need the real Florus with the therapeutic-grade magnesium glycinate that actually reaches the trigeminal nerve. Only on the official site.\n\nP.P.P.S. I gave a deposition last week. Two hours. Standing. My heart rate hit 108 at one point and I noticed it and I noticed I did not care. Because 108 is a number I could not have imagined tolerating a year ago. My life has room again."
+      },
+      "expected": "mismatch",
+      "split": "validation"
+    },
+    {
+      "domain": "calm",
+      "target": {
+        "need": "Unwind from stress, calm an overactive mind, or settle for sleep.",
+        "audience": "Adult consumers seeking relief for themselves, rather than clinicians buying equipment for a professional practice."
+      },
+      "ad": {
+        "ad_archive_id": "996000416787451",
+        "page_id": "878185562039243",
+        "page_name": "Crochet with Kim",
+        "body_text": "For almost three years, my nighttime routine looked like this.\n\n10:45pm. Brush my teeth. Wash my face. Tell myself tonight is going to be different.\n\n11:00pm. Get into bed. Tell my husband goodnight. He's already asleep. He sleeps like a normal person. I both love him and resent him for it.\n\n11:04pm. Pick up my phone. Tell myself I'm just going to \"check one thing.\"\n\n11:47pm. Still on Instagram. Watching a stranger reorganize her pantry. \n\nWondering if I should reorganize my pantry. Wondering why I care about her pantry.\n\n12:23am. Now on TikTok. Watched a woman in Indiana make a charcuterie board for her teenager's birthday. I felt vaguely bad about my own life.\n\n1:08am. Reading the comments under a Reddit post about a wedding I'm not invited to.\n\n1:52am. Wondering why I'm still awake.\n\n2:11am. Finally put the phone down. Eyes burning. Brain wired. \n\nWake up at 6:45am feeling like I got hit by a truck.\nIf you're reading this, I'm willing to bet at least part of that schedule sounded familiar to you. \n\nMost of us are quietly doing some version of this and not really telling anyone, because it's embarrassing. It's the kind of habit you don't mention at brunch.\n\nI'm 31. I work in HR. I'm married. I'm tired in a way that has become my baseline personality. \n\nMy friends call it \"tired in a sexy busy way,\" but really it's just tired.\n\nI've known the phone was the problem for years. I didn't need a sleep specialist to tell me that. I just couldn't stop.\nHere is the entire list of things I tried, in roughly the order I tried them.\n\nI put my phone across the room at night. I'd just get out of bed and get it. I tried screen time limits. I'd hit \"ignore for today\" so fast my brain didn't register the prompt. I tried switching to a Kindle. \n\nI'd read for ten minutes and then sneak back to my phone for \"just one thing.\" I tried a paperback. Same. \n\nI tried melatonin. I worked once, never again. \n\nI tried magnesium. I tried it for two months. Maybe it helped a little. \n\nI tried no caffeine after noon. Lasted three days. \n\nI tried a sleep meditation app called Calm. \n\nBought a year on Black Friday. Stopped opening it after week three.\n\nI tried a weighted blanket. \n\nI tried a sound machine. \n\nI tried writing in a journal before bed, which lasted four nights. \n\nI tried a \"wind down hour\" recommended by a book I read about sleep, which involved no screens after 9pm. \n\nI lasted two nights. The third night I was so bored at 9:30pm that I just turned my phone back on.\n\nThe problem was not that I didn't know how to stop scrolling. The problem was that I had no idea what else to do with myself at 11pm.\n\nMy brain wasn't ready for sleep. It was still wound up from the day. I needed a runway to come down. The scrolling was a terrible runway, but it was the only one I had.\n\nThis is going to sound like a weird turn, but stay with me.\n\nA couple of months ago, I was scrolling Reddit at midnight, on a thread about sleep problems. Naturally. Someone had asked the room for \"weird things that finally worked.\" I'd already read like 40 comments. \n\nThen I scrolled past one that just said:\n\"I crochet for 30 minutes before bed and I sleep like a baby now. Don't laugh. Try it.\"\n\nI laughed.\n\nI scrolled past it.\n\nBut for some reason, it stuck with me. Maybe because she said \"don't laugh.\" It was like she'd predicted exactly the reaction I had.\n\nA few days later I told my older sister about it on the phone. Half as a joke. \n\nI said \"Reddit told me to start crocheting for my inso\n[Middle omitted; use read_ad_copy for full copy]\nt feeling was at 11:15pm. I hadn't felt sleepy at that hour in three years.\n\nI put the hook and the yarn down on my nightstand. Turn off the light. I was asleep within ten minutes.\n\nI woke up the next morning genuinely disoriented. My husband asked me why I looked weird. I said \"I think I slept.\"\n\nHe thought I was joking.\n\nIt's been a few months now.\n\nI'm not going to oversell this to you. \n\nI still occasionally have a rough night. \n\nI still sometimes check my phone in bed when I shouldn't. \n\nI'm not a transformed person. I'm just a much more rested one.\n\nBut my nightly average has gone from falling asleep at 2am to falling asleep by 11:30. \n\nMy screen time after 9pm dropped from over two hours a night to under thirty minutes. \n\nI no longer wake up feeling hit by a truck. My husband says I'm less snappy in the mornings, which, fair.\n\nHere's what I think the actual secret is, and it took me a while to figure out.\n\nThe scrolling was never a willpower problem. \n\nIt was a \"what do I do with my hands and my brain right before bed\" problem. \n\nMy brain needed a runway to come down. \n\nThe phone is a bad runway because it gives your brain more stimulation, not less. \n\nEvery video, every comment, every fight in the comments section, every \"wait what\" moment ramps your nervous system back up.\n\nCrochet is a great runway because it does the opposite. \n\nIt's repetitive enough to soothe you. Just engaging enough to keep your brain busy. \n\nSlow enough that your body naturally starts to wind down. By the time I'm 30 minutes in, my eyes are heavy and my brain is quiet.\n\nThe reason My First Stitches specifically worked for me when YouTube didn't is that I'd actually tried to learn from YouTube years ago and quit in 20 minutes. \n\nThe women on YouTube go too fast. They use words nobody explains. They jump camera angles. The kit is designed for absolute beginners. One card teaches you one stitch. Card #3 had me make a real single crochet on the very first night.\n\nI want to tell you one more small thing.\n\nA couple of weeks ago, I was at brunch with my sister, and I told her I was now crocheting in bed instead of scrolling. \n\nShe said \"I told you.\"\n\nI said \"yeah well, I should have listened sooner.\"\n\nIf you struggle with sleep, or with late-night scrolling, or with that wired feeling that won't let you wind down, this is what I'd tell my friend to try.\n\nIt's currently 40% off, with a 30 day money back guarantee. Linked below.\n\n👉 https://everything-crochet.com/pages/saved-listicle"
+      },
+      "expected": "match",
+      "split": "validation"
+    },
+    {
+      "domain": "calm",
+      "target": {
+        "need": "Unwind from stress, calm an overactive mind, or settle for sleep.",
+        "audience": "Adult consumers seeking relief for themselves, rather than clinicians buying equipment for a professional practice."
+      },
+      "ad": {
+        "ad_archive_id": "1122430576826739",
+        "page_id": "1253746127833017",
+        "page_name": "Low Ferritin Daily",
+        "body_text": "I'm going to list everything I've taken for sleep over the last three years. Not because I'm proud of it. Because I need you to see the pattern before I explain it.\n\nMelatonin gummies. Four different brands. $87.\n\nPrescription Ambien. Two refills. Scared of every pill. $145.\n\nChamomile tea. Every night for six months. $52.\n\nMagnesium pills from CVS. Three bottles. $34.\n\n\"Magnesium Complex\" from Amazon. Two bottles. $67.\n\nValerian root. Two months. $41.\n\nDrugstore iron pills. One bottle. $14.\n\nLavender soap under the sheets, for my legs. Don't judge me. $9.\n\nGABA supplements. $46.\n\n\"Deep Sleep Formula\" from the vitamin aisle. $52.\n\nAnother magnesium from Whole Foods with \"High Absorption\" on the label. $89.\n\nCBD gummies for sleep. Three different brands. $127.\nA weighted blanket. $159.\n\nSleep meditation app subscription. $79.\n\nBlackout curtains, white noise machine, cooling pillow. $194.\n\nTotal: $1,195. And that's just the products. Doesn't include the $380 for two sleep specialists my insurance barely covered — both said \"insomnia\" — the $195 for bloodwork my doctor ordered to rule out thyroid issues, or the $267 I spent on books, courses, and \"sleep hygiene\" programs from wellness influencers.\n$2,037.\n\nThree years. Fifteen different products. Three practitioners. Every protocol the sleep community recommends.\n\nAnd I was still waking up at 3am every night with my legs twitching under the sheets and my mind spinning through tomorrow's problems.\n\nI know what you're thinking. \"She probably didn't follow the protocols right.\" Or \"She needed to stick with it longer.\" Or \"She should have combined X with Y.\"\n\nI did them right. I followed every protocol exactly. I combined. I stacked. I did sleep hygiene perfectly. I did the \"no caffeine after lunch\" thing because someone told me my coffee was what kept my legs going at night.\n\nNone of it lasted.\n\nEvery single product produced the same result: 2-3 weeks of slightly better sleep followed by a complete crash. The legs come back. Worse. Buy the next thing. Try again. Same cycle.\nI'm not writing this to complain. I'm writing this because two months ago I finally figured out WHY none of them worked. And the answer made me furious. Because it's so simple. And nobody in any group, any course, any practitioner's office ever explained it.\n—\nThe pattern\nHere's what three years and $2,037 taught me about every sleep product on the market.\n\nThey all address the wrong problem. You take melatonin. It knocks you out. But your body builds tolerance within weeks. You take prescription sleep aids. They sedate you. But sedation isn't sleep — and you wake up foggy, dependent, scared, with your legs still jerking under the covers. You try supplements. They promise \"calm\" and \"relaxation.\" But they never fix WHY your legs won't let you sleep.\n\nSome of them work for a few nights. The easy nights. The ones where your legs were quiet anyway.\n\nYou feel better. You post in the group. You think you've found the answer.\n\nThen three weeks later, it all comes back. And you buy the next product.\n\nI did this fifteen times before I stopped and asked the obvious question: if all these products help SOME nights — and they do, I could feel the temporary relief — why don't any of them fix the problem permanently?\n\nThe answer is four failures that every sleep product shares. Doesn't matter if it's pharmaceutical grade Ambien or a $9 bar of lavender soap. They all fail in the same four ways.\n—\nFailure 1: They don't address the 3am sh\n[Middle omitted; use read_ad_copy for full copy]\ny. Not a 25-day protocol. Not something you finish and hope. A daily refill. The way my ferritin — the store every period draws down — fills back up without me thinking about it.\n\nI wake up rested. I have energy all day, and my 3pm latte is back on my desk. I don't snap at my kids over spilled cereal anymore. My coworkers keep asking what I'm \"doing differently.\"\n\nAfter three years of cycling through every sleep product on the market, the exhaustion is GONE.\nNot managed for two weeks. Gone.\n—\nThe math\n$2,037 on fifteen products, three practitioners, bloodwork, courses, and gadgets. Three years. My legs never settled. Every product crashed at week three.\n\nIronova: one purchase. Up to 58% off, from $0.85 a day. Less than a dollar a day for nights that actually hold.\n\nNo shipping fees. No more bottles that half-work. No stacking five sleep aids. No stomach issues. No grogginess. No dependency.\n\nTwo pills. Every day. With dinner.\n90-day money-back guarantee. Doesn't work, every penny back.\nIt's sold out 4 times. Small company. Real bisglycinate with nine helpers takes time to make properly. If it's out of stock, sign up for the restock notification. It's worth the wait.\n—\nIf you've spent hundreds or thousands on sleep supplements. If you've tried melatonin, Ambien, chamomile, CBD, magnesium, or any of the dozens of products the wellness community recommends. If you felt better for two weeks and crashed. If you're on round 2 or round 5 or round 10 and still waking up at 3am with your legs kicking.\nYou're not doing it wrong. The products aren't weak. The approach is wrong. You've been swallowing products that never touch the 3am shortfall, pills that never give your brain what it builds the signal with, things that never refill your reserves from the inside.\nYou've been pouring sleep aids into a bucket with a hole in the bottom.\nOne form fixes all four. You take it with dinner.\n\nEvery night without it is another night of broken sleep. Another night of 3am shortfalls. Another night your brain can't build the signal that stills your legs.\nI spent three years and $2,037 learning what I should have known from the start: it was never insomnia. It was my legs all along. You don't fix that by sedating your brain. You fix it by giving your body the mineral it's been starving for — in the form it can actually use.\n\nStop fighting your body. Start refilling what's missing from it.\n\nAlmost forgot the link. Here it is: tryfemvia.com/products/ironova-complete-ferritin-complex"
+      },
+      "expected": "match",
+      "split": "validation"
+    },
+    {
+      "domain": "calm",
+      "target": {
+        "need": "Unwind from stress, calm an overactive mind, or settle for sleep.",
+        "audience": "Adult consumers seeking relief for themselves, rather than clinicians buying equipment for a professional practice."
+      },
+      "ad": {
+        "ad_archive_id": "1129093626176494",
+        "page_id": "1028991066963806",
+        "page_name": "anandabloomli",
+        "body_text": "✨ Signature Healing Session ✨\n\nA deeply restorative experience designed to help you slow down, reconnect, and create space for greater peace and balance. 🌿\n\nOur Signature Healing Session  combines several powerful holistic practices into one unique experience:\n\n✨ Reiki Energy Healing\n✨ Sound Therapy\n✨ Sacred Geometry\n✨ Crystal Therapy\n✨Chakras alignment \n\nThis session helps you:\n🤍 Reduce everyday stress\n🤍 Calm the mind and support relaxation\n🤍 Ease feelings of anxiety and emotional overwhelm\n🤍 Improve focus and mental clarity\n🤍 Promote emotional balance\n🤍 Release tension and encourage deep relaxation\n🤍 Create a more peaceful environment\n🤍 Support restful, quality sleep\n\nWhether you're feeling overwhelmed, mentally exhausted, disconnected, or simply in need of some time for yourself, this is an invitation to pause, breathe, receive, and reconnect with yourself.✨\n\n📍Long Island, NY\n🌿 Private & personalized sessions\n✨ Come as you are.\n Your healing journey deserves space. 🤍\n\n#SoundHealing #ReikiHealing #CrystalHealing #SacredGeometry #EnergyHealing LongIslandWellness LongIslandNY HolisticHealing SoundTherapy SelfCare StressRelief Meditation MindBodySpirit WellnessJourney AnandaBloomStudio"
+      },
+      "expected": "match",
+      "split": "validation"
+    }
+  ]
+}

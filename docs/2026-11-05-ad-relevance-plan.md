@@ -1,6 +1,96 @@
 # Agent-controlled Meta ad research
 
-## Continuous workflow follow-up
+## Jev usage correction: current implementation
+
+The v2 judge asked Jev to infer a target from a brief and several source ads, then
+answer overlapping questions about need, audience and overall relevance. Requiring
+all of those probabilities to clear separate thresholds suppressed useful results.
+The preceding prompt change had reduced a false positive without measuring recall.
+
+Working search implementations use a concrete query/candidate pair, narrow questions
+and measured rankings. Sources inspected on November 5:
+
+- [gbesse/jev-rerank-server](https://github.com/gbesse/jev-rerank-server#how-it-decides)
+  sends one query and passage per request and sorts the unchanged Noul output. Its
+  checked-in 25-query SciFact study reports nDCG@10 improving from 0.616 to 0.718;
+  it explicitly warns that adding unrelated candidates to the state can hurt quality.
+- [hotchpotch/jev-reranker](https://github.com/hotchpotch/jev-reranker/blob/main/src/jev_reranker/instructions.py)
+  uses explicit query/document references and separates ranking from relevance
+  filtering. Its evaluation reports how many labeled positives filtering removes.
+- TypeSafe's worked [RAG passage classifier](https://docs.typesafe.ai/cookbooks/classifying_rag_passages)
+  asks independent questions on one query/passage pair and combines them in code.
+  Its [skill suggestion study](https://docs.typesafe.ai/cookbooks/skill_suggestion)
+  checks shortlisted candidates with fuller evidence and permits no recommendation.
+- [Steve Klosterman's independent experiments](https://www.steveklosterman.com/diy-jev/)
+  show that wording and question type can change decisions. A model's probability
+  is not a substitute for evaluating the application's policy on labeled examples.
+
+Rubric `ad-peer-v3` now requires the calling agent to supply `target.need` and
+`target.audience` after reviewing source ads or a user brief. Jev receives only
+that target and one candidate's copy. Three independent Noul questions check the
+promised outcome, an explicit audience conflict, and whether the offer is clear.
+There is no fourth overall-relevance question. Short meaningful copy reaches the
+model; the earlier eight-word minimum has been removed.
+
+Code applies the review bands and returns all three raw probabilities. The optional
+`ranking_score = offers_need * (1 - audience_conflict)` prioritizes review; it is
+an ordering heuristic, not a calibrated probability. Nothing is filtered or stored
+as a relevance classification. Different source campaigns need separate targets.
+The [embedded guide](../backend/mcpserver/ad_research_guide.md) documents the new input
+and migration from the earlier `brief`/`reference_ads` judge input. The finder keeps
+its existing input and is unchanged.
+
+### Real-ad evaluation
+
+The checked-in quality fixture contains 25 observed ad/target pairs across fitness
+and consumer relaxation: 12 development cases and 13 validation cases. Labels were
+written from actual copy before obtaining each split's predictions. Validation used
+the unchanged target descriptions, questions and decision bands. These are agent
+labels on a small sample, not an independently adjudicated accuracy benchmark.
+
+Replaying the previous v2 questions and routing on the same candidates and target
+wording, with its original source references, produced 15/25 exact labels and 2/11
+positive matches. The final Go v3 run produced 22/25 exact labels and 8/11 positive
+matches. All 11 labeled mismatches were rejected, and all three deliberately sparse
+or ambiguous cases stayed uncertain. On validation alone, v3 returned 12/13 exact
+labels and 6/7 positive matches, versus v2's 7/13 and 2/7. The complete v3 quality run
+took 1.76 seconds across four sequential groups with up to four calls in parallel.
+
+The two Go runs gave 8–9 positive matches out of 11. Running Week crossed the match
+threshold between runs; an unrelated style offer crossed the clear-offer threshold.
+Both runs gave 22/25 exact labels and no false positive matches. This variability is
+why scores and uncertainty remain visible. The short EMDR/Spotify ad and Tony Horton's
+broad fitness offer still need review. No prompt changes were made after validation.
+
+`TestAdJudgeQualityLive` counts abstentions as misses, checks exact-label accuracy,
+rejects confident contradictions and requires positive recall. Its first invocation
+exposed an overly strict assertion that every negative must receive a hard rejection;
+that assertion now allows abstention while still counting it as an accuracy miss.
+The accuracy floors and labels were retained. Returning uncertain for everything
+cannot pass. Provider failures also fail instead of counting as model uncertainty.
+
+Run it from `backend` with `TYPESAFE_API_KEY` supplied securely:
+
+```sh
+AGF_JEV_QUALITY_LIVE=1 go test ./helpers -run '^TestAdJudgeQualityLive$' -count=1 -v
+```
+
+HTTP MCP tests passed for the required target, account ownership, missing credentials
+and the revised schema. A live HTTP MCP run judged seven stored real ads in 0.50 seconds
+and called the unchanged finder successfully. Helper/MCP/repository race suites,
+Go build and scoped vet passed. Deployment and an installed agent-client session
+remain outside this local verification.
+
+A fresh full Femrun workflow also passed: live advertiser lookup, source ads,
+Gemini search terms, exact/broad Meta searches and Jev judging through HTTP MCP.
+It took 60.36 seconds, including 0.73 seconds for twelve judgements; the cached
+source-page replay took 41.71 ms. Evlo Fitness and Gentle Gains matched, eight
+candidates were mismatches, and two remained uncertain. The previous BetterMe
+weightlifter false positive was rejected. This validates the revised input through
+the real queue/worker/provider path; it does not establish that the search has found
+every relevant advertiser. The change is local and has not been deployed to Peon.
+
+## Earlier continuous workflow follow-up (v2)
 
 Completed the HTTP MCP workflow from brand lookup through fresh source ads,
 finder-generated queries, candidate retrieval and Jev judging in two niches.
@@ -52,8 +142,8 @@ AGF_AD_RESEARCH_LIVE=1 go test ./internal/integration -run '^TestAdResearchModel
 ```
 
 The model gate defaults to the checked-in observed-ad fitness fixture.
-`AGF_FLOW_BRAND`, `AGF_FLOW_BRIEF` and `AGF_FLOW_REPORT` customize the continuous
-workflow; `AGF_AD_RESEARCH_FIXTURE` selects another observed-ad model fixture.
+`AGF_FLOW_BRAND`, `AGF_FLOW_BRIEF`, `AGF_FLOW_NEED`, `AGF_FLOW_AUDIENCE` and
+`AGF_FLOW_REPORT` customize the continuous workflow; `AGF_AD_RESEARCH_FIXTURE` selects another observed-ad model fixture.
 Final helper/MCP/repository race suites, Go build and scoped vet passed.
 These checks cover local integration; Peon deployment and an installed Claude
 Code/Codex client session remain unverified. Jev remains advisory, and these small
@@ -65,7 +155,7 @@ The assistance tools expose model calls explicitly, while the calling agent
 continues to control the workflow. `find_similar_brands` takes a brief and/or
 selected source ad snapshots and returns unverified advertiser leads and search
 phrases. `judge_ads` uses Jev to assess caller-selected candidate snapshots against
-the brief/references. Neither tool scrapes, changes stored ads or hides results.
+the caller-defined customer need and audience. Neither tool scrapes, changes stored ads or hides results.
 
 Implemented bounded provider helpers, owner-scoped snapshot loading and two MCP
 handlers, with usage and error handling in the embedded guide. The brand finder

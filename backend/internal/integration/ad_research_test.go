@@ -27,6 +27,7 @@ func TestAdResearchModelsLive(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	var fixture struct {
+		Target      helpers.AdJudgeTarget   `json:"target"`
 		Brief       string                  `json:"brief"`
 		SourceBrand string                  `json:"source_brand"`
 		References  []models.AdSearchResult `json:"references"`
@@ -74,7 +75,7 @@ func TestAdResearchModelsLive(t *testing.T) {
 		return result
 	}
 	start := time.Now()
-	result := call("judge_ads", map[string]any{"brief": fixture.Brief, "reference_ads": refs, "candidate_ads": candidates})
+	result := call("judge_ads", map[string]any{"target": fixture.Target, "candidate_ads": candidates})
 	var judged struct {
 		Judgements []helpers.AdJudgement `json:"judgements"`
 		Partial    bool                  `json:"partial"`
@@ -93,10 +94,13 @@ func TestAdResearchModelsLive(t *testing.T) {
 				if v.Verdict == "uncertain" {
 					t.Logf("positive abstention: %s needs agent review", fixture.Candidates[i].AdArchiveID)
 				}
-			} else if expected == "not_match" {
+			} else if expected == "not_match" || expected == "mismatch" {
 				// A weak or conflicting peer may remain uncertain, but must not
 				// be promoted to a confident match.
 				assert.NotEqual(t, "match", v.Verdict)
+				if v.Verdict == "uncertain" {
+					t.Logf("negative abstention: %s; exact accuracy is measured by TestAdJudgeQualityLive", fixture.Candidates[i].AdArchiveID)
+				}
 			} else {
 				assert.Equal(t, expected, v.Verdict)
 			}

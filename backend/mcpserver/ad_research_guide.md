@@ -48,18 +48,39 @@ response. Verify leads through `find_advertisers` and `get_advertiser_ads` befor
 treating them as advertising peers. `exclude_brands` avoids already checked leads.
 Brand name alone is insufficient input; with no source ads, provide a brief.
 
-Use `judge_ads` when a batch of candidate ads needs a quick second opinion:
+Before calling `judge_ads`, define one concrete customer need and audience from
+the source ads or user brief. You do this interpretation; Jev checks candidates
+against that explicit target. Keep different campaigns as separate targets.
+Describe the desired outcome rather than naming a category or reference brand.
+Include only audience restrictions supported by the evidence.
 
 ```json
-{"brief":"Compare the primary customer need and offer","reference_ads":[{"scrape_id":123,"ad_archive_id":"456"}],"candidate_ads":[{"scrape_id":124,"ad_archive_id":"789"}]}
+{"target":{"need":"Unwind from everyday stress and settle for sleep","audience":"Adult consumers seeking relief for themselves, rather than clinicians buying practice equipment"},"candidate_ads":[{"scrape_id":124,"ad_archive_id":"789"}]}
 ```
 
-Select up to 20 candidates and six references from your own scrapes. Jev returns
-`match`, `mismatch` or `uncertain`, with probabilities for evidence sufficiency,
-shared need, compatible audience and overall relevance. These are model estimates,
-not measured accuracy or ad performance. Each judgement includes `scrape_id` and
-`ad_archive_id`. Only supplied copy is assessed; images and videos remain unexamined. The
-judge reads the beginning and end of long copy and reports truncation.
+Select up to 20 candidates from your own scrapes. Each request to Jev sees only
+the target and one candidate's copy. Three independent yes/no checks return:
+
+- `offers_need`: does the offer promise the requested outcome?
+- `audience_conflict`: does it explicitly address a conflicting customer situation?
+- `clear_offer`: can the product, service or program be identified?
+
+Code combines these checks into `match`, `mismatch` or `uncertain`. The review
+bands use 0.7 for yes and 0.3 for no; missing offer evidence stays uncertain.
+A match needs a clear offer, the requested outcome and no detected audience conflict.
+An unstated demographic alone is not a conflict.
+
+`ranking_score` is `offers_need * (1 - audience_conflict)` and is omitted when
+offer evidence is insufficient. It helps you prioritize review; it is not a
+probability of relevance, measured accuracy or ad performance. Results preserve
+input order and include every candidate. Inspect promising uncertain ads rather
+than treating uncertainty as rejection. Each judgement includes `scrape_id` and
+`ad_archive_id`. Images and videos remain unexamined; long copy preserves its
+beginning and end and reports truncation.
+
+`target.need` and `target.audience` are required, each at most 800 characters.
+This replaces the earlier judge's `brief`/`reference_ads` input. Read references
+with the scraping tools to form the target; the finder still accepts references.
 
 Neither helper starts scraping, selects references for you, changes the stored
 evidence or filters a result list. You may use either, both or your own reasoning.

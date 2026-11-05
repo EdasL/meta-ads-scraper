@@ -18,7 +18,8 @@ type adRoundTrip func(*http.Request) (*http.Response, error)
 func (f adRoundTrip) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 func TestAdJudgeContractAndFailureModes(t *testing.T) {
-	ad := AdResearchEvidence{ID: "1:42", Text: "A gentle walking plan for complete beginners to build a consistent fitness habit."}
+	// Short but meaningful copy must reach Jev rather than a word-count cutoff.
+	ad := AdResearchEvidence{ID: "1:42", Text: "Gentle guided fitness for beginners."}
 	for _, tc := range []struct {
 		name    string
 		prob    float64
@@ -37,22 +38,29 @@ func TestAdJudgeContractAndFailureModes(t *testing.T) {
 				var request map[string]any
 				require.NoError(t, json.NewDecoder(r.Body).Decode(&request))
 				require.Equal(t, JevAdModel, request["model"])
-				require.Contains(t, request["state"], "untrusted evidence")
+				state := request["state"].(map[string]any)
+				require.Len(t, state, 2)
+				require.Equal(t, ad.Text, state["ad_copy"])
+				require.NotEmpty(t, state["target"])
+				require.Len(t, request["questions"], 3)
 				answers := map[string]any{}
-				for _, key := range []string{"sufficient_evidence", "same_need", "compatible_audience", "relevant"} {
+				for _, key := range []string{"clear_offer", "offers_need", "audience_conflict"} {
 					p := tc.prob
-					if key == "sufficient_evidence" {
+					if key == "audience_conflict" {
+						p = 1 - tc.prob
+					}
+					if key == "clear_offer" {
 						p = .99
 					}
 					answers[key] = map[string]any{"type": "noul", "noul": p}
 				}
 				if tc.invalid {
-					answers["relevant"] = map[string]any{"type": "noul", "noul": 2}
+					answers["offers_need"] = map[string]any{"type": "noul", "noul": 2}
 				}
 				body, _ := json.Marshal(map[string]any{"model": JevAdModel, "answers": answers})
 				return &http.Response{StatusCode: tc.status, Body: io.NopCloser(strings.NewReader(string(body))), Header: make(http.Header)}, nil
 			})}
-			got, err := (JevAdJudge{APIKey: "test-key", Client: client}).JudgeAds(context.Background(), AdResearchBrief{Brief: "accessible fitness"}, []AdResearchEvidence{ad})
+			got, err := (JevAdJudge{APIKey: "test-key", Client: client}).JudgeAds(context.Background(), AdJudgeTarget{Need: "accessible fitness", Audience: "beginners"}, []AdResearchEvidence{ad})
 			require.NoError(t, err)
 			require.Len(t, got, 1)
 			require.Equal(t, tc.want, got[0].Verdict)
@@ -60,10 +68,10 @@ func TestAdJudgeContractAndFailureModes(t *testing.T) {
 			require.True(t, got[0].TextOnly)
 		})
 	}
-	got, err := (JevAdJudge{APIKey: "key"}).JudgeAds(context.Background(), AdResearchBrief{Brief: "fitness"}, []AdResearchEvidence{{ID: "1:2", Text: "{{product.brand}}"}})
+	got, err := (JevAdJudge{APIKey: "key"}).JudgeAds(context.Background(), AdJudgeTarget{Need: "fitness", Audience: "beginners"}, []AdResearchEvidence{{ID: "1:2", Text: ""}})
 	require.NoError(t, err)
 	require.Equal(t, "insufficient_text", got[0].Reason)
-	_, err = (JevAdJudge{}).JudgeAds(context.Background(), AdResearchBrief{}, []AdResearchEvidence{ad})
+	_, err = (JevAdJudge{}).JudgeAds(context.Background(), AdJudgeTarget{Need: "fitness", Audience: "beginners"}, []AdResearchEvidence{ad})
 	require.Error(t, err)
 }
 
@@ -100,15 +108,32 @@ func TestAdEvidenceIncludesAdvertorialOffer(t *testing.T) {
 func TestAdJudgeRejectsIncompatibleAudience(t *testing.T) {
 	client := &http.Client{Transport: adRoundTrip(func(*http.Request) (*http.Response, error) {
 		answers := map[string]any{}
-		for key, p := range map[string]float64{"sufficient_evidence": .97, "same_need": .6, "compatible_audience": .03, "relevant": .07} {
+		for key, p := range map[string]float64{"clear_offer": .97, "offers_need": .95, "audience_conflict": .93} {
 			answers[key] = map[string]any{"type": "noul", "noul": p}
 		}
 		body, _ := json.Marshal(map[string]any{"model": JevAdModel, "answers": answers})
 		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(string(body))), Header: make(http.Header)}, nil
 	})}
 	ads := []AdResearchEvidence{{ID: "2:3", Text: "Professional bilateral stimulation equipment for therapists managing their clinical practice and client sessions."}}
-	out, err := (JevAdJudge{APIKey: "test", Client: client}).JudgeAds(context.Background(), AdResearchBrief{Brief: "Consumer relaxation"}, ads)
+	out, err := (JevAdJudge{APIKey: "test", Client: client}).JudgeAds(context.Background(), AdJudgeTarget{Need: "Consumer relaxation", Audience: "Consumers"}, ads)
 	require.NoError(t, err)
 	require.Equal(t, "mismatch", out[0].Verdict)
-	require.Equal(t, "incompatible_audience", out[0].Reason)
+	require.Equal(t, "audience_conflict", out[0].Reason)
+}
+
+func TestAdJudgeTargetAndReviewPolicy(t *testing.T) {
+	for _, target := range []AdJudgeTarget{{}, {Need: "fitness"}, {Need: "fitness", Audience: " "}, {Need: strings.Repeat("é", 801), Audience: "consumers"}} {
+		require.Error(t, target.Validate())
+	}
+	for _, tc := range []struct {
+		need, conflict, offer float64
+		want                  string
+	}{
+		{.9, .1, .9, "match"}, {.8, .8, .9, "mismatch"},
+		{.1, .1, .9, "mismatch"}, {.5, .1, .9, "uncertain"},
+		{.9, .5, .9, "uncertain"}, {.9, .1, .1, "uncertain"},
+	} {
+		verdict, _ := adJudgeVerdict(map[string]float64{"offers_need": tc.need, "audience_conflict": tc.conflict, "clear_offer": tc.offer})
+		require.Equal(t, tc.want, verdict)
+	}
 }

@@ -166,7 +166,12 @@ assert process_once(get_engine(),runner=run)
 	}
 	require.NotEmpty(t, selected)
 	timings["candidate_ads"] = time.Since(started).Seconds()
-	judgements := call("judge_ads", map[string]any{"brief": brief, "reference_ads": refs, "candidate_ads": selected})
+	target := helpers.AdJudgeTarget{Need: os.Getenv("AGF_FLOW_NEED"), Audience: os.Getenv("AGF_FLOW_AUDIENCE")}
+	if brand == "Femrun" && target.Need == "" && target.Audience == "" {
+		target = helpers.AdJudgeTarget{Need: "Build a manageable exercise habit and improve body shape through short, guided beginner workouts.", Audience: "People starting fitness or returning after inactivity, rather than established athletes adding performance training."}
+	}
+	require.NoError(t, target.Validate(), "set AGF_FLOW_NEED and AGF_FLOW_AUDIENCE for a custom research target")
+	judgements := call("judge_ads", map[string]any{"target": target, "candidate_ads": selected})
 	var judged struct {
 		Judgements []helpers.AdJudgement `json:"judgements"`
 		Partial    bool                  `json:"partial"`
@@ -186,7 +191,7 @@ assert process_once(get_engine(),runner=run)
 	timings["source_cache_replay"] = time.Since(warmStart).Seconds()
 	t.Logf("Complete workflow timings (seconds, cumulative except cache): %v; verdicts: %v", timings, counts)
 	if path := os.Getenv("AGF_FLOW_REPORT"); path != "" {
-		data, err := json.Marshal(map[string]any{"brand": brand, "brief": brief, "source_page_id": pageIDs[0], "source_ads": source.Ads, "reference_ads": refs, "timings": timings, "counts": counts, "finder": finder, "judgements": judgements, "candidate_ads": candidateAds})
+		data, err := json.Marshal(map[string]any{"brand": brand, "brief": brief, "target": target, "source_page_id": pageIDs[0], "source_ads": source.Ads, "reference_ads": refs, "timings": timings, "counts": counts, "finder": finder, "judgements": judgements, "candidate_ads": candidateAds})
 		require.NoError(t, err)
 		require.NoError(t, os.WriteFile(path, data, 0600))
 	}

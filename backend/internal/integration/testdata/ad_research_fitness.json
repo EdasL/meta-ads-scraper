@@ -70,7 +70,12 @@
     "1117801934307485": "mismatch",
     "1824296758996640": "mismatch",
     "1558704715965991": "uncertain",
-    "1372017226001179": "not_match"
+    "1372017226001179": "mismatch",
+    "1457955942936229": "match"
   },
-  "captured_on": "2026-11-05"
+  "captured_on": "2026-11-05",
+  "target": {
+    "need": "Build a manageable exercise habit and improve body shape through short, guided beginner workouts.",
+    "audience": "People starting fitness or returning after inactivity, rather than established athletes adding performance training."
+  }
 }

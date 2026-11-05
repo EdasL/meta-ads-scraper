@@ -16,6 +16,6 @@ func TestAdResearchSelectionAndAccess(t *testing.T) {
 	h := handlers{u: middlewares.AuthedUser{Role: "member"}}
 	_, _, err := h.findSimilarBrands(context.Background(), nil, similarBrandsIn{Brief: "test"})
 	require.Error(t, err)
-	_, _, err = h.judgeAds(context.Background(), nil, judgeAdsIn{Brief: "test", CandidateAds: []selectedAd{a}})
+	_, _, err = h.judgeAds(context.Background(), nil, judgeAdsIn{CandidateAds: []selectedAd{a}})
 	require.Error(t, err)
 }

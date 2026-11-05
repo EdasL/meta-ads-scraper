@@ -27,9 +27,8 @@ type similarBrandsIn struct {
 	Limit         int          `json:"limit,omitempty" jsonschema:"Brand leads to suggest; default 5, maximum 10"`
 }
 type judgeAdsIn struct {
-	Brief        string       `json:"brief,omitempty" jsonschema:"Advertising relevance criteria; required without reference ads"`
-	ReferenceAds []selectedAd `json:"reference_ads,omitempty" jsonschema:"Up to six selected source/reference ads"`
-	CandidateAds []selectedAd `json:"candidate_ads" jsonschema:"One to twenty candidate ads to assess, including any seed brands"`
+	Target       helpers.AdJudgeTarget `json:"target" jsonschema:"Caller-defined customer need and audience for one campaign; inspect source ads first"`
+	CandidateAds []selectedAd          `json:"candidate_ads" jsonschema:"One to twenty candidate ads from your own scrapes"`
 }
 
 func validateAdSelection(ads []selectedAd, max int) error {
@@ -132,15 +131,14 @@ func (h *handlers) judgeAds(ctx context.Context, _ *mcp.CallToolRequest, in judg
 	}
 	ctx, cancel := context.WithTimeout(ctx, 25*time.Second)
 	defer cancel()
-	brief, err := h.adResearchBrief(ctx, in.Brief, in.ReferenceAds)
-	if err != nil {
+	if err := in.Target.Validate(); err != nil {
 		return nil, nil, err
 	}
 	ads, err := h.adResearchEvidence(ctx, in.CandidateAds)
 	if err != nil {
 		return nil, nil, err
 	}
-	verdicts, err := (helpers.JevAdJudge{APIKey: os.Getenv("TYPESAFE_API_KEY")}).JudgeAds(ctx, brief, ads)
+	verdicts, err := (helpers.JevAdJudge{APIKey: os.Getenv("TYPESAFE_API_KEY")}).JudgeAds(ctx, in.Target, ads)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -154,6 +152,6 @@ func (h *handlers) judgeAds(ctx context.Context, _ *mcp.CallToolRequest, in judg
 		partial = partial || v.Reason == "provider_unavailable" || v.Reason == "invalid_provider_output"
 		results = append(results, scopedJudgement{selectedAd: in.CandidateAds[i], AdJudgement: v})
 	}
-	return nil, map[string]any{"judgements": results, "candidate_ads": in.CandidateAds, "reference_ads": in.ReferenceAds,
-		"partial": partial, "advisory": true, "notes": []string{"Jev probabilities are model estimates, not measured accuracy or ad performance.", "Only selected ad copy is assessed; media is unexamined. Full snapshots remain unclassified and unchanged.", "Inspect uncertain results and the actual offer before deciding which advertisers to keep."}}, nil
+	return nil, map[string]any{"judgements": results, "candidate_ads": in.CandidateAds, "target": in.Target,
+		"partial": partial, "advisory": true, "notes": []string{"signals are Jev yes/no probabilities; ranking_score = offers_need * (1 - audience_conflict) is a sorting heuristic, not a probability or ad performance measure.", "Only selected ad copy is assessed; media is unexamined. Full snapshots remain unclassified and unchanged.", "Results preserve candidate order. Sort by ranking_score to prioritize review, inspect uncertain offers, and keep different source campaigns as separate targets."}}, nil
 }
