@@ -1,8 +1,9 @@
 # Meta ad research for Claude Code and Codex
 
 Field Desk fetches evidence. You, the calling agent, choose the research direction,
-judge relevance and decide when to stop. These tools do not invoke a hosted model,
-filter by app-store category, or label ads as relevant. Existing account permissions
+judge relevance and decide when to stop. Direct scraping tools return unclassified
+evidence. Two optional assistance tools invoke models only when you call them:
+`find_similar_brands` and `judge_ads`. Existing account permissions
 apply; live scraping currently requires an admin account.
 
 ## Start with source ads
@@ -31,6 +32,41 @@ and inspect their actual ads. Hypotheses are retrieval leads, not confirmed peer
 Search across product categories when the customer motivation overlaps.
 Keep country consistent. `ALL` broadens ad retrieval globally; advertiser name lookup
 uses US when ALL is requested and reports `lookup_country` explicitly.
+
+## Optional brand finder and judge
+
+Use `find_similar_brands` when you want additional advertiser leads or search
+phrases. Supply your advertising brief and/or up to six selected source ads:
+
+```json
+{"source_brand":"Source brand","brief":"The audience and primary need to research","reference_ads":[{"scrape_id":123,"ad_archive_id":"456"}],"limit":5}
+```
+
+Gemini returns `suggestions` with names and reasons plus `search_terms`.
+Every lead has `verified=false`; `active_ads_verified=false` applies to the whole
+response. Verify leads through `find_advertisers` and `get_advertiser_ads` before
+treating them as advertising peers. `exclude_brands` avoids already checked leads.
+Brand name alone is insufficient input; with no source ads, provide a brief.
+
+Use `judge_ads` when a batch of candidate ads needs a quick second opinion:
+
+```json
+{"brief":"Compare the primary customer need and offer","reference_ads":[{"scrape_id":123,"ad_archive_id":"456"}],"candidate_ads":[{"scrape_id":124,"ad_archive_id":"789"}]}
+```
+
+Select up to 20 candidates and six references from your own scrapes. Jev returns
+`match`, `mismatch` or `uncertain`, with probabilities for evidence sufficiency,
+shared need, compatible audience and overall relevance. These are model estimates,
+not measured accuracy or ad performance. Each judgement includes `scrape_id` and
+`ad_archive_id`. Only supplied copy is assessed; images and videos remain unexamined. The
+judge reads the beginning and end of long copy and reports truncation.
+
+Neither helper starts scraping, selects references for you, changes the stored
+evidence or filters a result list. You may use either, both or your own reasoning.
+When model credentials are missing, the tool reports which provider is unavailable.
+Provider errors yield uncertain judgements and `partial=true`; they are not
+mismatches. Retry selectively or assess the evidence yourself. Sparse source copy
+requires an evidence-based brief after you inspect media.
 
 ## Judge the advertising evidence
 

@@ -96,6 +96,8 @@ func buildServer(u middlewares.AuthedUser, base string) *mcp.Server {
 		h.adCreatives)
 
 	if u.Role == "admin" {
+		mcp.AddTool(s, &mcp.Tool{Name: "find_similar_brands", Description: "Optional Gemini assistance: suggest advertising-peer leads and search phrases from your brief or selected source ads. Leads are unverified; this does not scrape or choose brands for you."}, h.findSimilarBrands)
+		mcp.AddTool(s, &mcp.Tool{Name: "judge_ads", Description: "Optional fast Jev assistance: assess up to twenty selected scraped ads against your brief or reference ads. Returns match/mismatch/uncertain and decision probabilities. Text only; advisory; never hides or changes scraped results."}, h.judgeAds)
 		mcp.AddTool(s, &mcp.Tool{Name: "read_ad_copy", Description: "Read stored full ad copy in chunks when copy_truncated=true. No network scrape or model call; preserve the actual offer when judging long advertorials."}, h.readAdCopy)
 		mcp.AddTool(s, &mcp.Tool{Name: "ad_research_guide", Description: "Read first: workflow and relevance rules for agent-led Meta ad research, including brands without ads."}, h.researchGuide)
 		mcp.AddTool(s, &mcp.Tool{Name: "find_advertisers", Description: "Resolve up to three names to Meta page candidates. The agent selects the right page; no automatic brand choice. Poll ad_scrape_status if queued."}, h.findAdvertisers)

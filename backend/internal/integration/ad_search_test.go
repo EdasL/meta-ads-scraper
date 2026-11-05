@@ -53,6 +53,8 @@ func TestAdSearchMCP(t *testing.T) {
 		}
 		require.Equal(t, tc.allowed, names["find_advertisers"])
 		require.Equal(t, tc.allowed, names["ad_scrape_status"])
+		require.Equal(t, tc.allowed, names["find_similar_brands"])
+		require.Equal(t, tc.allowed, names["judge_ads"])
 	}
 	call := func(s *mcp.ClientSession, name string, args map[string]any) *mcp.CallToolResult {
 		res, err := s.CallTool(ctx, &mcp.CallToolParams{Name: name, Arguments: args})
@@ -112,6 +114,17 @@ func TestAdSearchMCP(t *testing.T) {
 	require.Len(t, tail.Text, 1000)
 	require.False(t, tail.More)
 	require.True(t, call(foreign, "read_ad_copy", map[string]any{"scrape_id": scrape.ID, "ad_archive_id": "12"}).IsError)
+	selected := []map[string]any{{"scrape_id": scrape.ID, "ad_archive_id": "12"}}
+	require.True(t, call(foreign, "judge_ads", map[string]any{"brief": "gentle fitness", "candidate_ads": selected}).IsError)
+	require.True(t, call(foreign, "find_similar_brands", map[string]any{"brief": "gentle fitness", "reference_ads": selected}).IsError)
+	t.Setenv("TYPESAFE_API_KEY", "")
+	t.Setenv("GEMINI_API_KEY", "")
+	judge := call(admin, "judge_ads", map[string]any{"brief": "gentle fitness", "candidate_ads": selected})
+	require.True(t, judge.IsError)
+	require.Contains(t, firstText(judge), "TYPESAFE_API_KEY")
+	finder := call(admin, "find_similar_brands", map[string]any{"brief": "gentle fitness"})
+	require.True(t, finder.IsError)
+	require.Contains(t, firstText(finder), "GEMINI_API_KEY")
 	require.True(t, call(foreign, "next_ad_page", map[string]any{"scrape_id": scrape.ID}).IsError)
 	next := call(admin, "next_ad_page", map[string]any{"scrape_id": scrape.ID})
 	require.False(t, next.IsError, firstText(next))

@@ -60,6 +60,8 @@ services:
     restart: unless-stopped
     environment:
       AGF_DATABASE_URL: ${AGF_DATABASE_URL}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      TYPESAFE_API_KEY: ${TYPESAFE_API_KEY:-}
       AGF_CORS_ORIGINS: ${AGF_CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
       S3_ENDPOINT: ${S3_ENDPOINT}
       MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}

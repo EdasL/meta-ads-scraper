@@ -107,3 +107,16 @@ func AdScrapeCopy(ctx context.Context, g *gorm.DB, owner string, id int64, adID 
 	}
 	return &rows[0].Body, nil
 }
+
+func AdScrapeAd(ctx context.Context, g *gorm.DB, owner string, id int64, adID string) (*models.AdSearchResult, error) {
+	var rows []models.AdSearchResult
+	err := db.WithReadTx(ctx, g, func(tx *gorm.DB) error {
+		return tx.Raw(`SELECT r.* FROM frontend.ad_search_results r JOIN frontend.ad_searches s ON s.id=r.search_id
+			WHERE s.id=? AND s.created_by=? AND r.ad_archive_id=?`, id,
+			strings.ToLower(strings.TrimSpace(owner)), adID).Scan(&rows).Error
+	})
+	if err != nil || len(rows) == 0 {
+		return nil, err
+	}
+	return &rows[0], nil
+}

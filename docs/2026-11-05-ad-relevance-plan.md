@@ -1,5 +1,41 @@
 # Agent-controlled Meta ad research
 
+## Optional assistance tools
+
+The assistance tools expose model calls explicitly, while the calling agent
+continues to control the workflow. `find_similar_brands` takes a brief and/or
+selected source ad snapshots and returns unverified advertiser leads and search
+phrases. `judge_ads` uses Jev to assess caller-selected candidate snapshots against
+the brief/references. Neither tool scrapes, changes stored ads or hides results.
+
+Implemented bounded provider helpers, owner-scoped snapshot loading and two MCP
+handlers, with usage and error handling in the embedded guide. The brand finder
+reuses the existing Gemini client; the judge uses TypeSafe's Jev Noul decisions.
+No database migration or change to direct scraping is required. Existing Hunt's
+app-category judge is not used to label these ad-level results.
+
+Live HTTP MCP checks used twelve selected, previously observed fitness and
+relaxation ads. In the final runs, Jev assessed six ads in 0.44 seconds and six in
+1.57 seconds; Gemini returned five unverified brand leads in about 2.2 seconds.
+The checks include ownership, explicit provider invocation and no queued scrape
+side effects. Unit and integration checks cover missing credentials, malformed
+provider data, sparse copy, evidence truncation and incompatible audiences.
+
+The Go helper, MCP and repository race suites, scoped HTTP integration test,
+build/vet, Compose configuration check and secret scan passed for this increment.
+
+These checks establish the integration, not broad classification accuracy. A
+manually relevant short EMDR/Spotify ad remained uncertain; WalkFit and a
+calisthenics ad also required agent review. The advisory live gate permits positive
+abstentions, records them and rejects confident contradictions. Leads remain
+unverified until the calling agent inspects their actual ads. No stored ads are
+changed or hidden by either helper.
+
+Both keys belong on the API server: GEMINI_API_KEY for find_similar_brands and
+TYPESAFE_API_KEY for judge_ads. The local API Compose service forwards optional
+keys; GKE already imports its API environment through agf-secrets. Configure the
+keys there when deploying. Raw scraping remains usable without either provider.
+
 ## Delivered contract
 
 The calling Claude Code or Codex owns research decisions: identify the source,

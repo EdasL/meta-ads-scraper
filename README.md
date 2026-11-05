@@ -9,7 +9,9 @@ grug write this so grug remember how thing work. no big word. if grug future rea
 The hosted `/mcp` endpoint exposes `find_advertisers`, `get_advertiser_ads`,
 `search_meta_ads`, `ad_scrape_status`, `next_ad_page`, and `read_ad_copy`.
 Claude Code or Codex reads `ad_research_guide` first, then controls the research
-and judges the raw ad evidence. No hosted model runs in this path. Live scraping
+and judges the raw ad evidence. It can also call optional `find_similar_brands`
+(Gemini leads) and `judge_ads` (Jev assessments). Direct scraping runs without
+model calls; the agent chooses which assistance to use. Live scraping
 currently uses the existing admin access boundary.
 
 The [agent guide](backend/mcpserver/ad_research_guide.md) is embedded in the MCP
