@@ -22,7 +22,7 @@ import (
 // ownership-scoped DB reads and real model providers. No fabricated ad copy.
 func TestAdResearchModelsLive(t *testing.T) {
 	if os.Getenv("AGF_AD_RESEARCH_LIVE") != "1" {
-		t.Skip("set AGF_AD_RESEARCH_LIVE=1 and a fixture of observed ads")
+		t.Skip("set AGF_AD_RESEARCH_LIVE=1 to judge observed ads with real providers")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
@@ -33,7 +33,11 @@ func TestAdResearchModelsLive(t *testing.T) {
 		Candidates  []models.AdSearchResult `json:"candidates"`
 		Expected    map[string]string       `json:"expected"`
 	}
-	data, err := os.ReadFile(os.Getenv("AGF_AD_RESEARCH_FIXTURE"))
+	fixturePath := os.Getenv("AGF_AD_RESEARCH_FIXTURE")
+	if fixturePath == "" {
+		fixturePath = "testdata/ad_research_fitness.json"
+	}
+	data, err := os.ReadFile(fixturePath)
 	require.NoError(t, err)
 	require.NoError(t, json.Unmarshal(data, &fixture))
 	require.NotEmpty(t, fixture.References)
@@ -89,6 +93,10 @@ func TestAdResearchModelsLive(t *testing.T) {
 				if v.Verdict == "uncertain" {
 					t.Logf("positive abstention: %s needs agent review", fixture.Candidates[i].AdArchiveID)
 				}
+			} else if expected == "not_match" {
+				// A weak or conflicting peer may remain uncertain, but must not
+				// be promoted to a confident match.
+				assert.NotEqual(t, "match", v.Verdict)
 			} else {
 				assert.Equal(t, expected, v.Verdict)
 			}

@@ -1,5 +1,64 @@
 # Agent-controlled Meta ad research
 
+## Continuous workflow follow-up
+
+Completed the HTTP MCP workflow from brand lookup through fresh source ads,
+finder-generated queries, candidate retrieval and Jev judging in two niches.
+The first fitness run exposed an overconfident match between complete beginners
+and established lifters seeking endurance. Rubric `ad-peer-v2` now compares audience
+starting points and respects the caller's brief. The observed ad is preserved in
+a live regression fixture; the complete workflow and owning checks were repeated.
+
+Final runs used real Meta, Gemini and TypeSafe calls, local PostgreSQL, an
+authenticated HTTP MCP SDK client and the actual queue/Python subprocess path:
+
+- Femrun: 75.22 seconds through judging, including a broad retry when exact search
+  returned only one distinct candidate. Twelve distinct candidates were judged:
+  six mismatches and six uncertain. Gemini took 2.09 seconds and Jev 0.67 seconds;
+  source-page cache replay took 33.19 ms.
+- Calm: 36.83 seconds through judging. Ten distinct candidates were judged:
+  three mismatches and seven uncertain. Gemini took 1.99 seconds and Jev 0.73
+  seconds; source-page cache replay took 40.01 ms.
+
+Neither run produced a confident Jev match. Manual copy inspection found promising
+fitness leads: Evlo Fitness ad `1798223641621068` emphasizes consistency without an
+all-or-nothing approach; Gentle Gains ad `1135408645816454` offers short, guided,
+beginner home workouts for core/body shaping. Both remained uncertain to Jev.
+These are ad-level research leads, not validated brand-wide recommendations.
+The Calm search also returned parenting, pet and medical advertorials, showing why
+raw keyword results still require inspection of the actual audience and offer.
+
+The original false positive, BetterMe Men ad `1372017226001179`, now returns
+uncertain both in the fresh full workflow and the saved regression. Its copy
+targets existing lifters adding endurance, which does not establish the same
+starting point as complete fitness beginners. The seven-ad regression took
+0.47 seconds for Jev, rejected unrelated offers and left sparse or partial overlaps
+uncertain. A relevant Running Week example also became uncertain; the change
+reduces this false positive but does not establish high recall or broad accuracy.
+
+`TestAdResearchFullFlowLive` verifies successful sources, fresh evidence flowing
+between tools, complete provider responses and cache identity. It deliberately
+does not require a positive verdict. It searches finder-generated phrases; it
+does not verify the suggested brands by fetching their pages. The Python worker
+has both model keys cleared, so model calls remain explicit API tool calls.
+
+To reproduce, configure `AGF_IT_DB_URL` for a disposable migrated database and
+provide `AGF_PROXIES`, `GEMINI_API_KEY` and `TYPESAFE_API_KEY` through the environment.
+From `backend`, run the live gates separately:
+
+```sh
+AGF_AD_RESEARCH_FLOW=1 go test ./internal/integration -run '^TestAdResearchFullFlowLive$' -count=1 -v -timeout 10m
+AGF_AD_RESEARCH_LIVE=1 go test ./internal/integration -run '^TestAdResearchModelsLive$' -count=1 -v
+```
+
+The model gate defaults to the checked-in observed-ad fitness fixture.
+`AGF_FLOW_BRAND`, `AGF_FLOW_BRIEF` and `AGF_FLOW_REPORT` customize the continuous
+workflow; `AGF_AD_RESEARCH_FIXTURE` selects another observed-ad model fixture.
+Final helper/MCP/repository race suites, Go build and scoped vet passed.
+These checks cover local integration; Peon deployment and an installed Claude
+Code/Codex client session remain unverified. Jev remains advisory, and these small
+samples do not establish search quality across brands.
+
 ## Optional assistance tools
 
 The assistance tools expose model calls explicitly, while the calling agent

@@ -1,0 +1,76 @@
+{
+  "source_brand": "Femrun",
+  "brief": "Find advertising peers offering an accessible, guided fitness routine for beginners, including women concerned about body shape. Compare the customer need and offer, not just running as an activity.",
+  "references": [
+    {
+      "ad_archive_id": "1827722208273978",
+      "page_id": "851229608079602",
+      "page_name": "Femrun",
+      "body_text": "This Monday we're starting a 10 minute walk to run challenge. You begin by walking, and your coach adds a little running each week until you run your first mile. No gym and no running experience needed."
+    },
+    {
+      "ad_archive_id": "1587893189230610",
+      "page_id": "851229608079602",
+      "page_name": "Femrun",
+      "body_text": "Calling all country-loving ladies over 50. Our walk to run challenge starts with 10 minute walks to your favorite country songs, and a real coach builds you up from there. No gym, no running experience needed."
+    },
+    {
+      "ad_archive_id": "1588993992517059",
+      "page_id": "851229608079602",
+      "page_name": "Femrun",
+      "body_text": "If you have a hanging belly and it's your turn, try the run walk challenge. It starts Monday, November 9, and it's built for complete beginners."
+    }
+  ],
+  "candidates": [
+    {
+      "ad_archive_id": "1457955942936229",
+      "page_id": "102851792219319",
+      "page_name": "WalkFit Daily Walking Plan",
+      "body_text": "Your 8-Week Tai Chi Walking Transformation🔥\nWeek 1-2: Build the habit, feel lighter🌟\nWeek 3-4: Clothes start fitting differently👗\nWeek 5-6: Energy levels through the roof⚡️\nWeek 7-8: Drop 2-3 dress sizes💪\n\nAll from Tai Chi walking. Start today🚀"
+    },
+    {
+      "ad_archive_id": "1743547280221889",
+      "page_id": "103525072757095",
+      "page_name": "The Running Week",
+      "body_text": "From couch to confident runner in just 8 weeks! Get our FREE plan and start today👇"
+    },
+    {
+      "ad_archive_id": "2213769146184483",
+      "page_id": "116143894813499",
+      "page_name": "Lessie Fitness",
+      "body_text": "Your body can become the equipment. Try Calisthenics.\n\nInstead of machines and weights, this 28-day plan teaches your body to move, hold, and build strength using its own resistance.\nYou’ll develop:\n💪 Stronger arms and shoulders\n🔥 A tight, active core\n🦵 Powerful legs and glutes\n⚡ Better balance and control\n\nYour 28-Day Calisthenics Plan\n🟢 Week 1: Learn foundational bodyweight moves\n🟢 Week 2: Build control and core stability\n🟢 Week 3: Increase strength and endurance\n🟢 Week 4: Move with power and confidence\n\n🏠 No equipment needed\n⏱ Short daily sessions\n💪 Strength built with your own body\n\n✨ When your body becomes the resistance, strength feels different."
+    },
+    {
+      "ad_archive_id": "1117801934307485",
+      "page_id": "328627523855071",
+      "page_name": "Calm",
+      "body_text": "🎧 Bilateral stimulation can help you regulate ❌ No matter what you've tried before, EMDR-inspired bilateral audio works differently — on your nervous system itself. 🏆 Experience Calm's Bilateral Stimulation! Trusted by millions worldwide."
+    },
+    {
+      "ad_archive_id": "1824296758996640",
+      "page_id": "1284824361384746",
+      "page_name": "Sienna Walker - Online Shopping Expert",
+      "body_text": "Stop buying clothes, start investing in style.\nCreate a wardrobe that feels effortless, chic, and 100% you!\n\n✅ Personalized outfit suggestions based on your unique style\n✅ Smart wardrobe advice to stop impulse buys and save money\n✅ Timeless outfit capsules for every season and occasion\n\nLet’s build a wardrobe that’s functional, stylish, and filled with outfits you love."
+    },
+    {
+      "ad_archive_id": "1558704715965991",
+      "page_id": "102059148893302",
+      "page_name": "Wevana",
+      "body_text": "{{product.brand}}"
+    },
+    {
+      "ad_archive_id": "1372017226001179",
+      "page_id": "109468687259803",
+      "page_name": "BetterMe Men",
+      "body_text": "😮‍💨 You can deadlift all day and still be gasping at minute four.\nBetterMe's Running Plan is a follow-along program that builds the engine underneath the strength you already have — starting with short run-walk intervals.\n🏋️ Three runs a week, capped — it sits next to your lifting\n🏃 Start with run-walk, not an all-out mile\n📈 Distance moves only when your last runs say you're ready\nSame body. New engine. ⚡\nBuild the Engine 👟"
+    }
+  ],
+  "expected": {
+    "1743547280221889": "match",
+    "1117801934307485": "mismatch",
+    "1824296758996640": "mismatch",
+    "1558704715965991": "uncertain",
+    "1372017226001179": "not_match"
+  },
+  "captured_on": "2026-11-05"
+}
