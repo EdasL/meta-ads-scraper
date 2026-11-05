@@ -1,12 +1,19 @@
 #!/usr/bin/env bash
-# VM startup: install docker, render /opt/agf/.env from Secret Manager, fetch the
+# First boot: install docker, render /opt/agf/.env from Secret Manager, fetch the
 # compose payload from the repo tarball baked into the image, run compose.
+# Later boots preserve deployed configuration; Docker's restart policies resume
+# the existing containers without pulling a different image.
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 PROJECT=peon-489013
 REGION=europe-west1
 IMAGE="$REGION-docker.pkg.dev/$PROJECT/agf/worker:latest"
 CONN="peon-489013:europe-west1:agf-db"
+
+if [ -s /opt/agf/.env ] && [ -s /opt/agf/docker-compose.yml ]; then
+  echo "Existing Field Desk deployment found; preserving its configuration."
+  exit 0
+fi
 
 if ! command -v docker >/dev/null 2>&1; then
   apt-get update && apt-get install -y ca-certificates curl gnupg
