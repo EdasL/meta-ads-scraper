@@ -89,6 +89,10 @@ def main() -> None:
 
     t = threading.Thread(target=lane, daemon=True)
     t.start()
+    # A separate lane prevents a quick ad search waiting behind a long Hunt.
+    # Each job still runs in its own bounded subprocess.
+    from agf.discovery.ad_search_daemon import lane as ad_search_lane
+    threading.Thread(target=ad_search_lane, args=(engine,), daemon=True).start()
     while True:
         time.sleep(60)
 

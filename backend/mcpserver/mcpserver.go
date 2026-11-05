@@ -70,7 +70,7 @@ func publicOrigin(req *http.Request) string {
 // what keeps it out of a member's tools/list (there is no per-tool "hidden"
 // flag in the SDK — omission is the boundary).
 func buildServer(u middlewares.AuthedUser, base string) *mcp.Server {
-	s := mcp.NewServer(&mcp.Implementation{Name: "fielddesk", Version: "1.0.0"}, nil)
+	s := mcp.NewServer(&mcp.Implementation{Name: "fielddesk", Version: "1.0.0"}, &mcp.ServerOptions{Instructions: "For Meta ad research, read ad_research_guide first. Scraping tools return unclassified evidence; the calling agent chooses references, judges relevance, and controls pagination."})
 	h := &handlers{u: u, base: base}
 
 	mcp.AddTool(s, &mcp.Tool{Name: "my_taste_profile",
@@ -96,6 +96,13 @@ func buildServer(u middlewares.AuthedUser, base string) *mcp.Server {
 		h.adCreatives)
 
 	if u.Role == "admin" {
+		mcp.AddTool(s, &mcp.Tool{Name: "read_ad_copy", Description: "Read stored full ad copy in chunks when copy_truncated=true. No network scrape or model call; preserve the actual offer when judging long advertorials."}, h.readAdCopy)
+		mcp.AddTool(s, &mcp.Tool{Name: "ad_research_guide", Description: "Read first: workflow and relevance rules for agent-led Meta ad research, including brands without ads."}, h.researchGuide)
+		mcp.AddTool(s, &mcp.Tool{Name: "find_advertisers", Description: "Resolve up to three names to Meta page candidates. The agent selects the right page; no automatic brand choice. Poll ad_scrape_status if queued."}, h.findAdvertisers)
+		mcp.AddTool(s, &mcp.Tool{Name: "get_advertiser_ads", Description: "Fetch one page of active Meta ads for a numeric page ID. Returns raw copy, media, links and timestamps. No model filtering. Poll ad_scrape_status if queued."}, h.getAdvertiserAds)
+		mcp.AddTool(s, &mcp.Tool{Name: "search_meta_ads", Description: "Search one Meta page for each of up to three phrases concurrently. Exact phrases by default; broad is optional. No relevance judgements. Poll ad_scrape_status if queued."}, h.searchMetaAds)
+		mcp.AddTool(s, &mcp.Tool{Name: "ad_scrape_status", Description: "Read raw ads and per-source progress, errors and pagination. Results arrive incrementally. Offset paginates stored ads; next_ad_page fetches more from Meta."}, h.adScrapeStatus)
+		mcp.AddTool(s, &mcp.Tool{Name: "next_ad_page", Description: "Fetch one more Meta page for a completed scrape source with has_more=true. Repeated calls are idempotent. Judge a shallow sample before choosing depth."}, h.nextAdPage)
 		mcp.AddTool(s, &mcp.Tool{Name: "scraping_health",
 			Description: "Discovery engine health: pulse, discovery rate, idea diversity."},
 			h.scrapingHealth)

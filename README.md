@@ -4,6 +4,20 @@ grug write this so grug remember how thing work. no big word. if grug future rea
 
 ---
 
+## Meta ad research through MCP
+
+The hosted `/mcp` endpoint exposes `find_advertisers`, `get_advertiser_ads`,
+`search_meta_ads`, `ad_scrape_status`, `next_ad_page`, and `read_ad_copy`.
+Claude Code or Codex reads `ad_research_guide` first, then controls the research
+and judges the raw ad evidence. No hosted model runs in this path. Live scraping
+currently uses the existing admin access boundary.
+
+The [agent guide](backend/mcpserver/ad_research_guide.md) is embedded in the MCP
+server, so clients receive the same instructions as this repository. See the
+[implementation and verification record](docs/2026-11-05-ad-relevance-plan.md)
+for deployment requirements and measured behavior.
+
+
 ## what grug build
 
 grug want find small app that getting big by paying for facebook ads. NOT big famous app everybody know. grug want find them EARLY, when still small, before other grug notice.
