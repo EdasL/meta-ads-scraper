@@ -89,7 +89,7 @@ func (h *handlers) adResearchBrief(ctx context.Context, brief string, refs []sel
 }
 func (h *handlers) findSimilarBrands(ctx context.Context, _ *mcp.CallToolRequest, in similarBrandsIn) (*mcp.CallToolResult, any, error) {
 	if h.u.Role != "admin" {
-		return nil, nil, errors.New("This tool requires an admin account.")
+		return nil, nil, errors.New("this tool requires an admin account")
 	}
 	if in.Limit < 0 || in.Limit > 10 || utf8.RuneCountInString(in.SourceBrand) > 200 || len(in.ExcludeBrands) > 20 {
 		return nil, nil, errors.New("invalid limit, source_brand or exclude_brands")
@@ -121,7 +121,7 @@ func (h *handlers) findSimilarBrands(ctx context.Context, _ *mcp.CallToolRequest
 }
 func (h *handlers) judgeAds(ctx context.Context, _ *mcp.CallToolRequest, in judgeAdsIn) (*mcp.CallToolResult, any, error) {
 	if h.u.Role != "admin" {
-		return nil, nil, errors.New("This tool requires an admin account.")
+		return nil, nil, errors.New("this tool requires an admin account")
 	}
 	if len(in.CandidateAds) == 0 {
 		return nil, nil, errors.New("select one to twenty candidate_ads")

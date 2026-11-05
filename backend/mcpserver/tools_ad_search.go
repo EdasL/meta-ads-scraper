@@ -61,7 +61,7 @@ type adCopyIn struct {
 
 func (h *handlers) readAdCopy(ctx context.Context, _ *mcp.CallToolRequest, in adCopyIn) (*mcp.CallToolResult, any, error) {
 	if h.u.Role != "admin" {
-		return nil, nil, errors.New("This tool requires an admin account.")
+		return nil, nil, errors.New("this tool requires an admin account")
 	}
 	if in.ScrapeID <= 0 || in.AdID == "" || len(in.AdID) > 100 || in.Offset < 0 || in.Limit < 0 || in.Limit > 12000 {
 		return nil, nil, errors.New("invalid scrape_id, ad_archive_id, offset or limit")
@@ -135,7 +135,7 @@ func (h *handlers) researchGuide(context.Context, *mcp.CallToolRequest, struct{}
 }
 func (h *handlers) startScrape(ctx context.Context, r models.AdSearchRequest, key string, refresh bool) (*mcp.CallToolResult, any, error) {
 	if h.u.Role != "admin" {
-		return nil, nil, errors.New("This tool requires an admin account.")
+		return nil, nil, errors.New("this tool requires an admin account")
 	}
 	key = strings.TrimSpace(key)
 	if utf8.RuneCountInString(key) > 128 {
@@ -177,7 +177,7 @@ func (h *handlers) getAdvertiserAds(ctx context.Context, _ *mcp.CallToolRequest,
 }
 func (h *handlers) nextAdPage(ctx context.Context, _ *mcp.CallToolRequest, in nextAdPageIn) (*mcp.CallToolResult, any, error) {
 	if h.u.Role != "admin" {
-		return nil, nil, errors.New("This tool requires an admin account.")
+		return nil, nil, errors.New("this tool requires an admin account")
 	}
 	s, err := repositories.GetAdSearch(ctx, db.DB(), h.u.Email, in.ScrapeID)
 	if err != nil || s == nil {
@@ -221,7 +221,7 @@ func (h *handlers) nextAdPage(ctx context.Context, _ *mcp.CallToolRequest, in ne
 }
 func (h *handlers) adScrapeStatus(ctx context.Context, _ *mcp.CallToolRequest, in scrapeStatusIn) (*mcp.CallToolResult, any, error) {
 	if h.u.Role != "admin" {
-		return nil, nil, errors.New("This tool requires an admin account.")
+		return nil, nil, errors.New("this tool requires an admin account")
 	}
 	if in.ScrapeID <= 0 || in.Offset < 0 || in.Limit < 0 || in.Limit > 50 {
 		return nil, nil, errors.New("invalid scrape_id, offset or limit")
