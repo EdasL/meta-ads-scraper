@@ -1,5 +1,70 @@
 # Agent-controlled Meta ad research
 
+## Released to Peon — November 5, 2026
+
+The API and Hunt worker are deployed from clean checkouts; the four feature/fix
+commits plus the permission-error lint correction are published on `main` at
+`9d3a321`. Migration 166 is applied in production. The API has its existing Gemini
+credential plus the Jev credential, also stored in Secret Manager. Only the Hunt
+service was recreated on the worker VM; its other configuration and services were
+preserved. The release uses immutable image digests:
+
+- api: `europe-west1-docker.pkg.dev/peon-489013/agf/api@sha256:7279d8316b80ebafa51e4f3308697a2ac92b14f35d8f2337631ee3fcf30fd44f` (source `9d3a321`, Cloud Build `35447dcf-56a7-4c40-9fbd-bc0407618418`).
+- hunt_worker: `europe-west1-docker.pkg.dev/peon-489013/agf/worker@sha256:02562e165d100a21c695deafe895d7a9465b86075d06217a05c2dbac64ad0ddc` (source `432946d`, Cloud Build `3cc14694-234f-4fda-b870-fd72e49953f8`).
+
+The worker uses `432946d`; the only subsequent source change is six API permission
+error strings normalized for Staticcheck. Both Cloud Build jobs succeeded. The API
+rollout completed with both containers ready and zero restarts. The Hunt container
+was running with zero restarts; the existing worker and MinIO remained healthy.
+
+A fresh authenticated SDK session against `https://api.peon.works/mcp` verified all
+nine tools, the new `target.need`/`target.audience` guide, advertiser lookup, source
+ads, full stored copy, Gemini-generated leads/terms, exact/broad keyword scraping,
+Jev v3, cache identity and provider pagination. All jobs were processed by the
+persistent production worker; no test runner claimed them manually. It took
+113.46 seconds including pagination. Femrun returned ten source ads and another ten
+on the next page. Jev judged 12 distinct candidates in 0.77 seconds; source cache
+replay took 68 ms. Production scrape IDs: `1, 2, 3, 4, 5`.
+
+This candidate sample produced ten mismatches and two uncertain results, with no
+confident matches. That validates the deployed execution path, not search recall;
+the labeled quality study below remains the evidence for relevance. API health
+returned 200, anonymous MCP returned 401, and the temporary personal verification
+key was revoked. Reconnect existing MCP clients to refresh their tool lists.
+
+### Release checks and existing failures
+
+The prior helper/MCP/repository race suites, Python checks, real-provider quality
+gate and live workflow cover the feature commit. After the permission-string fix,
+the owning MCP race suite passed again. Module verification and Gitleaks scans of
+all outgoing commits passed. Staticcheck has no findings in the new feature files;
+its helper and repository package checks passed.
+
+Repository-wide CI remains red on pre-existing findings in unchanged files:
+
+- [backend-ci](https://github.com/EdasL/meta-ads-scraper/actions/runs/42080746183):
+  ST1005 error-string style in `tools_engine.go`, `tools_history.go` and
+  `tools_member.go`. The newly introduced instances were fixed before rollout.
+- [backend-security](https://github.com/EdasL/meta-ads-scraper/actions/runs/42080746025):
+  G404 recommendation/diversity RNG findings in `preference_repo.go` and
+  `internal/diversity/diversity.go`; G104 unchecked body closes in
+  `saved_ads_controller.go`. None are introduced or changed by this release.
+- The earlier broad integration run also exposed the unchanged date-sensitive
+  `TestScaling` assertion described below. It was not counted as a passing check.
+
+### Rollback references
+
+The additive tables can remain if application images are rolled back. The previous
+API image is `europe-west1-docker.pkg.dev/peon-489013/agf/api@sha256:414e26f909f50ba7c80da15d2175bb2253747ccac92db9f7b32392fbc9b93bfd`.
+The previous Hunt image is `europe-west1-docker.pkg.dev/peon-489013/agf/worker@sha256:2e862e8aa753fa0e9d3edb5a2268b07b0300f0e596ad30bf0936e90220e583cf`.
+The VM's prior compose file is saved at
+`/opt/agf/docker-compose.before-ad-search-20261105.yml`; restore only its Hunt image
+if rolling back this service. Other services and their configuration were preserved.
+The initial unused API image `api:432946d` was superseded by the lint-corrected build.
+
+The sections below retain development-stage measurements and limitations; this
+release record supersedes their earlier local-only deployment status.
+
 ## Jev usage correction: current implementation
 
 The v2 judge asked Jev to infer a target from a brief and several source ads, then
