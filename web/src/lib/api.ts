@@ -455,11 +455,11 @@ export interface HuntResult {
   saved: boolean;
   /** The signed-in user's rating for this advertiser, null when unrated. */
   rating: "like" | "neutral" | "dislike" | null;
-  /** Peon's on-target judgement against the round's intent: "relevant" or
-   *  "off_target", or null when the round carried no intent (nothing to judge). */
-  relevance: "relevant" | "off_target" | null;
-  /** One-line reason for an off-target call; null when relevant / unjudged. */
+  /** Advertising relevance, separate from store triage. Null means unassessed. */
+  relevance: "relevant" | "off_target" | "uncertain" | null;
+  /** Evidence-based reason for the relevance assessment. */
   relevance_note: string | null;
+  ad_evidence?: { ad_archive_id: string; body_text: string; link_url: string | null }[];
 }
 
 /** Full thread payload from GET /hunts/:id. */

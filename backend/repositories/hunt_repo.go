@@ -147,7 +147,7 @@ func ListHuntResults(ctx context.Context, g *gorm.DB, huntID int, email string) 
 			`SELECT hr.id, hr.round_id, hr.page_id, hr.page_name, hr.store, hr.store_id,
 			        hr.link_url, hr.source_term, hr.was_new, hr.triage,
 			        eff.adv_id AS kept_advertiser_id,
-			        hr.relevance, hr.relevance_note, hr.page,
+			        hr.relevance, hr.relevance_note, hr.ad_evidence, hr.page,
 			        s.gem_score,
 			        esa.app_name,
 			        COALESCE(esa.icon_url, papp.icon_url) AS icon_url,
@@ -221,7 +221,7 @@ func RoundResults(ctx context.Context, g *gorm.DB, huntID, roundID int, triage s
 		return tx.Raw(
 			`SELECT hr.id, hr.round_id, hr.page_id, hr.page_name, hr.store, hr.store_id,
 			        hr.link_url, hr.source_term, hr.was_new, hr.triage, hr.kept_advertiser_id,
-			        hr.relevance, hr.relevance_note,
+			        hr.relevance, hr.relevance_note, hr.ad_evidence,
 			        s.gem_score
 			 FROM frontend.hunt_results hr
 			 JOIN frontend.hunt_rounds r ON r.id = hr.round_id

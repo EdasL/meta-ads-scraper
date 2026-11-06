@@ -31,7 +31,6 @@ from agf.discovery.hunt_judge import judge_round
 from agf.discovery.sweep import classify_candidate
 from agf.discovery.triage import run_triage
 from agf.extract.errors import ExtractError
-from agf.scoring.vetoes import FUNNEL_INCUMBENT_PAGE_LIKES_MAX
 
 log = logging.getLogger("agf.hunt")
 
@@ -137,8 +136,19 @@ def _persist_page(engine, round_id: int, term: str, records, depth: int,
     """Classify + upsert one SERP page — apps AND web funnels. Web-funnel ads
     become hunt_results rows (store='web', kept, no candidate) so competitor
     pulls surface web2app advertisers like Joggo (design 2026-07-15);
-    funnel_autopass skips the funnel-signal gate for competitor pulls, where
-    the page identity is known. Returns (found, new) counting both kinds."""
+    funnel_autopass captures web destinations for competitor lookups. Their
+    advertising relevance is still assessed by the judge. Returns (found, new) counting both kinds."""
+    records = list(records)
+    evidence = {}
+    for ad in records:
+        if not ad.ad_archive_id or not (ad.body_text or "").strip():
+            continue
+        samples = evidence.setdefault(ad.page_id, [])
+        if len(samples) < 3 and not any(
+                x["ad_archive_id"] == ad.ad_archive_id or x["body_text"] == ad.body_text[:2400]
+                for x in samples):
+            samples.append({"ad_archive_id": ad.ad_archive_id,
+                            "body_text": ad.body_text[:2400], "link_url": ad.link_url})
     rows, seen, drops = [], set(), []
     funnel_rows, funnel_keys = [], set()
     for ad in records:
@@ -152,17 +162,17 @@ def _persist_page(engine, round_id: int, term: str, records, depth: int,
             rows.append(row)
             continue
         if disposition == "non_app":
-            likes = ad.page_like_count
-            if likes is None or likes <= FUNNEL_INCUMBENT_PAGE_LIKES_MAX:
-                fdisp, frow = fold_web_funnel(
-                    ad, keyword=term,
-                    technique="hunt_page" if funnel_autopass else "hunt")
-                if fdisp == "candidate":
-                    fkey = (frow["page_id"], frow["landing_domain"])
-                    if fkey not in funnel_keys:
-                        funnel_keys.add(fkey)
-                        funnel_rows.append(frow)
-                    continue
+            # Popular advertisers can be useful ad references too. Store-growth
+            # eligibility is separate from advertising relevance.
+            fdisp, frow = fold_web_funnel(
+                ad, keyword=term,
+                technique="hunt_page" if funnel_autopass else "hunt")
+            if fdisp == "candidate":
+                fkey = (frow["page_id"], frow["landing_domain"])
+                if fkey not in funnel_keys:
+                    funnel_keys.add(fkey)
+                    funnel_rows.append(frow)
+                continue
         drops.append(disposition)
     found = new = 0
     if rows:
@@ -174,7 +184,8 @@ def _persist_page(engine, round_id: int, term: str, records, depth: int,
                     "page_id": row["page_id"], "page_name": row["page_name"],
                     "store": row["store"], "store_id": row["store_id"],
                     "link_url": row["link_url"], "source_term": term,
-                    "was_new": was_new, "page": depth})
+                    "was_new": was_new, "page": depth,
+                    "ad_evidence": evidence.get(row["page_id"], [])})
                 found += 1
                 new += int(was_new)
     if funnel_rows:
@@ -189,7 +200,8 @@ def _persist_page(engine, round_id: int, term: str, records, depth: int,
                     "page_id": frow["page_id"], "page_name": frow["page_name"],
                     "store": "web", "store_id": frow["landing_domain"],
                     "link_url": frow["landing_url"], "source_term": term,
-                    "was_new": was_new, "page": depth, "triage": "kept"})
+                    "was_new": was_new, "page": depth, "triage": "kept",
+                    "ad_evidence": evidence.get(frow["page_id"], [])})
                 found += 1
                 new += int(was_new)
     with lock:
@@ -461,13 +473,12 @@ def run_hunt_finish(engine, round_id: int, ctx: dict, *,
                 stats.update(apply_triage_to_results(conn, round_id))
             # Relevance judge runs BETWEEN triage and enqueue: it makes network
             # calls, so it holds no txn (prod incident: network-inside-txn).
-            # Fail-open — NULL relevance is treated as relevant, so a judge
-            # outage (or a finish-budget kill mid-judge) hides nothing.
-            progress.event("Judging relevance against the hunt intent")
-            stats.update(judge_round(engine, round_id, getattr(rnd, "intent", None)))
+            # Missing or uncertain judgments remain available for review.
         else:
             with begin(engine) as conn:
                 stats.update(apply_triage_to_results(conn, round_id))
+        progress.event("Checking advertised needs and audiences")
+        stats.update(judge_round(engine, round_id, getattr(rnd, "intent", None)))
     finally:
         _finalize_hunt_round(engine, round_id, progress, terms, stats)
     # Normal-path-only events: a finish-budget HuntTimeout re-propagates from the

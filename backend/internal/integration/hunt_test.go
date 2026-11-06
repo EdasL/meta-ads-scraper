@@ -566,8 +566,8 @@ func TestHuntGetReturnsThread(t *testing.T) {
 		huntID).Scan(&roundID).Error)
 	require.NoError(t, db.DB().Exec(
 		`INSERT INTO frontend.hunt_results
-		 (round_id, page_id, page_name, store, store_id, source_term, was_new, triage)
-		 VALUES (?, 'PG1', 'Kept Co', 'play', 'com.kept', 'sleep stories app', true, 'pending')`,
+		 (round_id, page_id, page_name, store, store_id, source_term, was_new, triage, relevance, ad_evidence)
+		 VALUES (?, 'PG1', 'Kept Co', 'play', 'com.kept', 'sleep stories app', true, 'vetoed', 'relevant', '[{"ad_archive_id":"123","body_text":"Sleep stories for tired parents","link_url":null}]'::jsonb)`,
 		roundID).Error)
 
 	w := httptest.NewRecorder()
@@ -592,6 +592,11 @@ func TestHuntGetReturnsThread(t *testing.T) {
 		Results []struct {
 			PageID     string `json:"page_id"`
 			SourceTerm string `json:"source_term"`
+			Relevance  string `json:"relevance"`
+			AdEvidence []struct {
+				ID   string `json:"ad_archive_id"`
+				Copy string `json:"body_text"`
+			} `json:"ad_evidence"`
 		} `json:"results"`
 	}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
@@ -609,4 +614,8 @@ func TestHuntGetReturnsThread(t *testing.T) {
 	require.Len(t, resp.Results, 1)
 	require.Equal(t, "PG1", resp.Results[0].PageID)
 	require.Equal(t, "sleep stories app", resp.Results[0].SourceTerm)
+	require.Equal(t, "relevant", resp.Results[0].Relevance)
+	require.Len(t, resp.Results[0].AdEvidence, 1)
+	require.Equal(t, "123", resp.Results[0].AdEvidence[0].ID)
+	require.Equal(t, "Sleep stories for tired parents", resp.Results[0].AdEvidence[0].Copy)
 }

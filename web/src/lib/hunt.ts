@@ -115,27 +115,14 @@ export function editTerms(terms: string[], op: { add?: string; remove?: string }
   return out;
 }
 
-/**
- * Partition a round's results into on-target and off-target groups by Peon's
- * `relevance` judgement. Only an explicit "off_target" moves to `offTarget`;
- * "relevant" and null (unjudged — the round carried no intent) stay `onTarget`.
- * Order is preserved within each group so the caller renders rows in place.
- */
-export function splitByRelevance(results: HuntResult[]): {
-  onTarget: HuntResult[];
-  offTarget: HuntResult[];
-} {
-  const onTarget: HuntResult[] = [];
-  const offTarget: HuntResult[] = [];
-  for (const r of results) (r.relevance === "off_target" ? offTarget : onTarget).push(r);
-  return { onTarget, offTarget };
-}
-
 export interface RolledResult {
   page_id: string;
   rep: HuntResult;
   stores: { store: string; link_url: string | null }[];
   fold_count: number;
+  relevance: "relevant" | "off_target" | "uncertain";
+  relevance_note: string;
+  ad_evidence: NonNullable<HuntResult["ad_evidence"]>;
   triage: "pending" | "kept" | "vetoed";
 }
 
@@ -165,7 +152,20 @@ export function rollupByPage(results: HuntResult[]): RolledResult[] {
       stores.push({ store: r.store, link_url: r.link_url });
     }
     const triage = rows.some((r) => r.triage === "kept") ? "kept" : rep.triage;
-    return { page_id, rep, stores, fold_count: rows.length, triage };
+    const positive = rows.find((r) => r.relevance === "relevant");
+    const allOff = rows.every((r) => r.relevance === "off_target");
+    const conflict = positive && rows.some((r) => r.relevance === "off_target");
+    const relevance = conflict ? "uncertain" : positive ? "relevant" : allOff ? "off_target" : "uncertain";
+    const relevance_note = conflict
+      ? "Conflicting assessments across this advertiser's listings. Review its ads."
+      : (positive ?? rows.find((r) => r.relevance_note))?.relevance_note
+        ?? "Advertising relevance has not been assessed yet.";
+    const samples = new Map<string, NonNullable<HuntResult["ad_evidence"]>[number]>();
+    for (const r of rows) for (const ad of r.ad_evidence ?? []) {
+      if (!samples.has(ad.body_text.trim())) samples.set(ad.body_text.trim(), ad);
+    }
+    return { page_id, rep, stores, fold_count: rows.length, triage, relevance, relevance_note,
+      ad_evidence: [...samples.values()].slice(0, 3) };
   });
 }
 
@@ -182,4 +182,15 @@ export function huntIsActive(rounds: HuntRound[]): boolean {
 export function latestEvents(round: HuntRound, n = 50): { t: string; msg: string }[] {
   const events = round.progress?.events ?? [];
   return [...events].reverse().slice(0, n);
+}
+
+/** Keep unknown assessments separate; store triage never decides ad relevance. */
+export function reviewGroups(results: HuntResult[]) {
+  const groups = rollupByPage(results);
+  return {
+    relevant: groups.filter((g) => g.relevance === "relevant")
+      .sort((a, b) => Number(b.ad_evidence.length > 0) - Number(a.ad_evidence.length > 0)),
+    uncertain: groups.filter((g) => g.relevance === "uncertain"),
+    off_target: groups.filter((g) => g.relevance === "off_target"),
+  };
 }

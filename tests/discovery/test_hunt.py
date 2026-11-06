@@ -738,3 +738,18 @@ def test_progress_merge_term_outcomes_preserves_sweep_telemetry(engine, round_id
                                   "skipped": 0,
                                   "kept": 1, "relevant": 1, "off_target": 0}
     assert terms["page:joggo"] == {"kept": 1, "relevant": 0, "off_target": 1}
+
+
+def test_captured_copy_survives_dedup_and_includes_popular_pages(hunt_engine_round):
+    engine, rid = hunt_engine_round
+    ads = [make_web_ad(page_id=PAGE, link_url="https://joggo.run/quiz",
+                       body_text=f"Ad evidence {i}", page_like_count=2000000) for i in range(5)]
+    for i, ad in enumerate(ads):
+        ad.ad_archive_id = str(9000 + i)
+    _persist_page(engine, rid, "outcome", ads[:2], 1, fresh_stats(), threading.Lock())
+    _persist_page(engine, rid, "other term", ads, 2, fresh_stats(), threading.Lock())
+    with begin(engine) as conn:
+        rows = conn.execute(text("SELECT ad_evidence, source_term FROM frontend.hunt_results WHERE round_id=:r"), {"r": rid}).all()
+    assert len(rows) == 1
+    assert rows[0].source_term == "outcome"
+    assert [a["ad_archive_id"] for a in rows[0].ad_evidence] == ["9000", "9001", "9002"]

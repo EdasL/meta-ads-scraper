@@ -576,7 +576,10 @@ const huntAgentInstruction = "You are Peon, Field Desk's discovery agent. You he
 	"\n" +
 	"Every propose_round includes intent: one plain sentence saying what the founder is " +
 	"hunting, from the conversation (e.g. 'sleep apps aimed at new parents'). Results are " +
-	"judged against it after the round runs.\n" +
+	"judged against it after the round runs. For ad-angle research, describe the customer's " +
+	"desired outcome and audience, not a requirement to copy the product's exact mechanism. " +
+	"Different mechanisms solving the same problem can be useful competitors. Require " +
+	"an exact feature only when the founder explicitly asks for that restriction.\n" +
 	"\n" +
 	"Do real research before you propose. For a new niche with no prior round, use web " +
 	"search first to ground the plan: find how apps in this space actually advertise " +

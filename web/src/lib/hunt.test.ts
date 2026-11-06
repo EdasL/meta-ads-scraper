@@ -11,8 +11,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseProposal, editTerms, huntIsActive, latestEvents, formatSettings, splitByRelevance } from "./hunt.ts";
-import type { HuntResult } from "./api.ts";
+import { parseProposal, editTerms, huntIsActive, latestEvents, formatSettings, reviewGroups } from "./hunt.ts";
 
 // --- formatSettings ----------------------------------------------------------
 // Server defaults are page_cap 40 / patience 6 / listing_pages 10 / min_pages 10;
@@ -220,18 +219,6 @@ test("latestEvents returns [] for empty progress", () => {
   assert.deepEqual(latestEvents(r), []);
 });
 
-// --- splitByRelevance --------------------------------------------------------
-// Server tags each result relevant / off_target / null; null (unjudged) and
-// relevant stay on target, only off_target moves to the collapsed group.
-
-test("splitByRelevance keeps null/relevant on target, moves off_target", () => {
-  const mk = (id: number, relevance: "relevant" | "off_target" | null) =>
-    ({ id, relevance } as unknown as HuntResult);
-  const { onTarget, offTarget } = splitByRelevance([mk(1, null), mk(2, "relevant"), mk(3, "off_target")]);
-  assert.deepEqual(onTarget.map((r) => r.id), [1, 2]);
-  assert.deepEqual(offTarget.map((r) => r.id), [3]);
-});
-
 // --- rollupByPage ------------------------------------------------------------
 
 import { rollupByPage } from "./hunt.ts";
@@ -273,4 +260,38 @@ test("rollupByPage picks first row when none resolved, and keeps kept triage", (
   assert.equal(out.length, 1);
   assert.equal(out[0].rep.id, 1, "no resolved row -> first row is representative");
   assert.equal(out[0].triage, "kept", "any kept -> group triage is kept");
+});
+
+
+test("unjudged and uncertain results do not fill the shortlist", () => {
+  const groups = reviewGroups([
+    hr({ page_id: "known", relevance: "relevant", triage: "vetoed" }),
+    hr({ page_id: "unchecked", relevance: null, triage: "kept" }),
+    hr({ page_id: "sparse", relevance: "uncertain" }),
+    hr({ page_id: "wrong", relevance: "off_target" }),
+  ]);
+  assert.deepEqual(groups.relevant.map((g) => g.page_id), ["known"]);
+  assert.deepEqual(groups.uncertain.map((g) => g.page_id), ["unchecked", "sparse"]);
+  assert.deepEqual(groups.off_target.map((g) => g.page_id), ["wrong"]);
+});
+
+test("one advertiser appears once even when store judgments conflict", () => {
+  const groups = reviewGroups([
+    hr({ page_id: "one", relevance: "relevant", relevance_note: "Interrupts scrolling", triage: "vetoed" }),
+    hr({ page_id: "one", relevance: "off_target", store: "ios", triage: "kept" }),
+  ]);
+  assert.equal(groups.relevant.length, 0);
+  assert.equal(groups.off_target.length, 0);
+  assert.equal(groups.uncertain.length, 1);
+  assert.match(groups.uncertain[0].relevance_note, /Conflicting/);
+});
+
+test("a supported match survives an unjudged store duplicate and shares ad evidence", () => {
+  const ad = { ad_archive_id: "123", body_text: "Break the scrolling habit", link_url: null };
+  const group = reviewGroups([
+    hr({ relevance: null, triage: "vetoed", ad_evidence: [ad] }),
+    hr({ relevance: "relevant", relevance_note: "Helps control scrolling", ad_evidence: [ad] }),
+  ]).relevant[0];
+  assert.equal(group.relevance_note, "Helps control scrolling");
+  assert.equal(group.ad_evidence.length, 1);
 });

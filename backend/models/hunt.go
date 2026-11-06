@@ -60,20 +60,21 @@ type HuntRoundReport struct {
 // HuntResultRow is one (round, found page/store listing). GemScore is joined at
 // read time from adtech.advertiser_scores and is null for unscored/unkept rows.
 type HuntResultRow struct {
-	ID               int      `json:"id"`
-	RoundID          int      `json:"round_id" gorm:"column:round_id"`
-	PageID           string   `json:"page_id" gorm:"column:page_id"`
-	PageName         *string  `json:"page_name" gorm:"column:page_name"`
-	Store            string   `json:"store"`
-	StoreID          string   `json:"store_id" gorm:"column:store_id"`
-	LinkURL          *string  `json:"link_url" gorm:"column:link_url"`
-	SourceTerm       string   `json:"source_term" gorm:"column:source_term"`
-	WasNew           bool     `json:"was_new" gorm:"column:was_new"`
-	Triage           string   `json:"triage"`
-	KeptAdvertiserID *int     `json:"kept_advertiser_id" gorm:"column:kept_advertiser_id"`
-	Relevance        *string  `json:"relevance" gorm:"column:relevance"`
-	RelevanceNote    *string  `json:"relevance_note" gorm:"column:relevance_note"`
-	GemScore         *float64 `json:"gem_score" gorm:"column:gem_score"`
+	ID               int             `json:"id"`
+	RoundID          int             `json:"round_id" gorm:"column:round_id"`
+	PageID           string          `json:"page_id" gorm:"column:page_id"`
+	PageName         *string         `json:"page_name" gorm:"column:page_name"`
+	Store            string          `json:"store"`
+	StoreID          string          `json:"store_id" gorm:"column:store_id"`
+	LinkURL          *string         `json:"link_url" gorm:"column:link_url"`
+	SourceTerm       string          `json:"source_term" gorm:"column:source_term"`
+	WasNew           bool            `json:"was_new" gorm:"column:was_new"`
+	Triage           string          `json:"triage"`
+	KeptAdvertiserID *int            `json:"kept_advertiser_id" gorm:"column:kept_advertiser_id"`
+	Relevance        *string         `json:"relevance" gorm:"column:relevance"`
+	AdEvidence       json.RawMessage `json:"ad_evidence" gorm:"column:ad_evidence"`
+	RelevanceNote    *string         `json:"relevance_note" gorm:"column:relevance_note"`
+	GemScore         *float64        `json:"gem_score" gorm:"column:gem_score"`
 	// Page is the SERP page the result was first found on (Task 1). App fields
 	// come from the Discover matview (null until it carries the advertiser);
 	// Saved/Rating are the CALLER's own state, email-scoped so no other user's

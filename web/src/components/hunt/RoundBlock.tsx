@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { AppIcon, ScoreBadge } from "@/components/ui";
-import { formatSettings, latestEvents, splitByRelevance, rollupByPage, type RolledResult } from "@/lib/hunt";
+import { useState } from "react";
+import { AppIcon, Button } from "@/components/ui";
+import { formatSettings, latestEvents, reviewGroups, type RolledResult } from "@/lib/hunt";
 import { rememberOrigin } from "@/lib/returnTo";
 import type { HuntResult, HuntRound } from "@/lib/api";
 import { FolderPicker } from "@/components/saved/FolderPicker";
@@ -36,7 +37,7 @@ function StoreBadge({ store, href }: { store: string; href?: string | null }) {
         href={href}
         target="_blank"
         rel="noreferrer"
-        title="Open the store listing"
+        title="Open the advertised destination"
       >
         {storeLabel(store)}
       </a>
@@ -52,21 +53,6 @@ function StoreBadge({ store, href }: { store: string; href?: string | null }) {
 /** Meta Ad Library URL for a page — the found app's live ads, viewable before enrich. */
 function adLibraryUrl(pageId: string): string {
   return `https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=US&view_all_page_id=${encodeURIComponent(pageId)}`;
-}
-
-/** Triage state as plain, color-stepped text (spec copy: checking / kept / vetoed). */
-function TriageState({ triage }: { triage: HuntResult["triage"] }) {
-  const { label, color } =
-    triage === "kept"
-      ? { label: "kept", color: "var(--up)" }
-      : triage === "vetoed"
-        ? { label: "vetoed", color: "var(--muted)" }
-        : { label: "checking", color: "var(--warn)" };
-  return (
-    <span className="t-xs w-strong" style={{ color }}>
-      {label}
-    </span>
-  );
 }
 
 /** Adapt a kept hunt result to the ShortlistRow the saved-gems store consumes.
@@ -110,7 +96,7 @@ function HeartButton({ result: r }: { result: HuntResult }) {
 function ResultCard({ group: g, userEmail }: { group: RolledResult; userEmail: string | null }) {
   const r = g.rep;
   const scored = r.gem_score != null && r.kept_advertiser_id != null;
-  const name = r.app_name ?? r.page_name ?? r.store_id;
+  const name = r.page_name ?? r.app_name ?? r.store_id;
   return (
     <div
       style={{
@@ -139,20 +125,27 @@ function ResultCard({ group: g, userEmail }: { group: RolledResult; userEmail: s
             {g.stores.map((s) => (
               <StoreBadge key={s.store} store={s.store} href={s.link_url} />
             ))}
-            {scored && <ScoreBadge score={r.gem_score!} variant="card" />}
-            {g.fold_count > 1 && (
-              <span className="t-xs nums" style={{ color: "var(--muted)" }} title="Ads folded into this page">
-                ·{g.fold_count} ads
-              </span>
-            )}
+
           </div>
         </div>
         {r.kept_advertiser_id != null && userEmail && <HeartButton result={r} />}
       </div>
-      {r.tagline && (
-        <p className="t-xs" style={{ color: "var(--ink-soft)", margin: 0, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
-          {r.tagline}
-        </p>
+      <span className="t-xs w-strong" style={{ color: g.relevance === "relevant" ? "var(--up)" : "var(--muted)" }}>
+        {g.relevance === "relevant" ? "Relevant" : g.relevance === "off_target" ? "Off target" : "Needs review"}
+      </span>
+      <p className="t-xs" style={{ color: "var(--ink-soft)", margin: 0 }}>{g.relevance_note}</p>
+      {g.ad_evidence.length > 0 && (
+        <details>
+          <summary className="t-xs" style={{ cursor: "pointer", color: "var(--ink-soft)" }}>Read captured ad copy</summary>
+          <div style={{ maxHeight: 300, overflowY: "auto" }}>
+          {g.ad_evidence.map((ad) => (
+            <blockquote key={ad.ad_archive_id} className="t-xs" style={{ margin: "8px 0", paddingLeft: 10, borderLeft: "2px solid var(--line)", whiteSpace: "pre-wrap" }}>
+              {ad.body_text}
+              <a href={`https://www.facebook.com/ads/library/?id=${encodeURIComponent(ad.ad_archive_id)}`} target="_blank" rel="noreferrer" style={{ display: "block", marginTop: 6, textDecoration: "underline" }}>Open this ad</a>
+            </blockquote>
+          ))}
+          </div>
+        </details>
       )}
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
         <a className="t-xs" href={adLibraryUrl(r.page_id)} target="_blank" rel="noreferrer" style={{ color: "var(--ink-soft)", textDecoration: "underline" }} title="Open this page's ads in the Meta Ad Library">
@@ -171,22 +164,12 @@ function ResultCard({ group: g, userEmail }: { group: RolledResult; userEmail: s
             New
           </span>
         )}
-        <TriageState triage={g.triage} />
       </div>
     </div>
   );
 }
 
-/**
- * One approved round: a derived status line, a scrollable newest-first activity
- * feed, and the streaming results list. Every number is read straight from
- * `round.progress` (never restated with a derived label). An `error` round shows
- * its `error_text` plainly with no retry — a fresh round is started from chat.
- *
- * Results split by Peon's relevance judgement: on-target rows render inline,
- * off-target rows collapse into an "Off target (N)" group at the bottom, each
- * keeping the same row markup plus a muted reason line.
- */
+/** One round, with a bounded advertiser shortlist and inspectable evidence. */
 export function RoundBlock({
   round,
   results,
@@ -196,6 +179,9 @@ export function RoundBlock({
   results: HuntResult[];
   userEmail: string | null;
 }) {
+  const [view, setView] = useState<"relevant" | "uncertain" | "off_target">("relevant");
+  const [query, setQuery] = useState("");
+  const [limit, setLimit] = useState(12);
   const p = round.progress;
   const events = latestEvents(round);
 
@@ -216,7 +202,13 @@ export function RoundBlock({
   if (settingsLabel) statusLine += ` · ${settingsLabel}`;
 
   const showCounters = p.found != null || p.new != null;
-  const { onTarget, offTarget } = splitByRelevance(results);
+  const groups = reviewGroups(results);
+  const term = query.trim().toLowerCase();
+  const visible = term
+    ? [...groups.relevant, ...groups.uncertain, ...groups.off_target].filter((g) =>
+        [g.rep.page_name, g.rep.app_name, ...g.stores.map((s) => s.link_url)].some((v) => v?.toLowerCase().includes(term)))
+    : groups[view];
+  const labels = { relevant: "Relevant", uncertain: "Needs review", off_target: "Off target" } as const;
 
   return (
     <div
@@ -247,7 +239,9 @@ export function RoundBlock({
       )}
 
       {events.length > 0 && (
-        <div
+        <details>
+          <summary className="t-xs" style={{ cursor: "pointer", color: "var(--muted)" }}>Search activity</summary>
+          <div
           style={{
             maxHeight: 160,
             overflowY: "auto",
@@ -264,35 +258,47 @@ export function RoundBlock({
               {e.msg}
             </div>
           ))}
-        </div>
-      )}
-
-      {onTarget.length > 0 && (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 10 }}>
-          {rollupByPage(onTarget).map((g) => (
-            <ResultCard key={g.page_id} group={g} userEmail={userEmail} />
-          ))}
-        </div>
-      )}
-
-      {offTarget.length > 0 && (
-        <details style={{ display: "flex", flexDirection: "column" }}>
-          <summary className="t-xs w-strong" style={{ color: "var(--muted)", cursor: "pointer", padding: "6px 0" }}>
-            Off target ({offTarget.length})
-          </summary>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 10 }}>
-            {rollupByPage(offTarget).map((g) => (
-              <div key={g.page_id}>
-                <ResultCard group={g} userEmail={userEmail} />
-                {g.rep.relevance_note && (
-                  <p className="t-xs" style={{ color: "var(--muted)", margin: "2px 0 0" }}>
-                    {g.rep.relevance_note}
-                  </p>
-                )}
-              </div>
-            ))}
           </div>
         </details>
+      )}
+
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+        {(Object.keys(labels) as (keyof typeof labels)[]).map((key) => (
+          <button key={key} type="button" aria-pressed={!term && view === key}
+            onClick={() => { setView(key); setQuery(""); setLimit(12); }}
+            className="t-xs w-strong"
+            style={{ padding: "8px 12px", cursor: "pointer", border: "1px solid var(--line)",
+              background: !term && view === key ? "var(--ink)" : "var(--surface-2)",
+              color: !term && view === key ? "var(--surface-1)" : "var(--ink-soft)" }}>
+            {labels[key]} ({groups[key].length})
+          </button>
+        ))}
+        <input aria-label="Search all advertisers" placeholder="Search all advertisers"
+          value={query} onChange={(e) => { setQuery(e.target.value); setLimit(12); }}
+          className="t-xs" style={{ padding: "8px 10px", border: "1px solid var(--line)",
+            background: "var(--surface-1)", color: "var(--ink)", flex: "1 1 180px", minWidth: 0 }} />
+      </div>
+      <p className="t-xs" style={{ margin: 0, color: "var(--muted)" }}>
+        {term ? `Search results: ${visible.length} ${visible.length === 1 ? "advertiser" : "advertisers"}.`
+          : view === "relevant" ? "Matches for the advertised need and audience. Open the ads to assess the creative."
+          : view === "uncertain" ? "Missing or conflicting evidence. These advertisers are still available to review."
+          : "Assessed as a different offer or audience. Review the reason if a result looks misplaced."}
+      </p>
+      {visible.length === 0 ? (
+        <p className="t-sm" style={{ margin: "8px 0", color: "var(--ink-soft)" }}>
+          {term ? "No advertisers match this search."
+            : view === "relevant" ? "No assessed matches yet. Check Needs review for unassessed advertisers."
+            : "No advertisers in this group."}
+        </p>
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(260px, 100%), 1fr))", alignItems: "start", gap: 10 }}>
+          {visible.slice(0, limit).map((g) => <ResultCard key={g.page_id} group={g} userEmail={userEmail} />)}
+        </div>
+      )}
+      {visible.length > limit && (
+        <Button variant="ghost" onClick={() => setLimit((n) => n + 12)}>
+          Show more ({visible.length - limit} remaining)
+        </Button>
       )}
     </div>
   );

@@ -52,17 +52,24 @@ def finish_round(conn, round_id: int, *, status: str, error: str | None = None) 
 
 
 def upsert_hunt_result(conn, row: dict) -> None:
-    """One found page per round; re-finds (other term/page) keep the first row.
+    """One page/store row per round; re-finds retain its identity and merge ad copy.
     triage defaults to 'pending' (apps await store triage); web-funnel rows
     insert as 'kept' — no app triage applies to them (design 2026-07-15)."""
     row = {"triage": "pending", **row}
+    row["ad_evidence"] = json.dumps(row.get("ad_evidence", [])[:3])
     conn.execute(text(
         "INSERT INTO frontend.hunt_results "
         "  (round_id, candidate_id, page_id, page_name, store, store_id, "
-        "   link_url, source_term, was_new, page, triage) "
+        "   link_url, source_term, was_new, page, triage, ad_evidence) "
         "VALUES (:round_id, :candidate_id, :page_id, :page_name, :store, "
-        "        :store_id, :link_url, :source_term, :was_new, :page, :triage) "
-        "ON CONFLICT (round_id, page_id, store, store_id) DO NOTHING"), row)
+        "        :store_id, :link_url, :source_term, :was_new, :page, :triage, CAST(:ad_evidence AS jsonb)) "
+        "ON CONFLICT (round_id, page_id, store, store_id) DO UPDATE SET "
+        "ad_evidence = (SELECT COALESCE(jsonb_agg(sample ORDER BY ord), '[]'::jsonb) "
+        " FROM (SELECT sample, ord FROM (SELECT DISTINCT ON (sample->>'body_text') sample, ord "
+        " FROM jsonb_array_elements("
+        " frontend.hunt_results.ad_evidence || EXCLUDED.ad_evidence) "
+        " WITH ORDINALITY AS e(sample, ord) ORDER BY sample->>'body_text', ord) unique_copy "
+        " ORDER BY ord LIMIT 3) kept)"), row)
 
 
 def update_round_progress(conn, round_id: int, progress: dict) -> None:
