@@ -169,6 +169,7 @@ type huntCardState struct {
 
 type huntMessageBody struct {
 	Message   string         `json:"message"`
+	FolderID  *int64         `json:"folder_id"`
 	CardState *huntCardState `json:"card_state"`
 }
 
@@ -198,7 +199,11 @@ func (c *HuntController) Create(ctx *gin.Context) {
 
 	rctx, cancel := reqCtx(ctx)
 	defer cancel()
-	huntID, err := repositories.CreateHunt(rctx, db.DB(), u.Email, huntTitle(message))
+	huntID, err := repositories.CreateHuntInFolder(rctx, db.DB(), u.Email, huntTitle(message), body.FolderID)
+	if errors.Is(err, repositories.ErrFolderNotFound) {
+		helpers.Detail(ctx, http.StatusNotFound, "no such folder.")
+		return
+	}
 	if err != nil {
 		helpers.Detail(ctx, http.StatusInternalServerError, "could not start hunt.")
 		return
@@ -300,6 +305,17 @@ func (c *HuntController) Message(ctx *gin.Context) {
 func (c *HuntController) executeTurn(parent context.Context, huntID int, input helpers.HuntTurnInput, requireReply bool) (int, string, error) {
 	gctx, cancel := context.WithTimeout(parent, huntProposalTimeout)
 	defer cancel()
+	folder, err := repositories.HuntFolderContext(gctx, db.DB(), huntID)
+	if err != nil {
+		return 0, "", err
+	}
+	if folder != nil {
+		encoded, err := json.Marshal(folder)
+		if err != nil {
+			return 0, "", err
+		}
+		input.FolderContext = string(encoded)
+	}
 
 	tools := huntTools{ctx: gctx, g: db.DB(), huntID: huntID}
 	turn, err := c.gemini.GenerateHuntTurn(gctx, input, tools)

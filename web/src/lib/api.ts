@@ -361,6 +361,7 @@ export async function completeOnboarding(): Promise<void> {
 export interface HuntSummary {
   id: number;
   title: string;
+  folder_id?: number | null;
   created_at: string;
   last_activity: string;
   last_round_status: string | null;
@@ -489,8 +490,8 @@ export async function getHunt(id: number): Promise<HuntThread> {
 }
 
 /** Open a new thread with the founder's first message; returns the transcript. */
-export async function postHunt(message: string): Promise<HuntChatTurn> {
-  return live<HuntChatTurn>(`/hunts`, { method: "POST", body: JSON.stringify({ message }) });
+export async function postHunt(message: string, folderId?: number): Promise<HuntChatTurn> {
+  return live<HuntChatTurn>(`/hunts`, { method: "POST", body: JSON.stringify({ message, folder_id: folderId }) });
 }
 
 /** The founder's live edits to the open proposal card, sent alongside a chat

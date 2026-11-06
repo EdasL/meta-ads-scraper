@@ -492,6 +492,7 @@ type SavedGroupRow struct {
 	ID       int64  `gorm:"column:id" json:"id"`
 	Name     string `gorm:"column:name" json:"name"`
 	Position int    `gorm:"column:position" json:"position"`
+	Product  string `gorm:"column:product" json:"product"`
 }
 
 // LikedGemRow is one card in the built-in Liked collection: an app the user

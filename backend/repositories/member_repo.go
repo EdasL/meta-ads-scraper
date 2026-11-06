@@ -7,6 +7,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/edaslakavicius/emerging-app-finder/backend/db"
+	"github.com/edaslakavicius/emerging-app-finder/backend/models"
 )
 
 // MyRating is one of a member's own app ratings, enriched with the app name and
@@ -23,16 +24,17 @@ type MyRating struct {
 
 // MySavedGem is one row of a member's saved shortlist.
 type MySavedGem struct {
-	AdvertiserID int64     `json:"advertiser_id"`
-	PageName     string    `json:"page_name"`
-	AppName      string    `json:"app_name"`
-	Cohort       string    `json:"cohort"`
-	GemScore     float64   `json:"gem_score"`
-	Stage        string    `json:"stage"`
-	Verdict      *string   `json:"verdict"`
-	Tags         string    `json:"tags"`
-	Note         string    `json:"note"`
-	SavedAt      time.Time `json:"saved_at"`
+	AdvertiserID int64         `json:"advertiser_id"`
+	PageName     string        `json:"page_name"`
+	AppName      string        `json:"app_name"`
+	Cohort       string        `json:"cohort"`
+	GemScore     float64       `json:"gem_score"`
+	Stage        string        `json:"stage"`
+	Verdict      *string       `json:"verdict"`
+	Tags         string        `json:"tags"`
+	Note         string        `json:"note"`
+	SavedAt      time.Time     `json:"saved_at"`
+	GroupIDs     models.IDList `json:"group_ids" gorm:"column:group_ids"`
 }
 
 // TasteProfile summarizes what a member has liked: rating tallies, the cohorts
@@ -100,8 +102,11 @@ func MySavedGems(ctx context.Context, g *gorm.DB, email string) ([]MySavedGem, e
 			`SELECT advertiser_id,
 			        COALESCE(page_name, '') AS page_name,
 			        COALESCE(app_name, '')  AS app_name,
-			        cohort, gem_score, stage, verdict, tags, note, saved_at
-			 FROM frontend.saved_gems
+			        cohort, gem_score, stage, verdict, tags, note, saved_at,
+			        COALESCE((SELECT jsonb_agg(m.group_id ORDER BY m.group_id)
+			          FROM frontend.saved_group_members m
+			          WHERE m.user_email=sg.user_email AND m.advertiser_id=sg.advertiser_id), '[]'::jsonb) AS group_ids
+			 FROM frontend.saved_gems sg
 			 WHERE user_email = ?
 			 ORDER BY saved_at DESC`,
 			email,

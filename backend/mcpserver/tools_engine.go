@@ -107,6 +107,7 @@ type huntSettingsIn struct {
 }
 
 type runHuntIn struct {
+	FolderID    *int64         `json:"folder_id,omitempty" jsonschema:"owned saved folder whose attached product and saved brands guide relevance; only when starting a new hunt"`
 	Terms       []string       `json:"terms,omitempty" jsonschema:"keyword searches, US only, paged until dry"`
 	Competitors []string       `json:"competitors,omitempty" jsonschema:"app or brand names; each is resolved to its Ad Library page and its whole ad set is pulled, globally"`
 	Settings    huntSettingsIn `json:"settings,omitempty" jsonschema:"per-round depth knobs"`
@@ -117,6 +118,9 @@ type runHuntIn struct {
 func (h *handlers) runHunt(ctx context.Context, _ *mcp.CallToolRequest, in runHuntIn) (*mcp.CallToolResult, any, error) {
 	if h.u.Role != "admin" {
 		return nil, nil, errors.New("This tool requires an admin account.")
+	}
+	if in.HuntID != 0 && in.FolderID != nil {
+		return nil, nil, errors.New("an existing hunt already has its folder context; omit folder_id")
 	}
 	// Same normalization and bounds as the REST hunt path, from the one place
 	// that defines them. Terms are lowercased, trimmed and deduped (they are
@@ -168,7 +172,10 @@ func (h *handlers) runHunt(ctx context.Context, _ *mcp.CallToolRequest, in runHu
 		if len(title) > 120 {
 			title = title[:120]
 		}
-		huntID, err = repositories.CreateHunt(ctx, db.DB(), h.u.Email, title)
+		huntID, err = repositories.CreateHuntInFolder(ctx, db.DB(), h.u.Email, title, in.FolderID)
+		if errors.Is(err, repositories.ErrFolderNotFound) {
+			return nil, nil, errors.New("folder not found")
+		}
 		if err != nil {
 			return nil, nil, errors.New("something went wrong starting the hunt.")
 		}

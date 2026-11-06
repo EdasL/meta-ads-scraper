@@ -6,6 +6,17 @@ evidence. Two optional assistance tools invoke models only when you call them:
 `find_similar_brands` and `judge_ads`. Existing account permissions
 apply; live scraping currently requires an admin account.
 
+## Use a product's saved references
+
+Call `my_saved_gems` to read `folders` and `saved_gems`. Each folder's `product`
+identifies the user's own product (name, website or brief); a saved gem's
+`group_ids` identifies the folders it belongs to. Brands saved inside a folder are
+references for that product, not the product itself. Keep other folders separate.
+Use the attached product and selected references to guide your research, then
+verify their actual advertising evidence. For the optional managed Hunt workflow,
+pass `folder_id` to `run_hunt` when creating a hunt. Subsequent rounds inherit that
+folder and read its current product and saved references.
+
 ## Start with source ads
 
 1. Call `find_advertisers` with `{"queries":["source brand"],"country":"US"}`.

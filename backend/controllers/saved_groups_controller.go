@@ -96,9 +96,10 @@ func (c *SavedGroupsController) Create(ctx *gin.Context) {
 type savedGroupUpdateIn struct {
 	Name     *string `json:"name"`
 	Position *int    `json:"position"`
+	Product  *string `json:"product"`
 }
 
-// Update handles POST /api/saved-groups/:id/update — rename and/or reorder.
+// Update handles POST /api/saved-groups/:id/update — name, order, or product.
 // Omitted fields are left alone.
 func (c *SavedGroupsController) Update(ctx *gin.Context) {
 	email, ok := c.caller(ctx)
@@ -111,7 +112,7 @@ func (c *SavedGroupsController) Update(ctx *gin.Context) {
 	}
 	var body savedGroupUpdateIn
 	if err := ctx.ShouldBindJSON(&body); err != nil {
-		helpers.Detail(ctx, http.StatusUnprocessableEntity, "name or position is required.")
+		helpers.Detail(ctx, http.StatusUnprocessableEntity, "invalid folder update.")
 		return
 	}
 	if body.Name != nil {
@@ -121,9 +122,17 @@ func (c *SavedGroupsController) Update(ctx *gin.Context) {
 		}
 		body.Name = &name
 	}
+	if body.Product != nil {
+		product := strings.TrimSpace(*body.Product)
+		if len([]rune(product)) > 800 {
+			helpers.Detail(ctx, http.StatusUnprocessableEntity, "product must be 800 characters or fewer.")
+			return
+		}
+		body.Product = &product
+	}
 	rctx, cancel := reqCtx(ctx)
 	defer cancel()
-	updated, err := repositories.UpdateSavedGroup(rctx, db.DB(), email, id, body.Name, body.Position)
+	updated, err := repositories.UpdateSavedGroupProduct(rctx, db.DB(), email, id, body.Name, body.Position, body.Product)
 	if err != nil {
 		helpers.Detail(ctx, http.StatusInternalServerError, "could not update group.")
 		return

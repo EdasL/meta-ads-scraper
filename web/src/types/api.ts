@@ -264,13 +264,15 @@ export interface ApiSavedGroup {
   id: number;
   name: string;
   position: number;
+  product?: string;
 }
 
-/** Body for POST /saved-groups/:id/update — rename and/or reorder; both fields
+/** Body for POST /saved-groups/:id/update — name, order, or product; all fields
  * are optional and only the ones present are applied. */
 export interface ApiSavedGroupPatch {
   name?: string;
   position?: number;
+  product?: string;
 }
 
 /** One row of GET /liked-gems — every app the user has liked anywhere

@@ -18,7 +18,7 @@ func ListSavedGroups(ctx context.Context, g *gorm.DB, userEmail string) ([]model
 	rows := make([]models.SavedGroupRow, 0)
 	err := db.WithReadTx(ctx, g, func(tx *gorm.DB) error {
 		return tx.Raw(
-			`SELECT id, name, "position"
+			`SELECT id, name, "position", product
 			 FROM frontend.saved_groups
 			 WHERE user_email = ?
 			 ORDER BY "position", id`,
@@ -39,7 +39,7 @@ func CreateSavedGroup(ctx context.Context, g *gorm.DB, userEmail, name string) (
 			`INSERT INTO frontend.saved_groups (user_email, name, position)
 			 SELECT ?, ?, COALESCE(MAX("position") + 1, 0)
 			 FROM frontend.saved_groups WHERE user_email = ?
-			 RETURNING id, name, "position"`,
+			 RETURNING id, name, "position", product`,
 			userEmail, name, userEmail,
 		).Scan(&row).Error
 	})
@@ -49,7 +49,12 @@ func CreateSavedGroup(ctx context.Context, g *gorm.DB, userEmail, name string) (
 // UpdateSavedGroup renames and/or repositions a group. Nil fields are left
 // alone. Reports false when the id is unknown or owned by somebody else.
 func UpdateSavedGroup(ctx context.Context, g *gorm.DB, userEmail string, id int64, name *string, position *int) (bool, error) {
-	if name == nil && position == nil {
+	return UpdateSavedGroupProduct(ctx, g, userEmail, id, name, position, nil)
+}
+
+// An empty product clears the association; an omitted product preserves it.
+func UpdateSavedGroupProduct(ctx context.Context, g *gorm.DB, userEmail string, id int64, name *string, position *int, product *string) (bool, error) {
+	if name == nil && position == nil && product == nil {
 		// Nothing to change — still answer the ownership question truthfully.
 		return savedGroupOwned(ctx, g, userEmail, id)
 	}
@@ -58,9 +63,10 @@ func UpdateSavedGroup(ctx context.Context, g *gorm.DB, userEmail string, id int6
 		res := tx.Exec(
 			`UPDATE frontend.saved_groups
 			 SET name       = COALESCE(?, name),
-			     "position" = COALESCE(?, "position")
+			     "position" = COALESCE(?, "position"),
+			     product = COALESCE(?, product)
 			 WHERE id = ? AND user_email = ?`,
-			name, position, id, userEmail,
+			name, position, product, id, userEmail,
 		)
 		affected = res.RowsAffected
 		return res.Error

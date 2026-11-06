@@ -12,9 +12,25 @@ import (
 type HuntRow struct {
 	ID              int       `json:"id"`
 	Title           string    `json:"title"`
+	FolderID        *int64    `json:"folder_id" gorm:"column:folder_id"`
 	CreatedAt       time.Time `json:"created_at"`
 	LastActivity    time.Time `json:"last_activity" gorm:"column:last_activity"`
 	LastRoundStatus *string   `json:"last_round_status" gorm:"column:last_round_status"`
+}
+
+type HuntFolderContext struct {
+	FolderID int64         `json:"folder_id" gorm:"column:folder_id"`
+	Name     string        `json:"name"`
+	Product  string        `json:"product"`
+	Brands   []FolderBrand `json:"saved_brands" gorm:"-"`
+}
+
+type FolderBrand struct {
+	AdvertiserID int64           `json:"advertiser_id"`
+	Name         string          `json:"name"`
+	Note         string          `json:"note"`
+	Description  string          `json:"description"`
+	AdCopy       json.RawMessage `json:"ad_copy" gorm:"column:ad_copy"`
 }
 
 // HuntMessageRow is one transcript entry. Proposal is null for user messages and

@@ -53,7 +53,11 @@ func (h *handlers) mySavedGems(ctx context.Context, _ *mcp.CallToolRequest, _ my
 	if err != nil {
 		return nil, nil, errors.New("something went wrong reading your saved gems.")
 	}
-	return nil, map[string]any{"saved_gems": rows}, nil
+	folders, err := repositories.ListSavedGroups(ctx, db.DB(), h.u.Email)
+	if err != nil {
+		return nil, nil, errors.New("could not read saved folders")
+	}
+	return nil, map[string]any{"saved_gems": rows, "folders": folders}, nil
 }
 
 // ---- recommended_gems ----

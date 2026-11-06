@@ -50,6 +50,8 @@ export interface SavedGroup {
   id: number;
   name: string;
   position: number;
+  /** The user's reference product, distinct from brands saved inside. */
+  product?: string;
 }
 
 export interface TagCount {
@@ -119,6 +121,7 @@ export function reconcileGroupMerge(
   const renamed = local.name !== submitted.name;
   const moved = local.position !== submitted.position;
   const row: SavedGroup = {
+    ...serverRow,
     id: serverRow.id,
     name: renamed ? local.name : serverRow.name,
     position: moved ? local.position : serverRow.position,

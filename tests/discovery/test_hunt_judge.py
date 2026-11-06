@@ -168,6 +168,58 @@ def test_judge_round_no_intent_skips(_migrated_engine):
     assert stats["judged"] == 0 and "skipped" in stats
 
 
+def test_product_folder_reaches_target_and_respects_owner(_migrated_engine):
+    from agf.db.engine import begin
+    from agf.discovery.hunt_judge import _round_folder
+    with begin(_migrated_engine) as conn:
+        rid, ids = _seed(conn)
+        fid = conn.execute(text("INSERT INTO frontend.saved_groups(user_email,name,position,product) "
+                                "VALUES ('j@t.local','Selected brands',0,'My sleep product') RETURNING id")).scalar_one()
+        foreign = conn.execute(text("INSERT INTO frontend.saved_groups(user_email,name,position,product) "
+                                    "VALUES ('foreign@t.local','Private',0,'Private product') RETURNING id")).scalar_one()
+        aid = conn.execute(text("INSERT INTO public.advertisers(page_id,page_name) "
+                                "VALUES (:p,'Selected reference') RETURNING id"), {"p": f"folder-judge-{rid}"}).scalar_one()
+        adid = conn.execute(text("INSERT INTO public.ads(external_ad_id,advertiser_id) VALUES (:p,:a) RETURNING id"),
+                            {"p": f"folder-judge-{rid}", "a": aid}).scalar_one()
+        conn.execute(text("INSERT INTO public.creatives(ad_id,type,body_text) VALUES (:a,'image','Help your baby sleep with calming sounds')"), {"a": adid})
+        conn.execute(text("INSERT INTO frontend.saved_gems(user_email,advertiser_id,page_name,gem_score) "
+                          "VALUES ('j@t.local',:a,'Selected reference',1)"), {"a": aid})
+        conn.execute(text("INSERT INTO frontend.saved_group_members(user_email,group_id,advertiser_id) "
+                          "VALUES ('j@t.local',:f,:a)"), {"f": fid, "a": aid})
+        conn.execute(text("UPDATE frontend.hunts SET folder_id=:f WHERE id=(SELECT hunt_id FROM frontend.hunt_rounds WHERE id=:r)"), {"f": fid, "r": rid})
+
+    saw_target = []
+    def post(url, body):
+        payload = json.loads(body["contents"][0]["parts"][0]["text"])
+        if "brief" in payload:
+            folder = payload["folder"]
+            assert folder["product"] == "My sleep product"
+            assert len(folder["saved_brands"]) == 1
+            assert folder["saved_brands"][0]["ad_copy"] == ["Help your baby sleep with calming sounds"]
+            assert "Private product" not in json.dumps(payload)
+            saw_target.append(True)
+            result = {"need": "Help a baby sleep", "audience": "Parents", "reference_mechanism": "sound"}
+        else:
+            result = {"verdicts": [{"id": i, "clear_offer": True, "offers_need": i == ids[0],
+                                   "audience_conflict": False, "reason": "Checked against selected product"} for i in ids]}
+        return {"candidates": [{"content": {"parts": [{"text": json.dumps(result)}]}}]}
+
+    try:
+        assert judge_round(_migrated_engine, rid, "sleep apps", api_key="test", _post=post)["judged"] == 2
+        assert saw_target == [True]
+        with begin(_migrated_engine) as conn:
+            conn.execute(text("UPDATE frontend.hunts SET folder_id=:f WHERE id=(SELECT hunt_id FROM frontend.hunt_rounds WHERE id=:r)"), {"f": foreign, "r": rid})
+            assert _round_folder(conn, rid) is None
+    finally:
+        with begin(_migrated_engine) as conn:
+            conn.execute(text("DELETE FROM frontend.hunts WHERE id=(SELECT hunt_id FROM frontend.hunt_rounds WHERE id=:r)"), {"r": rid})
+            conn.execute(text("DELETE FROM frontend.saved_groups WHERE id IN (:f,:x)"), {"f": fid, "x": foreign})
+            conn.execute(text("DELETE FROM frontend.saved_gems WHERE advertiser_id=:a"), {"a": aid})
+            conn.execute(text("DELETE FROM public.creatives WHERE ad_id=:a"), {"a": adid})
+            conn.execute(text("DELETE FROM public.ads WHERE id=:a"), {"a": adid})
+            conn.execute(text("DELETE FROM public.advertisers WHERE id=:a"), {"a": aid})
+
+
 def test_model_batches_pack_evidence_and_preserve_missing_results(_migrated_engine, monkeypatch):
     from agf.db.engine import begin
     from agf.discovery import hunt_judge

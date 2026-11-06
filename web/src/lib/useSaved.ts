@@ -64,6 +64,7 @@ export {
   listGroups,
   createGroup,
   renameGroup,
+  setGroupProduct,
   deleteGroup,
   addToFolder,
   removeFromFolder,

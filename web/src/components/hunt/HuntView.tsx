@@ -2,6 +2,9 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { useSession } from "next-auth/react";
+import { useRouter, useSearchParams } from "next/navigation";
+import Link from "next/link";
+import { useSavedGroups } from "@/lib/useSaved";
 import { IconPlus, IconTrash } from "@tabler/icons-react";
 import { Button } from "@/components/ui";
 import { huntIsActive } from "@/lib/hunt";
@@ -73,12 +76,18 @@ function wrapupPending(thread: HuntThread, nowMs: number): boolean {
 }
 
 export function HuntView() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const rawFolder = Number(searchParams.get("folder"));
+  const requestedFolder = Number.isSafeInteger(rawFolder) && rawFolder > 0 ? rawFolder : undefined;
+  const folders = useSavedGroups();
+  const [folderId, setFolderId] = useState<number | undefined>(requestedFolder);
   const { data: session } = useSession();
   const userEmail = session?.user?.email ?? null;
   const [hunts, setHunts] = useState<HuntSummary[]>([]);
   const [activeId, setActiveId] = useState<number | null>(null);
   const [thread, setThread] = useState<HuntThread | null>(null);
-  const [draft, setDraft] = useState("");
+  const [draft, setDraft] = useState(requestedFolder ? "Find relevant ads for this product." : "");
   // In-flight sends, keyed by the hunt they were sent in ("new" until the first
   // turn creates the hunt). The optimistic user bubble and the working indicator
   // render only in the OWNING hunt's transcript — switching hunts mid-turn must
@@ -129,6 +138,10 @@ export function HuntView() {
       .then((list) => {
         if (cancelled) return;
         setHunts(list);
+        if (requestedFolder != null) {
+          setFolderId(requestedFolder);
+          return;
+        }
         if (list.length === 0) return;
         setActiveId((cur) => {
           if (cur != null) return cur;
@@ -140,7 +153,7 @@ export function HuntView() {
     return () => {
       cancelled = true;
     };
-  }, [userEmail]);
+  }, [userEmail, requestedFolder]);
 
   // Remember the open thread so a reload returns to it. newHunt() nulls activeId
   // for the blank composer; don't persist that (a reload then restores the last
@@ -289,7 +302,7 @@ export function HuntView() {
     setPendings((p) => ({ ...p, [key]: message })); // instant user bubble in THIS hunt
     try {
       if (activeId == null) {
-        const turn = await postHunt(message);
+        const turn = await postHunt(message, folderId);
         // The hunt now has a real id: move the pending bubble onto it before
         // switching, so it stays visible while the thread loads.
         setPendings((p) => {
@@ -299,6 +312,9 @@ export function HuntView() {
         });
         activeIdRef.current = turn.hunt_id;
         setActiveId(turn.hunt_id);
+        // The folder link starts a new hunt only once. Reloads should restore
+        // the created thread rather than reopening an empty composer.
+        router.replace("/hunt", { scroll: false });
         await loadThread(turn.hunt_id);
         refreshHunts();
         clearPending(String(turn.hunt_id));
@@ -316,7 +332,7 @@ export function HuntView() {
       if (activeIdRef.current === activeId) setDraft(message);
       clearPending(key);
     }
-  }, [draft, pendings, activeId, loadThread, refreshHunts, proposalMsgId, clearPending]);
+  }, [draft, pendings, activeId, folderId, loadThread, refreshHunts, proposalMsgId, clearPending, router]);
 
   // The pending send that belongs to the hunt on screen (if any). Everything
   // optimistic — bubble, working pulse, composer lock — keys off this, so a
@@ -390,7 +406,7 @@ export function HuntView() {
               <div key={h.id} className="hunt-row" style={{ position: "relative", display: "flex" }}>
                 <button
                   type="button"
-                  onClick={() => setActiveId(h.id)}
+                  onClick={() => { setActiveId(h.id); router.replace("/hunt", { scroll: false }); }}
                   style={{
                     display: "flex",
                     alignItems: "center",
@@ -463,6 +479,23 @@ export function HuntView() {
           <p className="t-sm" style={{ color: "var(--muted)", margin: "4px 0 0" }}>
             Describe a niche or a competitor app. Peon proposes search terms; you approve a round.
           </p>
+          {activeId == null && folders.length > 0 && (
+            <label className="t-xs" style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, marginTop: 12 }}>
+              Product folder
+              <select value={folderId ?? ""} onChange={(e) => setFolderId(e.target.value ? Number(e.target.value) : undefined)} style={{ maxWidth: "100%", background: "var(--surface-2)", color: "var(--ink)", border: "1px solid var(--line)", padding: "7px 9px", font: "inherit" }}>
+                <option value="">No folder</option>
+                {folders.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+              </select>
+            </label>
+          )}
+          {(() => {
+            const attachedFolder = thread?.hunt.id === activeId ? thread.hunt.folder_id : hunts.find((h) => h.id === activeId)?.folder_id;
+            const f = folders.find((g) => g.id === (activeId == null ? folderId : attachedFolder));
+            return f ? <p className="t-xs" style={{ color: "var(--muted)", margin: "8px 0 0", overflowWrap: "anywhere" }}>
+              {f.product && <span style={{ color: "var(--ink)" }}>{f.product} · </span>}
+              References from <Link href={`/saved?folder=${f.id}`} style={{ textDecoration: "underline" }}>{f.name}</Link>
+            </p> : null;
+          })()}
         </div>
 
         <div

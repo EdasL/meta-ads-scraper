@@ -11,6 +11,15 @@ import (
 
 func intp(v int) *int { return &v }
 
+func TestHuntIncludesProductFolderSeparatelyFromUserRequest(t *testing.T) {
+	folder := `{"product":"Quizlock","saved_brands":[{"name":"one sec","ad_copy":["Reduce screen time"]}]}`
+	contents := buildHuntTurnContents(HuntTurnInput{Message: "Only show UK ads", FolderContext: folder})
+	last := contents[len(contents)-1].Parts[0].Text
+	if !strings.Contains(last, folder) || !strings.Contains(last, "user's own product") || !strings.HasSuffix(last, "Only show UK ads") {
+		t.Fatalf("product, references and explicit request must remain distinct: %s", last)
+	}
+}
+
 func TestClampHuntSettings(t *testing.T) {
 	cases := []struct {
 		name string

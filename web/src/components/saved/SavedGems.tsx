@@ -11,11 +11,12 @@ import {
   sortGroups,
   type SavedGroup,
 } from "@/lib/saved";
-import { createGroup, deleteGroup, renameGroup, useLikedGems, useSavedGroups, useSavedList } from "@/lib/useSaved";
+import { createGroup, deleteGroup, renameGroup, setGroupProduct, useLikedGems, useSavedGroups, useSavedList } from "@/lib/useSaved";
 import { useSavedAdsList } from "@/lib/useSavedAds";
 import { EmptyState } from "@/components/ui";
 import { FolderMenu } from "./FolderMenu";
 import { FolderTiles } from "./FolderTiles";
+import { FolderProduct } from "./FolderProduct";
 import { SavedAdCard } from "./SavedAdCard";
 import { LikedRow, SavedCard } from "./SavedCard";
 
@@ -343,6 +344,7 @@ export function SavedGems() {
           <FolderMenu onDelete={() => confirmDelete(openFolder)} />
           <span style={{ marginLeft: "auto" }}>{tagFilter}</span>
         </header>
+        <FolderProduct key={openFolder.id} folder={openFolder} onSave={setGroupProduct} />
         {filtered.length === 0 ? (
           <p className="t-sm" style={{ color: "var(--muted)", marginTop: 8 }}>
             {tag ? "Nothing matches the current filters." : "No gems in this folder yet."}

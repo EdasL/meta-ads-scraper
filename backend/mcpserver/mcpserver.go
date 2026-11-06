@@ -80,7 +80,7 @@ func buildServer(u middlewares.AuthedUser, base string) *mcp.Server {
 		Description: "Your app ratings. Filter by rating (like/neutral/dislike)."},
 		h.myRatings)
 	mcp.AddTool(s, &mcp.Tool{Name: "my_saved_gems",
-		Description: "Your saved watchlist with stage, verdict, tags, and notes."},
+		Description: "Your saved brands with group_ids, plus folders and each folder's attached product. The product is what the user researches; brands inside are selected references."},
 		h.mySavedGems)
 	mcp.AddTool(s, &mcp.Tool{Name: "recommended_gems",
 		Description: "The gem feed ranked by similarity to the apps you liked."},

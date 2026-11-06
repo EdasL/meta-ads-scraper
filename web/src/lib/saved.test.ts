@@ -24,6 +24,15 @@ import {
   type SavedGroup,
 } from "./saved-core.ts";
 
+test("a folder rename during creation preserves its attached product", () => {
+  const submitted = { id: -1, name: "New folder", position: 0 };
+  const server = { id: 41, name: "New folder", position: 0, product: "My own product" };
+  const result = reconcileGroupMerge({ ...submitted, name: "Ad references" }, submitted, server);
+  assert.equal(result.row.product, "My own product");
+  assert.equal(result.row.name, "Ad references");
+  assert.equal(result.needsPersist, true);
+});
+
 const row = (over = {}) => ({
   advertiser_id: 1001,
   cohort: "Health & Fitness · US",
