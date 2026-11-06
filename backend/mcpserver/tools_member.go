@@ -57,7 +57,11 @@ func (h *handlers) mySavedGems(ctx context.Context, _ *mcp.CallToolRequest, _ my
 	if err != nil {
 		return nil, nil, errors.New("could not read saved folders")
 	}
-	return nil, map[string]any{"saved_gems": rows, "folders": folders}, nil
+	products, err := repositories.ListResearchProducts(ctx, db.DB(), h.u.Email)
+	if err != nil {
+		return nil, nil, errors.New("could not read products")
+	}
+	return nil, map[string]any{"saved_gems": rows, "folders": folders, "products": products}, nil
 }
 
 // ---- recommended_gems ----

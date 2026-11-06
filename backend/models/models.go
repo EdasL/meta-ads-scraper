@@ -489,10 +489,11 @@ type SavedGemRow struct {
 // SavedGroupRow is one column of the /saved board — a user-defined group that
 // saved gems are filed under. Groups are per user and ordered by position.
 type SavedGroupRow struct {
-	ID       int64  `gorm:"column:id" json:"id"`
-	Name     string `gorm:"column:name" json:"name"`
-	Position int    `gorm:"column:position" json:"position"`
-	Product  string `gorm:"column:product" json:"product"`
+	ID        int64  `gorm:"column:id" json:"id"`
+	Name      string `gorm:"column:name" json:"name"`
+	Position  int    `gorm:"column:position" json:"position"`
+	Product   string `gorm:"column:product" json:"product"`
+	ProductID *int64 `gorm:"column:product_id" json:"product_id"`
 }
 
 // LikedGemRow is one card in the built-in Liked collection: an app the user

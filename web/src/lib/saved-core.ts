@@ -52,6 +52,7 @@ export interface SavedGroup {
   position: number;
   /** The user's reference product, distinct from brands saved inside. */
   product?: string;
+  product_id?: number | null;
 }
 
 export interface TagCount {

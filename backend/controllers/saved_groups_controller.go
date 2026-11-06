@@ -94,9 +94,10 @@ func (c *SavedGroupsController) Create(ctx *gin.Context) {
 }
 
 type savedGroupUpdateIn struct {
-	Name     *string `json:"name"`
-	Position *int    `json:"position"`
-	Product  *string `json:"product"`
+	Name      *string `json:"name"`
+	Position  *int    `json:"position"`
+	Product   *string `json:"product"`
+	ProductID *int64  `json:"product_id"`
 }
 
 // Update handles POST /api/saved-groups/:id/update — name, order, or product.
@@ -132,6 +133,17 @@ func (c *SavedGroupsController) Update(ctx *gin.Context) {
 	}
 	rctx, cancel := reqCtx(ctx)
 	defer cancel()
+	if body.ProductID != nil {
+		updated, err := repositories.AttachFolderProduct(rctx, db.DB(), email, id, *body.ProductID)
+		if err != nil {
+			helpers.Detail(ctx, http.StatusInternalServerError, "could not attach product.")
+			return
+		}
+		if !updated {
+			helpers.Detail(ctx, http.StatusNotFound, "folder or product not found.")
+			return
+		}
+	}
 	updated, err := repositories.UpdateSavedGroupProduct(rctx, db.DB(), email, id, body.Name, body.Position, body.Product)
 	if err != nil {
 		helpers.Detail(ctx, http.StatusInternalServerError, "could not update group.")

@@ -18,7 +18,7 @@ func ListSavedGroups(ctx context.Context, g *gorm.DB, userEmail string) ([]model
 	rows := make([]models.SavedGroupRow, 0)
 	err := db.WithReadTx(ctx, g, func(tx *gorm.DB) error {
 		return tx.Raw(
-			`SELECT id, name, "position", product
+			`SELECT id, name, "position", product, product_id
 			 FROM frontend.saved_groups
 			 WHERE user_email = ?
 			 ORDER BY "position", id`,
@@ -39,7 +39,7 @@ func CreateSavedGroup(ctx context.Context, g *gorm.DB, userEmail, name string) (
 			`INSERT INTO frontend.saved_groups (user_email, name, position)
 			 SELECT ?, ?, COALESCE(MAX("position") + 1, 0)
 			 FROM frontend.saved_groups WHERE user_email = ?
-			 RETURNING id, name, "position", product`,
+			 RETURNING id, name, "position", product, product_id`,
 			userEmail, name, userEmail,
 		).Scan(&row).Error
 	})

@@ -168,7 +168,8 @@ def test_judge_round_no_intent_skips(_migrated_engine):
     assert stats["judged"] == 0 and "skipped" in stats
 
 
-def test_product_folder_reaches_target_and_respects_owner(_migrated_engine):
+@pytest.mark.parametrize("use_product_id", [False, True])
+def test_product_folder_reaches_target_and_respects_owner(_migrated_engine, use_product_id):
     from agf.db.engine import begin
     from agf.discovery.hunt_judge import _round_folder
     with begin(_migrated_engine) as conn:
@@ -187,13 +188,22 @@ def test_product_folder_reaches_target_and_respects_owner(_migrated_engine):
         conn.execute(text("INSERT INTO frontend.saved_group_members(user_email,group_id,advertiser_id) "
                           "VALUES ('j@t.local',:f,:a)"), {"f": fid, "a": aid})
         conn.execute(text("UPDATE frontend.hunts SET folder_id=:f WHERE id=(SELECT hunt_id FROM frontend.hunt_rounds WHERE id=:r)"), {"f": fid, "r": rid})
+        pid = None
+        if use_product_id:
+            pid = conn.execute(text("INSERT INTO frontend.research_products(user_email,identity_key,name) "
+                                    "VALUES ('j@t.local',:key,'My sleep product') RETURNING id"),
+                               {"key": f"judge-product-{rid}"}).scalar_one()
+            conn.execute(text("UPDATE frontend.saved_groups SET product_id=:p WHERE id=:f"), {"p": pid, "f": fid})
+            conn.execute(text("UPDATE frontend.hunts SET product_id=:p WHERE id=(SELECT hunt_id FROM frontend.hunt_rounds WHERE id=:r)"), {"p": pid, "r": rid})
 
     saw_target = []
     def post(url, body):
         payload = json.loads(body["contents"][0]["parts"][0]["text"])
         if "brief" in payload:
             folder = payload["folder"]
-            assert folder["product"] == "My sleep product"
+            assert folder["product"].strip() == "My sleep product"
+            if use_product_id:
+                assert folder["reference_product"]["id"] == pid
             assert len(folder["saved_brands"]) == 1
             assert folder["saved_brands"][0]["ad_copy"] == ["Help your baby sleep with calming sounds"]
             assert "Private product" not in json.dumps(payload)
@@ -209,11 +219,18 @@ def test_product_folder_reaches_target_and_respects_owner(_migrated_engine):
         assert saw_target == [True]
         with begin(_migrated_engine) as conn:
             conn.execute(text("UPDATE frontend.hunts SET folder_id=:f WHERE id=(SELECT hunt_id FROM frontend.hunt_rounds WHERE id=:r)"), {"f": foreign, "r": rid})
-            assert _round_folder(conn, rid) is None
+            if use_product_id:
+                assert _round_folder(conn, rid)["reference_product"]["id"] == pid
+                conn.execute(text("UPDATE frontend.saved_groups SET product_id=NULL WHERE id=:f"), {"f": fid})
+                assert _round_folder(conn, rid)["saved_brands"] == []
+            else:
+                assert _round_folder(conn, rid) is None
     finally:
         with begin(_migrated_engine) as conn:
             conn.execute(text("DELETE FROM frontend.hunts WHERE id=(SELECT hunt_id FROM frontend.hunt_rounds WHERE id=:r)"), {"r": rid})
             conn.execute(text("DELETE FROM frontend.saved_groups WHERE id IN (:f,:x)"), {"f": fid, "x": foreign})
+            if pid:
+                conn.execute(text("DELETE FROM frontend.research_products WHERE id=:p"), {"p": pid})
             conn.execute(text("DELETE FROM frontend.saved_gems WHERE advertiser_id=:a"), {"a": aid})
             conn.execute(text("DELETE FROM public.creatives WHERE ad_id=:a"), {"a": adid})
             conn.execute(text("DELETE FROM public.ads WHERE id=:a"), {"a": adid})

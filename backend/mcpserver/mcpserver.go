@@ -73,6 +73,8 @@ func buildServer(u middlewares.AuthedUser, base string) *mcp.Server {
 	s := mcp.NewServer(&mcp.Implementation{Name: "fielddesk", Version: "1.0.0"}, &mcp.ServerOptions{Instructions: "For Meta ad research, read ad_research_guide first. Scraping tools return unclassified evidence; the calling agent chooses references, judges relevance, and controls pagination."})
 	h := &handlers{u: u, base: base}
 
+	mcp.AddTool(s, &mcp.Tool{Name: "resolve_product_link", Description: "Match a website, store, or Meta Ad Library link to existing scraped data. No scrape; ambiguous brands are returned for selection."}, h.resolveProductLink)
+	mcp.AddTool(s, &mcp.Tool{Name: "add_product", Description: "Create an owned reusable research product from a resolved link. Confirm the matching page when several are returned; unknown products need a name and should include a description. Idempotent by owner and identity."}, h.addProduct)
 	mcp.AddTool(s, &mcp.Tool{Name: "my_taste_profile",
 		Description: "Your rating counts, top liked cohorts, and the signals that drive your likes."},
 		h.tasteProfile)
@@ -80,7 +82,7 @@ func buildServer(u middlewares.AuthedUser, base string) *mcp.Server {
 		Description: "Your app ratings. Filter by rating (like/neutral/dislike)."},
 		h.myRatings)
 	mcp.AddTool(s, &mcp.Tool{Name: "my_saved_gems",
-		Description: "Your saved brands with group_ids, plus folders and each folder's attached product. The product is what the user researches; brands inside are selected references."},
+		Description: "Your saved brands with group_ids, folders with product_id, and owned products with stored descriptions and actual ad samples. Match by IDs; brands inside product folders are selected references."},
 		h.mySavedGems)
 	mcp.AddTool(s, &mcp.Tool{Name: "recommended_gems",
 		Description: "The gem feed ranked by similarity to the apps you liked."},

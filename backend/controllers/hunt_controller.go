@@ -169,6 +169,7 @@ type huntCardState struct {
 
 type huntMessageBody struct {
 	Message   string         `json:"message"`
+	ProductID *int64         `json:"product_id"`
 	FolderID  *int64         `json:"folder_id"`
 	CardState *huntCardState `json:"card_state"`
 }
@@ -199,9 +200,13 @@ func (c *HuntController) Create(ctx *gin.Context) {
 
 	rctx, cancel := reqCtx(ctx)
 	defer cancel()
-	huntID, err := repositories.CreateHuntInFolder(rctx, db.DB(), u.Email, huntTitle(message), body.FolderID)
-	if errors.Is(err, repositories.ErrFolderNotFound) {
-		helpers.Detail(ctx, http.StatusNotFound, "no such folder.")
+	huntID, err := repositories.CreateHuntWithProduct(rctx, db.DB(), u.Email, huntTitle(message), body.FolderID, body.ProductID)
+	if errors.Is(err, repositories.ErrProductFolderMismatch) {
+		helpers.Detail(ctx, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
+	if errors.Is(err, repositories.ErrProductNotFound) || errors.Is(err, repositories.ErrFolderNotFound) {
+		helpers.Detail(ctx, http.StatusNotFound, "product or folder not found.")
 		return
 	}
 	if err != nil {

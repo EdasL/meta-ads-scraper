@@ -8,14 +8,24 @@ apply; live scraping currently requires an admin account.
 
 ## Use a product's saved references
 
-Call `my_saved_gems` to read `folders` and `saved_gems`. Each folder's `product`
-identifies the user's own product (name, website or brief); a saved gem's
-`group_ids` identifies the folders it belongs to. Brands saved inside a folder are
-references for that product, not the product itself. Keep other folders separate.
-Use the attached product and selected references to guide your research, then
-verify their actual advertising evidence. For the optional managed Hunt workflow,
-pass `folder_id` to `run_hunt` when creating a hunt. Subsequent rounds inherit that
-folder and read its current product and saved references.
+Call `my_saved_gems` to read `products`, `folders` and `saved_gems`. Select the
+user's own product by ID. Product records contain the original link, description,
+matched page/store identity and stored ad-copy samples when available. A folder's
+`product_id` identifies its product; each saved gem's `group_ids` identifies its
+reference folders. Keep other products' references separate.
+
+To add a product, call `resolve_product_link` with its website, store or Meta Ad
+Library URL, inspect any matching brands, then call `add_product`. Supply the
+chosen `page_id` when matches are ambiguous. A product without stored ads can
+still be added with its name and a useful description. Neither tool starts a
+scrape; use the scraping tools below when fresh evidence is needed. A single-ad
+URL can only be resolved when that ad is already in accessible scrape data;
+otherwise use the advertiser page's `view_all_page_id` link.
+
+For managed Hunt, pass `product_id` to `run_hunt` when creating the chat. It uses
+the product's own evidence plus references from its attached folders. Optionally
+pass a matching `folder_id` to limit references to that folder. The chat retains
+its product; subsequent rounds read the current evidence and saved references.
 
 ## Start with source ads
 

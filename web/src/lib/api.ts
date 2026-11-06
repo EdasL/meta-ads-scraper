@@ -362,6 +362,7 @@ export interface HuntSummary {
   id: number;
   title: string;
   folder_id?: number | null;
+  product_id?: number | null;
   created_at: string;
   last_activity: string;
   last_round_status: string | null;
@@ -490,8 +491,8 @@ export async function getHunt(id: number): Promise<HuntThread> {
 }
 
 /** Open a new thread with the founder's first message; returns the transcript. */
-export async function postHunt(message: string, folderId?: number): Promise<HuntChatTurn> {
-  return live<HuntChatTurn>(`/hunts`, { method: "POST", body: JSON.stringify({ message, folder_id: folderId }) });
+export async function postHunt(message: string, folderId?: number, productId?: number): Promise<HuntChatTurn> {
+  return live<HuntChatTurn>(`/hunts`, { method: "POST", body: JSON.stringify({ message, folder_id: folderId, product_id: productId }) });
 }
 
 /** The founder's live edits to the open proposal card, sent alongside a chat
@@ -537,3 +538,24 @@ export async function postHuntRound(
 ): Promise<HuntRound> {
   return live<HuntRound>(`/hunts/${id}/rounds`, { method: "POST", body: JSON.stringify(body) });
 }
+
+export interface ResearchProduct {
+  id: number; name: string; url: string; description: string;
+  page_id: string; store: string; store_id: string;
+  advertiser_id: number | null; source_description: string; ad_copy: string[];
+}
+export interface ProductResolution {
+  url: string; page_id: string; store: string; store_id: string; name: string; description: string;
+  matches: { page_id: string; name: string; description: string }[];
+}
+export function getProducts(): Promise<ResearchProduct[]> { return live('/products'); }
+async function productRequest<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(res.status === 422 && typeof data.detail === 'string' ? data.detail : 'Could not save product data. Please try again.');
+  }
+  return res.json();
+}
+export function resolveProduct(url: string): Promise<ProductResolution> { return productRequest('/products/resolve', { url }); }
+export function createProduct(body: {url: string; name: string; description: string; page_id?: string}): Promise<ResearchProduct> { return productRequest('/products', body); }

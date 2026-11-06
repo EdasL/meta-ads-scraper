@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -107,6 +108,7 @@ type huntSettingsIn struct {
 }
 
 type runHuntIn struct {
+	ProductID   *int64         `json:"product_id,omitempty" jsonschema:"owned product selected for this chat; only when starting a new hunt"`
 	FolderID    *int64         `json:"folder_id,omitempty" jsonschema:"owned saved folder whose attached product and saved brands guide relevance; only when starting a new hunt"`
 	Terms       []string       `json:"terms,omitempty" jsonschema:"keyword searches, US only, paged until dry"`
 	Competitors []string       `json:"competitors,omitempty" jsonschema:"app or brand names; each is resolved to its Ad Library page and its whole ad set is pulled, globally"`
@@ -119,8 +121,8 @@ func (h *handlers) runHunt(ctx context.Context, _ *mcp.CallToolRequest, in runHu
 	if h.u.Role != "admin" {
 		return nil, nil, errors.New("This tool requires an admin account.")
 	}
-	if in.HuntID != 0 && in.FolderID != nil {
-		return nil, nil, errors.New("an existing hunt already has its folder context; omit folder_id")
+	if in.HuntID != 0 && (in.FolderID != nil || in.ProductID != nil) {
+		return nil, nil, errors.New("an existing hunt already has its product context; omit product_id and folder_id")
 	}
 	// Same normalization and bounds as the REST hunt path, from the one place
 	// that defines them. Terms are lowercased, trimmed and deduped (they are
@@ -172,7 +174,10 @@ func (h *handlers) runHunt(ctx context.Context, _ *mcp.CallToolRequest, in runHu
 		if len(title) > 120 {
 			title = title[:120]
 		}
-		huntID, err = repositories.CreateHuntInFolder(ctx, db.DB(), h.u.Email, title, in.FolderID)
+		huntID, err = repositories.CreateHuntWithProduct(ctx, db.DB(), h.u.Email, title, in.FolderID, in.ProductID)
+		if errors.Is(err, repositories.ErrProductNotFound) || errors.Is(err, repositories.ErrProductFolderMismatch) {
+			return nil, nil, err
+		}
 		if errors.Is(err, repositories.ErrFolderNotFound) {
 			return nil, nil, errors.New("folder not found")
 		}
@@ -196,6 +201,15 @@ func (h *handlers) runHunt(ctx context.Context, _ *mcp.CallToolRequest, in runHu
 	}
 
 	var intent *string
+	if strings.TrimSpace(in.Intent) == "" {
+		productContext, contextErr := repositories.HuntFolderContext(ctx, db.DB(), huntID)
+		if contextErr != nil {
+			return nil, nil, errors.New("could not load the hunt product")
+		}
+		if productContext != nil && productContext.Product != "" {
+			in.Intent = "Find relevant ads for the selected product"
+		}
+	}
 	if in.Intent != "" {
 		intent = &in.Intent
 	}

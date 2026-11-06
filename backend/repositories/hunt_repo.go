@@ -57,7 +57,7 @@ func ListHunts(ctx context.Context, g *gorm.DB, email string) ([]models.HuntRow,
 	var rows []models.HuntRow
 	err := db.WithReadTx(ctx, g, func(tx *gorm.DB) error {
 		return tx.Raw(
-			`SELECT h.id, h.title, h.folder_id, h.created_at,
+			`SELECT h.id, h.title, h.folder_id, h.product_id, h.created_at,
 			        GREATEST(
 			          h.created_at,
 			          COALESCE((SELECT max(m.created_at) FROM frontend.hunt_messages m

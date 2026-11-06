@@ -5,6 +5,8 @@ import { useSession } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useSavedGroups } from "@/lib/useSaved";
+import { useProducts } from "@/lib/useProducts";
+import { ProductPicker } from "@/components/products/ProductPicker";
 import { IconPlus, IconTrash } from "@tabler/icons-react";
 import { Button } from "@/components/ui";
 import { huntIsActive } from "@/lib/hunt";
@@ -81,7 +83,10 @@ export function HuntView() {
   const rawFolder = Number(searchParams.get("folder"));
   const requestedFolder = Number.isSafeInteger(rawFolder) && rawFolder > 0 ? rawFolder : undefined;
   const folders = useSavedGroups();
+  const { products, error: productsError, addProduct } = useProducts();
+  const [productId, setProductId] = useState<number | undefined>();
   const [folderId, setFolderId] = useState<number | undefined>(requestedFolder);
+  const selectedProductId = productId ?? folders.find(f => f.id === folderId)?.product_id ?? undefined;
   const { data: session } = useSession();
   const userEmail = session?.user?.email ?? null;
   const [hunts, setHunts] = useState<HuntSummary[]>([]);
@@ -98,6 +103,7 @@ export function HuntView() {
   // writing thread state, so a stale response can never replace another hunt's
   // transcript.
   const activeIdRef = useRef<number | null>(null);
+  const userChoseThread = useRef(false);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
   const scroller = useRef<HTMLDivElement | null>(null);
   // The open proposal card's live edits, mirrored here so the next chat message
@@ -142,7 +148,7 @@ export function HuntView() {
           setFolderId(requestedFolder);
           return;
         }
-        if (list.length === 0) return;
+        if (list.length === 0 || userChoseThread.current) return;
         setActiveId((cur) => {
           if (cur != null) return cur;
           const saved = readLastHunt(userEmail);
@@ -298,11 +304,12 @@ export function HuntView() {
     const message = draft.trim();
     const key = activeId == null ? "new" : String(activeId);
     if (!message || pendings[key] != null) return;
+    userChoseThread.current = true;
     setDraft("");
     setPendings((p) => ({ ...p, [key]: message })); // instant user bubble in THIS hunt
     try {
       if (activeId == null) {
-        const turn = await postHunt(message, folderId);
+        const turn = await postHunt(message, folderId, selectedProductId);
         // The hunt now has a real id: move the pending bubble onto it before
         // switching, so it stays visible while the thread loads.
         setPendings((p) => {
@@ -332,7 +339,7 @@ export function HuntView() {
       if (activeIdRef.current === activeId) setDraft(message);
       clearPending(key);
     }
-  }, [draft, pendings, activeId, folderId, loadThread, refreshHunts, proposalMsgId, clearPending, router]);
+  }, [draft, pendings, activeId, folderId, selectedProductId, loadThread, refreshHunts, proposalMsgId, clearPending, router]);
 
   // The pending send that belongs to the hunt on screen (if any). Everything
   // optimistic — bubble, working pulse, composer lock — keys off this, so a
@@ -357,6 +364,9 @@ export function HuntView() {
   }
 
   function newHunt() {
+    userChoseThread.current = true;
+    setProductId(undefined);
+    setFolderId(undefined);
     setActiveId(null);
     setThread(null);
     setDraft("");
@@ -406,7 +416,7 @@ export function HuntView() {
               <div key={h.id} className="hunt-row" style={{ position: "relative", display: "flex" }}>
                 <button
                   type="button"
-                  onClick={() => { setActiveId(h.id); router.replace("/hunt", { scroll: false }); }}
+                  onClick={() => { userChoseThread.current = true; setActiveId(h.id); router.replace("/hunt", { scroll: false }); }}
                   style={{
                     display: "flex",
                     alignItems: "center",
@@ -479,22 +489,23 @@ export function HuntView() {
           <p className="t-sm" style={{ color: "var(--muted)", margin: "4px 0 0" }}>
             Describe a niche or a competitor app. Peon proposes search terms; you approve a round.
           </p>
-          {activeId == null && folders.length > 0 && (
-            <label className="t-xs" style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, marginTop: 12 }}>
-              Product folder
-              <select value={folderId ?? ""} onChange={(e) => setFolderId(e.target.value ? Number(e.target.value) : undefined)} style={{ maxWidth: "100%", background: "var(--surface-2)", color: "var(--ink)", border: "1px solid var(--line)", padding: "7px 9px", font: "inherit" }}>
-                <option value="">No folder</option>
-                {folders.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
-              </select>
-            </label>
-          )}
+          {activeId == null && <div style={{marginTop:14}}>
+            <ProductPicker products={products} value={selectedProductId} disabled={sendingHere} onCreated={addProduct} onChange={id=>{setProductId(id);setFolderId(undefined);setDraft(current => id ? current.trim() ? current : "Find relevant ads for this product." : current === "Find relevant ads for this product." ? "" : current);}} />
+          </div>}
+          {productsError && <p role="alert" className="t-xs" style={{color:'var(--down)'}}>{productsError}</p>}
           {(() => {
-            const attachedFolder = thread?.hunt.id === activeId ? thread.hunt.folder_id : hunts.find((h) => h.id === activeId)?.folder_id;
-            const f = folders.find((g) => g.id === (activeId == null ? folderId : attachedFolder));
-            return f ? <p className="t-xs" style={{ color: "var(--muted)", margin: "8px 0 0", overflowWrap: "anywhere" }}>
-              {f.product && <span style={{ color: "var(--ink)" }}>{f.product} · </span>}
-              References from <Link href={`/saved?folder=${f.id}`} style={{ textDecoration: "underline" }}>{f.name}</Link>
-            </p> : null;
+            const current = thread?.hunt.id === activeId ? thread.hunt : hunts.find(h=>h.id===activeId);
+            const selected = activeId == null ? selectedProductId : current?.product_id;
+            const product = products.find(p=>p.id===selected);
+            const attached = activeId == null ? folderId : current?.folder_id;
+            const references = folders.filter(f=>f.product_id===selected && selected != null);
+            const activeReferences = references.some(f=>f.id===attached) ? references.filter(f=>f.id===attached) : references;
+            return <>
+              {activeId != null && product && <p className="t-sm" style={{margin:'10px 0 0',overflowWrap:'anywhere'}}>Product: {product.name}</p>}
+              {activeReferences.length > 0 && <p className="t-xs" style={{color:'var(--muted)',margin:'8px 0 0'}}>
+                Saved references: {activeReferences.map((f,i)=><span key={f.id}>{i>0 ? ', ' : ''}<Link href={`/saved?folder=${f.id}`} style={{textDecoration:'underline'}}>{f.name}</Link></span>)}
+              </p>}
+            </>;
           })()}
         </div>
 

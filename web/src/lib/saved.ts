@@ -201,7 +201,7 @@ async function hydrateGroups() {
   if (!userEmail) return; // wait until the session user is known
   try {
     const rows = await getSavedGroups();
-    groups = sortGroups(rows.map((r) => ({ id: r.id, name: r.name, position: r.position, product: r.product ?? "" })));
+    groups = sortGroups(rows.map((r) => ({ id: r.id, name: r.name, position: r.position, product: r.product ?? "", product_id: r.product_id })));
     notify();
   } catch (e) {
     groupsHydratedKey = null; // allow retry on next subscribe
@@ -418,7 +418,7 @@ export function createGroup(name: string): number | null {
   if (!userEmail) return tempId;
   createSavedGroup(trimmed)
     .then((row) =>
-      reconcileGroup(submitted, { id: row.id, name: row.name, position: row.position, product: row.product ?? "" }),
+      reconcileGroup(submitted, { id: row.id, name: row.name, position: row.position, product: row.product ?? "", product_id: row.product_id }),
     )
     .catch(onSyncError);
   return tempId;
@@ -434,12 +434,11 @@ export function renameGroup(id: number, name: string): void {
 }
 
 /** Await persistence so the product editor can report failure without losing a draft. */
-export async function setGroupProduct(id: number, product: string): Promise<void> {
+export async function setGroupProduct(id: number, productId?: number): Promise<void> {
   const email = userEmail;
   if (!email || isTemp(id)) throw new Error("The folder is not ready yet.");
-  const trimmed = product.trim();
-  await updateSavedGroup(id, { product: trimmed });
-  if (userEmail === email) setGroups(groups.map((g) => g.id === id ? { ...g, product: trimmed } : g));
+  await updateSavedGroup(id, { product_id: productId ?? 0 });
+  if (userEmail === email) setGroups(groups.map((g) => g.id === id ? { ...g, product: '', product_id: productId ?? null } : g));
 }
 
 export function deleteGroup(id: number): void {

@@ -265,6 +265,7 @@ export interface ApiSavedGroup {
   name: string;
   position: number;
   product?: string;
+  product_id?: number | null;
 }
 
 /** Body for POST /saved-groups/:id/update — name, order, or product; all fields
@@ -273,6 +274,7 @@ export interface ApiSavedGroupPatch {
   name?: string;
   position?: number;
   product?: string;
+  product_id?: number | null;
 }
 
 /** One row of GET /liked-gems — every app the user has liked anywhere

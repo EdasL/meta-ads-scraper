@@ -90,3 +90,64 @@ the preceding commit. Its later lint/race-test steps were skipped, not passed.
 reports the same four G404/G104 findings in unchanged preference, diversity and
 saved-ad code. The scoped feature checks and production builds passed; Gitleaks
 found no secrets in the outgoing source commit.
+
+## Follow-up: reusable products from links
+
+The folder text field does not represent a reusable product. Replace the UI with
+an owned product record, created from an Ad Library, store or website link. Match
+existing scraped records first; show ambiguous matches for selection. Unknown
+products remain usable with a name/description, without claiming their ads exist.
+
+1. Add owned products and explicit product IDs on folders and Hunt chats. Preserve
+   legacy folder text and migrate existing associations without losing context.
+2. Share a link resolver and product picker between folder attachment and the
+   new-chat composer. A chat keeps its selected product independently of later
+   folder changes. Use that product's actual ads and saved folder references.
+3. Expose the same products/context through MCP, verify ownership and URL matching
+   against Postgres, inspect the actual browser flow and live planner/judge, then
+   release the verified source and record the deployed images.
+
+### Reusable-product verification
+
+Implemented owned products from website, App Store, Google Play and Meta Ad
+Library links. Existing shared discovery data and the caller's own MCP captures
+supply names, descriptions and ad samples; private captures from other users are
+excluded. Multiple matching pages require an explicit choice. Unknown products
+can be added with a name/description without claiming that ads were found.
+Link lookup does not fetch a website or start a scrape. Agents can explicitly
+fetch fresh ads with the existing scraping tools.
+
+Folders now attach a `product_id`; new Hunt chats select their product directly.
+A folder launch inherits its product. A product-only chat uses references from
+all its attached folders; a folder launch narrows them to that folder. Changing
+a folder's attachment cannot change an existing chat's product or import another
+product's references. Migration 169 preserves earlier folder descriptions as
+product records and associates existing folder-linked hunts.
+
+- New database-backed API/repository and MCP workflow checks passed, including
+  unknown links, stored Ad Library and App Store data, ambiguous websites,
+  duplicate identities, cross-owner privacy, folder detach, stable chat products,
+  and MCP product creation → product-selected hunt with a default intent.
+  Existing folder/Hunt/MCP integration checks passed against local Postgres.
+- Go helpers/controllers/MCP checks and scoped vet passed. Python judge/Hunt
+  database checks passed (33 tests). Web Saved/Hunt/proxy checks passed (62 tests),
+  scoped ESLint and the Next production build passed, and `git diff --check`
+  was clean. Temporary local login tooling was removed before the build.
+- Browser → Next proxy → Go → Postgres: added Quizlock from a website with no
+  stored match, attached it to the reference folder and reloaded successfully.
+  Added one sec from its Ad Library page, reusing its stored name and two captured
+  ad samples. Started a new chat by selecting Quizlock directly, without a folder
+  launch; the saved chat has `product_id` and no `folder_id`, and reload retains
+  its product and reference folders. A stale initial history response can no
+  longer replace a newly opened blank chat.
+- The actual planner received the selected product and saved references and
+  proposed screen-time searches including one sec and BePresent. The Python judge
+  read the same product record and two references from Postgres, then judged seven
+  captured rows for four advertisers in 12.88 seconds: one sec and BePresent were
+  relevant; Untappd and Mathilde Fashion Focus were off-target. This is a focused
+  integration check, not a general accuracy measurement.
+
+The product evidence view uses separate advertiser/app lookups and a new partial
+index on `public.ads(app_id)`. For production, build that index concurrently
+before applying migration 169, so the migration's idempotent index declaration
+will not block ongoing ad ingestion.

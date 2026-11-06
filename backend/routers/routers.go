@@ -80,6 +80,10 @@ func Init(r *gin.Engine) {
 		api.POST("/saved-ads/:external_ad_id/remove", middlewares.RequireToken(), savedAds.Remove)
 		// Folders for /saved. Identity comes from KeyAuth (never a param);
 		// an unknown or foreign :id is a 404 so existence stays hidden.
+		products := controllers.NewProductsController()
+		api.GET("/products", products.List)
+		api.POST("/products/resolve", products.Resolve)
+		api.POST("/products", middlewares.RequireToken(), products.Create)
 		api.GET("/saved-groups", savedGroups.List)
 		api.POST("/saved-groups", middlewares.RequireToken(), savedGroups.Create)
 		api.POST("/saved-groups/:id/update", middlewares.RequireToken(), savedGroups.Update)

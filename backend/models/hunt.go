@@ -12,6 +12,7 @@ import (
 type HuntRow struct {
 	ID              int       `json:"id"`
 	Title           string    `json:"title"`
+	ProductID       *int64    `json:"product_id" gorm:"column:product_id"`
 	FolderID        *int64    `json:"folder_id" gorm:"column:folder_id"`
 	CreatedAt       time.Time `json:"created_at"`
 	LastActivity    time.Time `json:"last_activity" gorm:"column:last_activity"`
@@ -19,10 +20,12 @@ type HuntRow struct {
 }
 
 type HuntFolderContext struct {
-	FolderID int64         `json:"folder_id" gorm:"column:folder_id"`
-	Name     string        `json:"name"`
-	Product  string        `json:"product"`
-	Brands   []FolderBrand `json:"saved_brands" gorm:"-"`
+	ReferenceProduct *ResearchProduct `json:"reference_product,omitempty" gorm:"-"`
+	Folders          []SavedGroupRow  `json:"folders,omitempty" gorm:"-"`
+	FolderID         int64            `json:"folder_id" gorm:"column:folder_id"`
+	Name             string           `json:"name"`
+	Product          string           `json:"product"`
+	Brands           []FolderBrand    `json:"saved_brands" gorm:"-"`
 }
 
 type FolderBrand struct {

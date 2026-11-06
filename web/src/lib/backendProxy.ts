@@ -22,6 +22,7 @@ export const ALLOWED_RESOURCES = new Set([
   "add-gem", // /add-gem (POST a pasted Ad Library link), /add-gem/:job_id
   "saved-gems", // /saved-gems (+ /:id, /:id/remove)
   "saved-ads", // /saved-ads (+ /:id, /:id/remove)
+  "products", // owned product records and link resolution
   "saved-groups", // /saved-groups (+ /:id/update, /:id/remove, /:id/gems)
   "liked-gems", // /liked-gems (built-in Liked collection)
   "ratings", // /ratings (+ /:id)
