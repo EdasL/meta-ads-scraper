@@ -57,7 +57,8 @@ appear as advertising-relevance labels.
 ## Production release — 2026-11-06
 
 Source commit: `8ed73db20fb2426eb7d353fd57dca2ab1029b2d9`, published to `main`.
-Migration 167 is applied. The API, web and Hunt worker use these immutable images:
+Migration 167 is applied. The initial deployment used these immutable images;
+the Hunt worker was subsequently replaced by the correction recorded below:
 
 - API: `europe-west1-docker.pkg.dev/peon-489013/agf/api@sha256:58e2331a02070589ef994baa02b75c972ab2f4b4afcc8e3e3e1eee7f104215ab`
 - Web: `europe-west1-docker.pkg.dev/peon-489013/agf/web@sha256:d5e82d61e6705eedab9e3deadbdfd19ac0445d589c07f4c235fb71bd209436ce`
@@ -77,8 +78,7 @@ compose configuration is backed up at
 `/opt/agf/docker-compose.before-hunt-relevance-8ed73db.yml` on the worker VM.
 
 The 1,598 original verdicts for Quizlock Hunt 24, rounds 51 and 52, are backed up
-at `/opt/agf/release-backups/hunt-24-before-rejudge-8ed73db.json`. Evidence refresh
-and re-assessment results are recorded below once complete.
+at `/opt/agf/release-backups/hunt-24-before-rejudge-8ed73db.json`.
 
 Terminology: this release improves **relevant Hunt results**. A user's shortlist
 means their saved/liked advertisers, organized for a product. This release does
@@ -101,12 +101,63 @@ the rubric as system instructions, with advertiser records supplied as data.
 - The complete captured inputs contain 97 and 94 advertisers with usable evidence.
   Packing them reduces 72 sparse classification requests to 10 full requests,
   plus one target derivation per round. This is a request-count improvement;
-  the stronger model is slower per request.
+  the stronger model is slower per request. Each full round took about 117 seconds;
+  five omitted decisions were recovered in one focused 8.76-second retry.
 - An additional exploratory comparison against the existing MCP judge's 25 labels
   matched 21: all 12 calm cases and 9 of 13 fitness cases, with no false positive.
   Three fitness references were missed and one expected uncertain result was
   rejected. That comparison did **not** pass its exact-match assertion and is not
   evidence of universal accuracy. The separate MCP Jev implementation is unchanged.
+
+## Existing Quizlock hunt refresh
+
+Hunt 24 contains 1,598 rows and 1,352 unique advertiser pages across rounds 51 and
+52. Fifty production MCP searches refreshed previously relevant and named pages:
+48 completed, two failed, and 373 ads were returned. The failed Quizlock and
+Workout Locker searches were not treated as evidence of irrelevance. Stored ad
+copy and listing descriptions remained available where present.
+
+The first full re-assessment failed its BePresent regression assertion and was
+superseded. The verified replacement decisions were applied in one transaction,
+after checking that the original brief, result membership and evidence still
+matched the captured input. Only relevance labels and reasons were changed.
+
+- Round 51: 14 relevant, 82 off-target and 686 uncertain advertiser pages.
+- Round 52: 8 relevant, 85 off-target and 655 uncertain advertiser pages.
+- Seventeen distinct advertisers are relevant in at least one round. One sec and
+  BePresent are relevant in both; Untappd and Mathilde Fashion Focus are off-target.
+  The checked trivia, cash-reward, diet, drama, compensation and research-recruitment
+  examples are off-target.
+- The authenticated production API returned all 1,598 rows with reasons and
+  evidence arrays. All store/web rows for a page agree within each round. Saved
+  status and ratings match the snapshot taken before this replacement.
+- One borderline advertiser, Scroll The Bible, differs across rounds. This is
+  not a guarantee of stable judgments across separate searches. Most uncertain
+  results lack usable captured evidence; the refresh did not rescrape every page.
+
+The local UI was rendered and checked during implementation. The production
+browser required login, so production verification used the authenticated API
+and public health endpoints; it did not include an authenticated browser session.
+
+## Worker correction release
+
+Commit `e272227d07160e99ea76b5143f284b76e3fe22c0` is published to `main`.
+Cloud Build `10f698c2-fcc2-4cae-87a6-ffc453a238d1` succeeded from a clean export of
+that commit. The Hunt service now uses:
+
+`europe-west1-docker.pkg.dev/peon-489013/agf/worker@sha256:1edf9c6760e037eb844526659e906c57cc76fcfa48815ddc2010e4ffad3512a4`
+
+The API and web retain their verified images above. Only the Hunt service was
+recreated. Its preceding compose configuration is preserved at
+`/opt/agf/docker-compose.before-hunt-target-e272227.yml`. The outgoing source commit
+passed Gitleaks. No additional GitHub workflow was triggered by this Python-only
+correction; the earlier backend CI baseline remains documented below.
+
+The deployed worker is running with zero restarts and the expected source revision.
+A read-only check inside that container used its production credentials and the
+new model: target derivation and four real-ad judgments passed in 10.38 seconds,
+covering seven store/web rows. One sec and BePresent were relevant; Untappd and
+Mathilde Fashion Focus were off-target. API and web health endpoints returned 200.
 
 Release CI remains red on pre-existing findings in unchanged files:
 [backend-ci](https://github.com/EdasL/meta-ads-scraper/actions/runs/42194244171)
