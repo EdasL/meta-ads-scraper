@@ -151,3 +151,47 @@ The product evidence view uses separate advertiser/app lookups and a new partial
 index on `public.ads(app_id)`. For production, build that index concurrently
 before applying migration 169, so the migration's idempotent index declaration
 will not block ongoing ad ingestion.
+
+### Reusable-product production release — 2026-11-07
+
+Source commit `26d64a166731eea429d9d0afea4fc2218ffa51cf` is published to `main`.
+Regional Cloud Build `d4778fe0-3ee0-409c-bc93-e158aaa743fa` succeeded from a clean
+export of that commit, with the public production API URL and live-data setting
+included in the web build.
+
+Deployed immutable images:
+
+- API: `europe-west1-docker.pkg.dev/peon-489013/agf/api@sha256:dac793932ceaa7bd41764857bc1c9f407ea4ebe3eb4c785df5ef74f9f42c031f`
+- Web: `europe-west1-docker.pkg.dev/peon-489013/agf/web@sha256:40a93a50a0d2e12948ebdb04da59c3e21371082b849341ce7b667a4b3ef81b95`
+- Hunt worker: `europe-west1-docker.pkg.dev/peon-489013/agf/worker@sha256:9a53b574c88a7ba65d4d4606ae1ecd5783c53b1f976921e074252c43e1e86826`
+
+The app/ad index was built concurrently and verified valid. Migration 169 then
+completed transactionally and was recorded in `schema_migrations`. No Hunt rounds
+were queued or running before the worker restart. Only the Hunt service was
+recreated; its preceding compose configuration is preserved at
+`/opt/agf/docker-compose.before-research-products-26d64a1.yml`.
+
+API rollout and authenticated checks completed before web rollout. Both deployed
+pods are ready on the expected digests with zero container restarts. The Hunt
+worker is running with zero restarts and reports the exact source revision above.
+
+Production verification:
+
+- A stored one sec Ad Library link resolved in 0.1 seconds. A temporary product
+  was created, read back, attached to a temporary folder, and detached.
+- Authenticated MCP exposed the product-aware Hunt schema and guide, resolved a
+  product link, and reused the product created through the API without duplication.
+- The deployed worker read the product evidence view with production credentials;
+  migration and index checks passed. The selected-product planner/judge and browser
+  flows were verified locally against real dependencies as described above.
+- All temporary product/folder records were removed. API and web health endpoints
+  returned 200. Anonymous product/folder API requests returned 401, and the public
+  Hunt route redirected to login as expected.
+
+Repository-wide CI still reports the pre-existing baseline:
+[backend-ci](https://github.com/EdasL/meta-ads-scraper/actions/runs/42224886768) has 48 ST1005
+findings with no newly flagged source lines; its skipped later checks are not
+passes. [backend-security](https://github.com/EdasL/meta-ads-scraper/actions/runs/42224886580)
+reports the same four G404/G104 findings in unchanged files. The scoped feature
+checks and production builds passed; Gitleaks found no secrets in the source
+commit.
